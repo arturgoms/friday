@@ -3,6 +3,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Dict, Any
 from influxdb import InfluxDBClient
+from app.core.logging import logger
 
 
 class HealthCoachService:
@@ -129,28 +130,65 @@ class HealthCoachService:
             return {"error": str(e)}
     
     def get_recovery_status(self) -> Dict[str, Any]:
-        """Get recovery indicators."""
+        """Get recovery indicators from multiple sources."""
         recovery_data = {}
         
-        # Training Readiness
-        query = "SELECT value as readiness FROM TrainingReadiness ORDER BY time DESC LIMIT 1"
+        # Training Readiness (includes recovery time, HRV factor)
+        query = "SELECT score, recoveryTime, hrvFactorPercent, level FROM TrainingReadiness ORDER BY time DESC LIMIT 1"
         try:
             result = self.client.query(query)
             points = list(result.get_points())
             if points:
-                recovery_data["training_readiness"] = round(points[0].get("readiness", 0), 0)
-        except:
-            pass
+                point = points[0]
+                recovery_data["training_readiness"] = int(point.get("score", 0))
+                recovery_data["recovery_time"] = int(point.get("recoveryTime", 0))
+                recovery_data["hrv_factor_percent"] = int(point.get("hrvFactorPercent", 0))
+                recovery_data["readiness_level"] = point.get("level", "Unknown")
+        except Exception as e:
+            logger.debug(f"Training readiness query failed: {e}")
         
-        # Body Battery
-        query = "SELECT value as battery FROM BodyBatteryIntraday ORDER BY time DESC LIMIT 1"
+        # Body Battery from DailyStats (more comprehensive than intraday)
+        query = "SELECT bodyBatteryAtWakeTime, bodyBatteryHighestValue, bodyBatteryLowestValue FROM DailyStats ORDER BY time DESC LIMIT 1"
         try:
             result = self.client.query(query)
             points = list(result.get_points())
             if points:
-                recovery_data["body_battery"] = round(points[0].get("battery", 0), 0)
-        except:
-            pass
+                point = points[0]
+                recovery_data["body_battery_wake"] = int(point.get("bodyBatteryAtWakeTime", 0))
+                recovery_data["body_battery_highest"] = int(point.get("bodyBatteryHighestValue", 0))
+                recovery_data["body_battery_lowest"] = int(point.get("bodyBatteryLowestValue", 0))
+        except Exception as e:
+            logger.debug(f"Body battery from DailyStats query failed: {e}")
+        
+        # Current Body Battery from intraday
+        query = "SELECT BodyBatteryLevel FROM BodyBatteryIntraday ORDER BY time DESC LIMIT 1"
+        try:
+            result = self.client.query(query)
+            points = list(result.get_points())
+            if points:
+                recovery_data["body_battery"] = int(points[0].get("BodyBatteryLevel", 0))
+        except Exception as e:
+            logger.debug(f"Body battery current query failed: {e}")
+        
+        # HRV - Calculate 7-day average from intraday data
+        query = "SELECT MEAN(hrvValue) as hrv_avg FROM HRV_Intraday WHERE time >= now() - 7d"
+        try:
+            result = self.client.query(query)
+            points = list(result.get_points())
+            if points and points[0].get("hrv_avg"):
+                recovery_data["hrv_7day_avg"] = int(points[0]["hrv_avg"])
+        except Exception as e:
+            logger.debug(f"HRV weekly average query failed: {e}")
+        
+        # Latest HRV reading
+        query = "SELECT hrvValue FROM HRV_Intraday ORDER BY time DESC LIMIT 1"
+        try:
+            result = self.client.query(query)
+            points = list(result.get_points())
+            if points:
+                recovery_data["hrv_latest"] = int(points[0].get("hrvValue", 0))
+        except Exception as e:
+            logger.debug(f"HRV latest query failed: {e}")
         
         # Recent Sleep
         sleep_data = self.get_sleep_data(days=1)

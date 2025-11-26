@@ -18,6 +18,7 @@ class CalendarEvent:
         end: datetime,
         description: Optional[str] = None,
         location: Optional[str] = None,
+        url: Optional[str] = None,
     ):
         self.uid = uid
         self.summary = summary
@@ -25,6 +26,7 @@ class CalendarEvent:
         self.end = end
         self.description = description
         self.location = location
+        self.url = url
     
     def to_dict(self) -> Dict:
         return {

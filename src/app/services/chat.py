@@ -65,8 +65,14 @@ class ChatService:
             message_lower = message.lower()
             context_parts = []
             
+            # Check if this is a comprehensive daily summary request
+            is_daily_summary = any(phrase in message_lower for phrase in [
+                'daily health', 'health data', 'health summary', 'daily summary',
+                'today\'s health', 'health digest', 'full health'
+            ])
+            
             # Sleep data
-            if any(word in message_lower for word in ['sleep', 'slept', 'rest']):
+            if is_daily_summary or any(word in message_lower for word in ['sleep', 'slept', 'rest']):
                 sleep_data = self.health_coach.get_sleep_data(days=1)
                 if "sleep_records" in sleep_data and sleep_data["sleep_records"]:
                     sleep = sleep_data["sleep_records"][0]
@@ -80,8 +86,8 @@ class ChatService:
                         f"- Resting HR: {sleep['resting_hr']} bpm"
                     )
             
-            # Running summary
-            if any(word in message_lower for word in ['run', 'running', 'exercise', 'workout', 'training']):
+            # Running summary (only show if specifically asking about running stats)
+            if not is_daily_summary and any(word in message_lower for word in ['run', 'running']):
                 summary = self.health_coach.get_running_summary(days=30)
                 if "run_count" in summary:
                     context_parts.append(
@@ -92,8 +98,8 @@ class ChatService:
                         f"- Average Heart Rate: {summary['avg_heart_rate']} bpm"
                     )
             
-            # Recent activities
-            if any(word in message_lower for word in ['recent', 'last', 'latest', 'yesterday', 'today']):
+            # Recent activities (always fetch for daily summary or specific activity queries)
+            if is_daily_summary or any(word in message_lower for word in ['recent', 'last', 'latest', 'yesterday', 'today', 'activity', 'activities']):
                 activities = self.health_coach.get_recent_activities(limit=10)
                 if "activities" in activities and activities["activities"]:
                     acts = activities["activities"]
@@ -275,7 +281,7 @@ class ChatService:
         
         return ""
     
-    def generate_system_prompt(self, action: str) -> str:
+    def generate_system_prompt(self, action: str, message: str = "") -> str:
         """Generate clean system prompt based on action (no tool pollution)."""
         user_tz = timezone(timedelta(hours=-3))
         now = datetime.now(user_tz)
@@ -292,11 +298,23 @@ class ChatService:
             )
         
         elif action == "health_query":
-            return (
-                f"{base}\n\n"
-                "Answer the user's question using ONLY the Garmin health/activity data provided. "
-                "Be direct and concise. Use Markdown formatting: *bold*, `code`, bullets."
-            )
+            # Check if this is a daily summary request
+            if any(phrase in message.lower() for phrase in ['daily health', 'health data', 'health summary', 'daily summary']):
+                return (
+                    f"{base}\n\n"
+                    "You are a health coach. Analyze the Garmin health data provided and create a comprehensive daily summary:\n"
+                    "1. Summarize key metrics (sleep, activities, heart rate)\n"
+                    "2. Provide actionable insights and recommendations\n"
+                    "3. Highlight any concerns or notable patterns\n"
+                    "4. Be encouraging and specific\n"
+                    "Use Markdown formatting: *bold*, `code`, bullets."
+                )
+            else:
+                return (
+                    f"{base}\n\n"
+                    "Answer the user's question using ONLY the Garmin health/activity data provided. "
+                    "Be direct and concise. Use Markdown formatting: *bold*, `code`, bullets."
+                )
         
         elif action == "general":
             return (
@@ -332,7 +350,18 @@ class ChatService:
         
         # STAGE 1: Intent Routing
         logger.info(f"[Stage 1] Routing intent for: {message[:50]}...")
-        intent = intent_router.route(message)
+        
+        # Get last user message for context (helps with follow-up questions)
+        history = self.get_history(session_id)
+        last_user_msg = ""
+        if history:
+            # Find last user message
+            for msg in reversed(history):
+                if msg.get('role') == 'user':
+                    last_user_msg = msg.get('content', '')
+                    break
+        
+        intent = intent_router.route(message, last_message=last_user_msg)
         action = intent['action']
         tool = intent.get('tool')
         
@@ -361,7 +390,7 @@ class ChatService:
         )
         
         # Generate system prompt (clean, no tool instructions)
-        system_prompt = self.generate_system_prompt(action)
+        system_prompt = self.generate_system_prompt(action, message)
         
         # Get conversation history
         history = self.get_history(session_id)
