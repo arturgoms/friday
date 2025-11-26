@@ -14,11 +14,12 @@ class IntentRouter:
 
 Your job is to output a JSON object with the following structure:
 {
-    "action": "web_search" | "health_query" | "time_query" | "calendar_query" | "reminder_query" | "reminder_create" | "general",
+    "action": "web_search" | "health_query" | "time_query" | "calendar_query" | "reminder_query" | "reminder_create" | "reminder_delete" | "general",
     "use_rag": true/false,
     "use_memory": true/false,
     "tool": "current_time" | "calendar_today" | "calendar_tomorrow" | "calendar_week" | "calendar_next" | "reminder_list" | "reminder_next" | null,
-    "reminder_data": {"message": "...", "time_spec": "..."} | null
+    "reminder_data": {"message": "...", "time_spec": "..."} | null,
+    "reminder_index": null | int
 }
 
 IMPORTANT: For vague follow-up questions like "what about yesterday's?" or "and today?", look for context clues:
@@ -57,7 +58,13 @@ RULES:
    - Extract message and time specification to reminder_data
    - Set use_rag=false, use_memory=false
 
-7. **general**: Use for everything else (greetings, questions about notes, personal info)
+7. **reminder_delete**: Use when user wants to delete/remove/cancel reminders
+   - Examples: "delete reminder 3", "cancel the second reminder", "remove first reminder", "delete all reminders"
+   - Extract the reminder number/index to reminder_index (1-based, convert to 0-based)
+   - For "delete all", set reminder_index to -999 (special value meaning "all")
+   - Set use_rag=false, use_memory=false
+
+8. **general**: Use for everything else (greetings, questions about notes, personal info)
    - Set use_rag=true, use_memory=true
 
 Examples:
@@ -84,13 +91,22 @@ USER: "do I have any reminders?"
 OUTPUT: {"action": "reminder_query", "use_rag": false, "use_memory": false, "tool": "reminder_list", "reminder_data": null}
 
 USER: "remind me to take out trash in 30 minutes"
-OUTPUT: {"action": "reminder_create", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": {"message": "take out trash", "time_spec": "30 minutes"}}
+OUTPUT: {"action": "reminder_create", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": {"message": "take out trash", "time_spec": "30 minutes"}, "reminder_index": null}
+
+USER: "delete reminder 2"
+OUTPUT: {"action": "reminder_delete", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": 1}
+
+USER: "cancel the first reminder"
+OUTPUT: {"action": "reminder_delete", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": 0}
+
+USER: "delete all reminders"
+OUTPUT: {"action": "reminder_delete", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": -999}
 
 USER: "what did I write about machine learning?"
-OUTPUT: {"action": "general", "use_rag": true, "use_memory": true, "tool": null, "reminder_data": null}
+OUTPUT: {"action": "general", "use_rag": true, "use_memory": true, "tool": null, "reminder_data": null, "reminder_index": null}
 
 USER: "hello"
-OUTPUT: {"action": "general", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null}
+OUTPUT: {"action": "general", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null}
 
 Respond ONLY with valid JSON. No explanations."""
     

@@ -1,5 +1,7 @@
 """Chat service with two-stage LLM architecture (Intent Router + Response Generator)."""
 import uuid
+import asyncio
+import threading
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Tuple
 from app.core.config import settings
@@ -12,6 +14,7 @@ from app.services.intent.router import intent_router
 from app.services.date_tools import date_tools
 from app.services.reminders import reminder_service
 from app.services.calendar_service import calendar_service
+from app.services.post_chat_processor import post_chat_processor
 
 
 class ChatService:
@@ -252,8 +255,11 @@ class ChatService:
             pending = reminder_service.list_pending_reminders()
             if pending:
                 result = "Your pending reminders:\n"
-                for r in pending:
-                    result += f"• {r['message']} (at {r['remind_at']})\n"
+                for idx, r in enumerate(pending, 1):
+                    # Format the datetime nicely
+                    remind_time = r.remind_at.strftime("%Y-%m-%d at %I:%M %p")
+                    result += f"{idx}. {r.message} (at {remind_time})\n"
+                result += f"\n💡 To delete: say 'delete reminder 1' or 'cancel reminder 2'"
                 return result
             return "You have no pending reminders."
         
@@ -264,7 +270,12 @@ class ChatService:
                 next_r = pending[0]
                 user_tz = settings.user_timezone
                 now = datetime.now(user_tz)
-                remind_time = datetime.fromisoformat(next_r['remind_at'].replace('Z', '+00:00'))
+                
+                # Handle timezone-aware comparison
+                remind_time = next_r.remind_at
+                if remind_time.tzinfo is None:
+                    remind_time = remind_time.replace(tzinfo=user_tz)
+                
                 time_diff = remind_time - now
                 
                 minutes = int(time_diff.total_seconds() // 60)
@@ -276,7 +287,7 @@ class ChatService:
                 else:
                     time_text = f"{mins} minute(s)"
                 
-                return f"Your next reminder is '{next_r['message']}' in {time_text}"
+                return f"Your next reminder is '{next_r.message}' in {time_text}"
             return "You have no pending reminders."
         
         return ""
@@ -364,6 +375,176 @@ class ChatService:
         intent = intent_router.route(message, last_message=last_user_msg)
         action = intent['action']
         tool = intent.get('tool')
+        reminder_data = intent.get('reminder_data')
+        reminder_index = intent.get('reminder_index')
+        
+        # Handle reminder deletion
+        if action == 'reminder_delete' and reminder_index is not None:
+            logger.info(f"[Stage 1] Deleting reminder at index: {reminder_index}")
+            try:
+                # Get list of pending reminders
+                pending = reminder_service.list_pending_reminders()
+                
+                if not pending:
+                    answer = "You have no pending reminders to delete."
+                elif reminder_index == -999:
+                    # Delete ALL reminders
+                    deleted_count = 0
+                    for reminder in pending:
+                        if reminder_service.cancel_reminder(reminder.id):
+                            deleted_count += 1
+                    
+                    if deleted_count > 0:
+                        answer = f"✅ Deleted all {deleted_count} reminder(s)"
+                    else:
+                        answer = "❌ Failed to delete reminders"
+                else:
+                    # Handle "last" reminder (index -1)
+                    if reminder_index == -1:
+                        reminder_index = len(pending) - 1
+                    
+                    # Validate index
+                    if reminder_index < 0 or reminder_index >= len(pending):
+                        answer = f"❌ Invalid reminder number. You have {len(pending)} reminder(s). Please specify a number between 1 and {len(pending)}."
+                    else:
+                        # Get the reminder to delete
+                        reminder_to_delete = pending[reminder_index]
+                        
+                        # Cancel it
+                        success = reminder_service.cancel_reminder(reminder_to_delete.id)
+                        
+                        if success:
+                            answer = f"✅ Deleted reminder: '{reminder_to_delete.message}'"
+                        else:
+                            answer = f"❌ Failed to delete reminder"
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+            except Exception as e:
+                logger.error(f"Reminder deletion error: {e}", exc_info=True)
+                answer = f"❌ Failed to delete reminder: {str(e)}"
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+        
+        # Handle reminder creation
+        if action == 'reminder_create' and reminder_data:
+            logger.info(f"[Stage 1] Creating reminder: {reminder_data}")
+            try:
+                import re
+                reminder_msg = reminder_data.get('message', '')
+                time_spec = reminder_data.get('time_spec', '').lower()
+                
+                # Parse time specification
+                reminder_obj = None
+                
+                # Try relative time first (e.g., "30 minutes", "2 hours", "in 30 minutes")
+                minutes_match = re.search(r'(\d+)\s*minute', time_spec)
+                hours_match = re.search(r'(\d+)\s*hour', time_spec)
+                
+                if minutes_match:
+                    minutes = int(minutes_match.group(1))
+                    reminder_obj = reminder_service.create_reminder(reminder_msg, minutes=minutes)
+                    user_tz = settings.user_timezone
+                    remind_time = (datetime.now(user_tz) + timedelta(minutes=minutes)).strftime("%I:%M %p")
+                    answer = f"✅ Reminder set: '{reminder_msg}' at {remind_time} ({minutes} minutes from now)"
+                    
+                elif hours_match:
+                    hours = int(hours_match.group(1))
+                    reminder_obj = reminder_service.create_reminder(reminder_msg, hours=hours)
+                    user_tz = settings.user_timezone
+                    remind_time = (datetime.now(user_tz) + timedelta(hours=hours)).strftime("%I:%M %p")
+                    answer = f"✅ Reminder set: '{reminder_msg}' at {remind_time} ({hours} hours from now)"
+                    
+                else:
+                    # Try absolute time (e.g., "15:40", "3pm", "15:40 today", "3pm tomorrow")
+                    # Extract time part (HH:MM or H:MMpm format)
+                    time_match = re.search(r'(\d{1,2}):(\d{2})|(\d{1,2})\s*(am|pm)', time_spec)
+                    
+                    if time_match:
+                        # Determine date: today, tomorrow, or specific date
+                        if 'tomorrow' in time_spec:
+                            user_tz = settings.user_timezone
+                            target_date = (datetime.now(user_tz) + timedelta(days=1)).strftime("%Y-%m-%d")
+                            on_date = target_date
+                        else:
+                            # Default to today
+                            on_date = "today"
+                        
+                        # Extract time and convert to HH:MM format
+                        if time_match.group(1):  # HH:MM format (already correct)
+                            at_time = f"{time_match.group(1)}:{time_match.group(2)}"
+                            display_time = at_time
+                        else:  # H am/pm format - convert to HH:MM
+                            hour = int(time_match.group(3))
+                            ampm = time_match.group(4).lower()
+                            
+                            # Convert to 24-hour format
+                            if ampm == 'pm' and hour != 12:
+                                hour += 12
+                            elif ampm == 'am' and hour == 12:
+                                hour = 0
+                            
+                            at_time = f"{hour:02d}:00"
+                            display_time = f"{time_match.group(3)}{ampm}"
+                        
+                        reminder_obj = reminder_service.create_reminder(
+                            reminder_msg, 
+                            at_time=at_time,
+                            on_date=on_date
+                        )
+                        answer = f"✅ Reminder set: '{reminder_msg}' at {display_time}"
+                        if on_date != "today":
+                            answer += f" on {on_date}"
+                    else:
+                        answer = f"❌ Couldn't parse time '{time_spec}'. Try: 'in 30 minutes', 'at 3pm', or 'at 15:40'"
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+            except Exception as e:
+                logger.error(f"Reminder creation error: {e}", exc_info=True)
+                answer = f"❌ Failed to create reminder: {str(e)}"
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
         
         # If it's a tool query, execute it directly and return
         if tool:
@@ -413,11 +594,23 @@ class ChatService:
         # Update conversation history
         self.update_history(session_id, message, answer)
         
-        # Memory extraction (skip for tool/health/web queries)
-        extracted_memory = None
+        # Post-chat processing: Extract memories and tasks in background thread
         if save_memory and action == 'general':
-            # Only extract memory for general conversations
-            logger.debug(f"Skipping memory extraction for action: {action}")
+            # Run async processing in background thread (don't block response)
+            def run_async_processor():
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(
+                        post_chat_processor.process_conversation(message, answer)
+                    )
+                    loop.close()
+                except Exception as e:
+                    logger.error(f"Post-chat processing error: {e}", exc_info=True)
+            
+            thread = threading.Thread(target=run_async_processor, daemon=True)
+            thread.start()
+            logger.info("Started post-chat processing thread (memory & task extraction)")
         
         return {
             "session_id": session_id,
@@ -429,7 +622,7 @@ class ChatService:
             "used_health": used_health,
             "obsidian_chunks": obsidian_chunks,
             "memory_items": memory_items,
-            "extracted_memory": extracted_memory,
+            "extracted_memory": None,  # Deprecated - now handled by post_chat_processor
         }
 
 

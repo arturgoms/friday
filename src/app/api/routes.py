@@ -1,14 +1,18 @@
 """API routes."""
-from typing import Optional
-from fastapi import APIRouter, HTTPException, Header
+from typing import Optional, List
+from fastapi import APIRouter, HTTPException, Header, Query
 from fastapi.responses import StreamingResponse
 from app.core.config import settings
 from app.core.logging import logger
-from app.models.schemas import ChatRequest, ChatResponse, RememberRequest
+from app.models.schemas import (
+    ChatRequest, ChatResponse, RememberRequest,
+    TaskCreate, TaskUpdate, TaskResponse
+)
 from app.services.chat import chat_service
 from app.services.obsidian import obsidian_service
 from app.services.vector_store import vector_store
 from app.services.llm import llm_service
+from app.services.task_manager import task_manager
 
 router = APIRouter()
 
@@ -271,4 +275,157 @@ def clear_all_memories(x_api_key: Optional[str] = Header(None)):
         return {"status": "ok", "message": f"Cleared {count} total memories"}
     except Exception as e:
         logger.error(f"Clear all memories error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ===== TASK MANAGEMENT ENDPOINTS =====
+
+@router.post("/tasks", response_model=TaskResponse)
+def create_task(task: TaskCreate, x_api_key: Optional[str] = Header(None)):
+    """Create a new task."""
+    verify_auth(x_api_key)
+    
+    try:
+        task_id = task_manager.create_task(
+            title=task.title,
+            description=task.description,
+            due_date_str=task.due_date,
+            priority=task.priority,
+            context=task.context,
+            energy_level=task.energy_level,
+            project=task.project,
+            people=task.people
+        )
+        
+        task_data = task_manager.get_task(task_id)
+        if not task_data:
+            raise HTTPException(status_code=404, detail="Task not found after creation")
+        
+        return TaskResponse(**task_data)
+    
+    except Exception as e:
+        logger.error(f"Create task error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/tasks", response_model=List[TaskResponse])
+def list_tasks(
+    x_api_key: Optional[str] = Header(None),
+    status: Optional[str] = Query(None, description="Filter by status: pending, in_progress, completed, cancelled"),
+    context: Optional[str] = Query(None, description="Filter by context: home, work, gym, etc."),
+    priority: Optional[str] = Query(None, description="Filter by priority: Low, Medium, High, Urgent"),
+    due_soon: bool = Query(False, description="Only show tasks due within 7 days")
+):
+    """List all tasks with optional filters."""
+    verify_auth(x_api_key)
+    
+    try:
+        tasks = task_manager.list_tasks(
+            status=status,
+            context=context,
+            priority=priority,
+            due_soon=due_soon
+        )
+        return [TaskResponse(**t) for t in tasks]
+    
+    except Exception as e:
+        logger.error(f"List tasks error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/tasks/today", response_model=List[TaskResponse])
+def get_today_tasks(x_api_key: Optional[str] = Header(None)):
+    """Get tasks due today."""
+    verify_auth(x_api_key)
+    
+    try:
+        tasks = task_manager.get_today_tasks()
+        return [TaskResponse(**t) for t in tasks]
+    
+    except Exception as e:
+        logger.error(f"Get today tasks error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/tasks/{task_id}", response_model=TaskResponse)
+def get_task(task_id: int, x_api_key: Optional[str] = Header(None)):
+    """Get a specific task by ID."""
+    verify_auth(x_api_key)
+    
+    try:
+        task_data = task_manager.get_task(task_id)
+        if not task_data:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        return TaskResponse(**task_data)
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get task error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/tasks/{task_id}", response_model=TaskResponse)
+def update_task(task_id: int, task: TaskUpdate, x_api_key: Optional[str] = Header(None)):
+    """Update a task."""
+    verify_auth(x_api_key)
+    
+    try:
+        # Build update dict with only provided fields
+        updates = {}
+        if task.title is not None:
+            updates["title"] = task.title
+        if task.description is not None:
+            updates["description"] = task.description
+        if task.status is not None:
+            updates["status"] = task.status
+        if task.due_date is not None:
+            updates["due_date"] = task.due_date
+        if task.priority is not None:
+            updates["priority"] = task.priority
+        if task.context is not None:
+            updates["context"] = task.context
+        if task.energy_level is not None:
+            updates["energy_level"] = task.energy_level
+        if task.project is not None:
+            updates["project"] = task.project
+        if task.people is not None:
+            updates["people"] = task.people
+        
+        task_manager.update_task(task_id, **updates)
+        
+        task_data = task_manager.get_task(task_id)
+        if not task_data:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        return TaskResponse(**task_data)
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update task error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/tasks/{task_id}")
+def delete_task(task_id: int, x_api_key: Optional[str] = Header(None)):
+    """Delete a task."""
+    verify_auth(x_api_key)
+    
+    try:
+        # Verify task exists
+        task_data = task_manager.get_task(task_id)
+        if not task_data:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        # Mark as cancelled instead of deleting
+        task_manager.update_task(task_id, status="cancelled")
+        
+        return {"status": "ok", "message": f"Task {task_id} cancelled"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete task error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
