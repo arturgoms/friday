@@ -39,14 +39,14 @@
     "message": "Review and respond to emails",
     "remind_at": "2025-11-26T14:30:00-03:00",
     "created_at": "2025-11-25T23:18:01.133871-03:00",
-    "status": "pending"
+    "status": "cancelled"
   },
   {
     "id": "b63c1230-497f-4e0d-9a70-858bf415987a",
     "message": "Prepare dinner ingredients",
     "remind_at": "2025-11-26T17:00:00-03:00",
     "created_at": "2025-11-25T23:18:01.134372-03:00",
-    "status": "pending"
+    "status": "cancelled"
   },
   {
     "id": "1e4e455c-76f9-475e-a1dd-81a81bc8cfc6",
@@ -54,5 +54,75 @@
     "remind_at": "2025-11-25T23:48:48.473233-03:00",
     "created_at": "2025-11-25T23:18:48.473233-03:00",
     "status": "sent"
+  },
+  {
+    "id": "f036d0c2-04c1-425d-b7cd-0fd565daa234",
+    "message": "pick up the mixer",
+    "remind_at": "2025-11-26T15:40:00-03:00",
+    "created_at": "2025-11-26T12:08:08.451205-03:00",
+    "status": "cancelled"
+  },
+  {
+    "id": "5488b64e-ea84-49af-9bd5-b13a6c0381d5",
+    "message": "call mom",
+    "remind_at": "2025-11-26T12:38:21.859707-03:00",
+    "created_at": "2025-11-26T12:08:21.859707-03:00",
+    "status": "cancelled"
+  },
+  {
+    "id": "bd8bd717-5853-4754-ba44-4e8f8d78fe3d",
+    "message": "take a break",
+    "remind_at": "2025-11-26T14:08:23.701007-03:00",
+    "created_at": "2025-11-26T12:08:23.701007-03:00",
+    "status": "cancelled"
+  },
+  {
+    "id": "afd4dd00-9e33-4ba0-b58a-850c1977a9e3",
+    "message": "check email",
+    "remind_at": "2025-11-26T17:00:00-03:00",
+    "created_at": "2025-11-26T12:08:50.204412-03:00",
+    "status": "cancelled"
+  },
+  {
+    "id": "7899fc3b-8382-424b-bb73-4286e94bfb9f",
+    "message": "take medicine",
+    "remind_at": "2025-11-27T09:00:00-03:00",
+    "created_at": "2025-11-26T12:08:51.124785-03:00",
+    "status": "cancelled"
+  },
+  {
+    "id": "7158489c-6bf7-4324-9a65-6f2a13c46c10",
+    "message": "go pick up the mixer",
+    "remind_at": "2025-11-26T15:40:00-03:00",
+    "created_at": "2025-11-26T12:09:03.514298-03:00",
+    "status": "cancelled"
+  },
+  {
+    "id": "679fc6b0-a52a-4982-a1aa-9372df76dc80",
+    "message": "test feature A",
+    "remind_at": "2025-11-26T12:44:07.287788-03:00",
+    "created_at": "2025-11-26T12:14:07.287788-03:00",
+    "status": "cancelled"
+  },
+  {
+    "id": "3cdb9e93-3f84-4d94-8075-47b55db812fc",
+    "message": "test feature B",
+    "remind_at": "2025-11-26T18:00:00-03:00",
+    "created_at": "2025-11-26T12:14:08.347676-03:00",
+    "status": "cancelled"
+  },
+  {
+    "id": "c63a9eea-158b-47ce-8b83-cb4a9b9b6538",
+    "message": "go pick up the mixer",
+    "remind_at": "2025-11-26T15:40:00-03:00",
+    "created_at": "2025-11-26T12:16:32.221466-03:00",
+    "status": "cancelled"
+  },
+  {
+    "id": "efe8e6d7-9707-4f4b-ab78-335a651c73c7",
+    "message": "go pick up the mixer",
+    "remind_at": "2025-11-26T15:40:00-03:00",
+    "created_at": "2025-11-26T12:34:18.265459-03:00",
+    "status": "pending"
   }
 ]

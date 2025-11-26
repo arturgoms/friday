@@ -14,6 +14,7 @@ def generate_morning_report(health_coach, calendar_service, llm_service) -> str:
     
     Includes:
     - Today's calendar
+    - Today's tasks
     - Today's reminders
     - Sleep quality
     - Training readiness (Garmin)
@@ -24,6 +25,8 @@ def generate_morning_report(health_coach, calendar_service, llm_service) -> str:
     - AI-generated autism-friendly insight
     """
     from app.core.config import settings
+    from app.services.task_manager import task_manager
+    
     user_tz = settings.user_timezone
     now = datetime.now(user_tz)
     today = now.strftime("%A, %B %d, %Y")
@@ -32,6 +35,7 @@ def generate_morning_report(health_coach, calendar_service, llm_service) -> str:
     data = {
         "date": today,
         "calendar": [],
+        "tasks": [],
         "reminders": [],
         "sleep": None,
         "recovery": None,
@@ -51,6 +55,19 @@ def generate_morning_report(health_coach, calendar_service, llm_service) -> str:
                 })
     except Exception as e:
         print(f"Calendar error: {e}")
+    
+    # 1.5. TASKS DUE TODAY
+    try:
+        tasks = task_manager.get_today_tasks()
+        for task in tasks:
+            data["tasks"].append({
+                "title": task["title"],
+                "priority": task["priority"],
+                "context": task.get("context"),
+                "project": task.get("project")
+            })
+    except Exception as e:
+        print(f"Tasks error: {e}")
     
     # 2. REMINDERS FOR TODAY
     try:
@@ -136,6 +153,38 @@ def generate_morning_report(health_coach, calendar_service, llm_service) -> str:
     else:
         report_lines.append("📅 **Today's Schedule:** No scheduled events")
     report_lines.append("")
+    
+    # TASKS
+    if data["tasks"]:
+        report_lines.append("✅ **Today's Tasks:**")
+        
+        # Group by priority for better clarity
+        urgent = [t for t in data["tasks"] if t["priority"] == "Urgent"]
+        high = [t for t in data["tasks"] if t["priority"] == "High"]
+        medium = [t for t in data["tasks"] if t["priority"] == "Medium"]
+        low = [t for t in data["tasks"] if t["priority"] == "Low"]
+        
+        for task in urgent:
+            context_str = f" ({task['context']})" if task.get('context') else ""
+            project_str = f" [{task['project']}]" if task.get('project') else ""
+            report_lines.append(f"• 🔴 **{task['title']}**{context_str}{project_str}")
+        
+        for task in high:
+            context_str = f" ({task['context']})" if task.get('context') else ""
+            project_str = f" [{task['project']}]" if task.get('project') else ""
+            report_lines.append(f"• 🟠 {task['title']}{context_str}{project_str}")
+        
+        for task in medium:
+            context_str = f" ({task['context']})" if task.get('context') else ""
+            project_str = f" [{task['project']}]" if task.get('project') else ""
+            report_lines.append(f"• 🟡 {task['title']}{context_str}{project_str}")
+        
+        for task in low:
+            context_str = f" ({task['context']})" if task.get('context') else ""
+            project_str = f" [{task['project']}]" if task.get('project') else ""
+            report_lines.append(f"• 🟢 {task['title']}{context_str}{project_str}")
+        
+        report_lines.append("")
     
     # REMINDERS
     if data["reminders"]:
@@ -225,6 +274,7 @@ User Profile:
 Today's Data:
 - Date: {data['date']}
 - Calendar: {len(data['calendar'])} events scheduled
+- Tasks: {len(data['tasks'])} tasks due today
 - Sleep Score: {data['sleep']['sleep_score'] if data['sleep'] else 'N/A'}/100
 - Sleep Duration: {data['sleep']['total_sleep_hours'] if data['sleep'] else 'N/A'} hours
 - Training Readiness: {data['recovery'].get('training_readiness', 'N/A') if data['recovery'] else 'N/A'}/100
@@ -235,7 +285,7 @@ Guidelines:
 1. Be clear, direct, and specific (no vague language)
 2. Provide structured, actionable recommendations
 3. Consider sensory sensitivities (weather, crowds, etc.)
-4. Acknowledge any scheduling demands
+4. Acknowledge any scheduling demands and task load
 5. Suggest concrete coping strategies if day seems challenging
 6. Be encouraging but realistic
 7. Keep it brief (3-4 bullet points max)

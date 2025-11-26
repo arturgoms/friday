@@ -89,6 +89,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/start - Show this message\n"
         "/help - Show help\n"
         "/remember <text> - Save a memory\n"
+        "/reminders - List all pending reminders\n"
         "/sync - Sync with Nextcloud\n"
         "/stats - Show system stats\n\n"
         "*Just send me a message* to ask anything!\n\n"
