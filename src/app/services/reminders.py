@@ -65,8 +65,8 @@ class ReminderService:
                     data = json.load(f)
                     self.reminders = [Reminder.from_dict(r) for r in data]
                     # Remove old completed reminders (older than 7 days)
-                    from datetime import timezone, timedelta
-                    user_tz = timezone(timedelta(hours=-3))
+                    from app.core.config import settings
+                    user_tz = settings.user_timezone
                     cutoff = datetime.now(user_tz) - timedelta(days=7)
                     
                     # Make cutoff timezone-naive if needed for comparison
@@ -123,9 +123,9 @@ class ReminderService:
         Returns:
             Created reminder
         """
-        # Use user's timezone (UTC-3)
-        from datetime import timezone
-        user_tz = timezone(timedelta(hours=-3))
+        # Use user's timezone
+        from app.core.config import settings
+        user_tz = settings.user_timezone
         now = datetime.now(user_tz)
         
         # Calculate remind time
@@ -179,7 +179,8 @@ class ReminderService:
         """Update the time of an existing reminder."""
         for reminder in self.reminders:
             if reminder.id == reminder_id and reminder.status == "pending":
-                user_tz = timezone(timedelta(hours=-3))
+                from app.core.config import settings
+                user_tz = settings.user_timezone
                 now = datetime.now(user_tz)
                 
                 if minutes:
@@ -233,7 +234,8 @@ class ReminderService:
     def _check_and_send_reminders(self):
         """Check for due reminders and send them."""
         # Use timezone-aware datetime to match reminder times
-        user_tz = timezone(timedelta(hours=-3))
+        from app.core.config import settings
+        user_tz = settings.user_timezone
         now = datetime.now(user_tz)
         
         for reminder in self.reminders:

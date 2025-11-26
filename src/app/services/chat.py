@@ -227,7 +227,7 @@ class ChatService:
             events = calendar_service.get_upcoming_events(days=30)
             if events:
                 next_event = events[0]
-                user_tz = timezone(timedelta(hours=-3))
+                user_tz = settings.user_timezone
                 now = datetime.now(user_tz)
                 time_diff = next_event.start.replace(tzinfo=user_tz) - now
                 days = time_diff.days
@@ -262,7 +262,7 @@ class ChatService:
             if pending:
                 # Get the next reminder (first in the sorted list)
                 next_r = pending[0]
-                user_tz = timezone(timedelta(hours=-3))
+                user_tz = settings.user_timezone
                 now = datetime.now(user_tz)
                 remind_time = datetime.fromisoformat(next_r['remind_at'].replace('Z', '+00:00'))
                 time_diff = remind_time - now
@@ -283,7 +283,7 @@ class ChatService:
     
     def generate_system_prompt(self, action: str, message: str = "") -> str:
         """Generate clean system prompt based on action (no tool pollution)."""
-        user_tz = timezone(timedelta(hours=-3))
+        user_tz = settings.user_timezone
         now = datetime.now(user_tz)
         today = now.strftime("%A, %B %d, %Y")
         

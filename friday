@@ -29,8 +29,27 @@ case "$1" in
         ;;
     
     test)
+        TEST_TYPE="${2:-all}"
         cd "$FRIDAY_DIR"
-        bash scripts/testing/test_friday.sh
+        
+        case "$TEST_TYPE" in
+            unit)
+                echo "Running unit tests..."
+                pipenv run pytest -m unit tests/
+                ;;
+            integration)
+                echo "Running integration tests..."
+                pipenv run pytest -m integration tests/
+                ;;
+            bash)
+                echo "Running bash test script..."
+                bash scripts/testing/test_friday.sh
+                ;;
+            all|*)
+                echo "Running all pytest tests..."
+                pipenv run pytest tests/
+                ;;
+        esac
         ;;
     
     reminders)
@@ -278,7 +297,7 @@ Commands:
   logs [service]          Tail logs (friday|vllm|telegram_bot|homelab_monitor)
   notify "msg" [sev]      Send notification (severity: info|warning|error|success|critical)
   report                  Send system status report via Telegram
-  test                    Run test suite
+  test [type]             Run tests (all|unit|integration|bash)
   reminders [action]      Manage reminders (list|cancel <id>)
   memory [action]         Manage memories (add|list|delete|clear|drop-all)
   monitor                 Show system monitor
@@ -292,7 +311,9 @@ Examples:
   friday logs friday
   friday notify "Backup complete!" success
   friday report
-  friday test
+  friday test              # Run all tests
+  friday test unit         # Run only unit tests
+  friday test integration  # Run only integration tests
   friday reminders list
   friday reminders cancel abc12345
   friday memory add "I love pizza"

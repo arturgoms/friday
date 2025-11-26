@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 from typing import Optional
+from datetime import timezone, timedelta
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -26,6 +27,9 @@ class Settings(BaseModel):
     api_key: Optional[str] = os.getenv("FRIDAY_API_KEY", None)
     authorized_user: str = "artur"
     
+    # Timezone (UTC-3 / BRT - Brasília Time)
+    timezone_offset_hours: int = -3
+    
     # RAG parameters
     top_k_obsidian: int = 5
     neighbor_range: int = 1
@@ -42,6 +46,11 @@ class Settings(BaseModel):
     
     class Config:
         env_file = ".env"
+    
+    @property
+    def user_timezone(self):
+        """Get user's timezone as a timezone object."""
+        return timezone(timedelta(hours=self.timezone_offset_hours))
 
 
 settings = Settings()

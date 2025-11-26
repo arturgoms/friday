@@ -11,28 +11,28 @@
     "message": "Review daily tasks and priorities",
     "remind_at": "2025-11-26T01:16:45.191728-03:00",
     "created_at": "2025-11-25T23:16:45.191728-03:00",
-    "status": "pending"
+    "status": "sent"
   },
   {
     "id": "d84f81b4-18c3-458f-9295-b2ffcb7c1c56",
     "message": "Take afternoon break and stretch",
     "remind_at": "2025-11-26T04:16:45.191906-03:00",
     "created_at": "2025-11-25T23:16:45.191906-03:00",
-    "status": "pending"
+    "status": "sent"
   },
   {
     "id": "a2e49f5d-8eb7-4f99-90c1-28d0b6d49bb3",
     "message": "Call dentist to schedule appointment",
     "remind_at": "2025-11-26T02:16:00-03:00",
     "created_at": "2025-11-25T23:16:45.192377-03:00",
-    "status": "pending"
+    "status": "sent"
   },
   {
     "id": "538aed92-8801-43d8-8e7f-da941ae5fc39",
     "message": "Take vitamins and supplements",
     "remind_at": "2025-11-26T10:00:00-03:00",
     "created_at": "2025-11-25T23:18:01.133698-03:00",
-    "status": "pending"
+    "status": "sent"
   },
   {
     "id": "f3b67dcb-c111-433b-9bc1-406256259fd5",

@@ -20,7 +20,8 @@ def generate_evening_report(health_coach, calendar_service, llm_service) -> str:
     - Tomorrow's calendar
     - AI-generated autism-friendly evening insight
     """
-    user_tz = timezone(timedelta(hours=-3))
+    from app.core.config import settings
+    user_tz = settings.user_timezone
     now = datetime.now(user_tz)
     today = now.strftime("%A, %B %d, %Y")
     tomorrow = (now + timedelta(days=1)).strftime("%A, %B %d, %Y")

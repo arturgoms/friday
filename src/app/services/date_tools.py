@@ -8,17 +8,28 @@ class DateTools:
     """Tools for date calculations and formatting."""
     
     def get_current_datetime(self) -> Dict[str, Any]:
-        """Get current date and time information."""
-        now = datetime.now()
+        """Get current date and time information in user's timezone."""
+        from app.core.config import settings
+        user_tz = settings.user_timezone
+        now = datetime.now(user_tz)
         return {
             "date": now.strftime("%Y-%m-%d"),
             "time": now.strftime("%H:%M:%S"),
+            "time_12h": now.strftime("%I:%M %p"),
             "day_of_week": now.strftime("%A"),
             "month": now.strftime("%B"),
             "year": now.year,
             "timestamp": now.timestamp(),
             "iso_format": now.isoformat(),
+            "timezone": f"UTC{settings.timezone_offset_hours:+d}",
         }
+    
+    def get_current_time(self) -> str:
+        """Get current time in readable format (for tool use)."""
+        from app.core.config import settings
+        user_tz = settings.user_timezone
+        now = datetime.now(user_tz)
+        return f"{now.strftime('%I:%M %p')} (UTC{settings.timezone_offset_hours:+d})"
     
     def days_between(self, date1: str, date2: str | None = None) -> int:
         """
@@ -32,8 +43,11 @@ class DateTools:
             Number of days between the dates
         """
         try:
+            from app.core.config import settings
+            user_tz = settings.user_timezone
+            
             d1 = datetime.strptime(date1, "%Y-%m-%d")
-            d2 = datetime.strptime(date2, "%Y-%m-%d") if date2 else datetime.now()
+            d2 = datetime.strptime(date2, "%Y-%m-%d") if date2 else datetime.now(user_tz)
             delta = d1 - d2
             return abs(delta.days)
         except ValueError as e:
@@ -50,8 +64,13 @@ class DateTools:
             Number of days until target date (negative if in the past)
         """
         try:
+            from app.core.config import settings
+            user_tz = settings.user_timezone
+            
             target = datetime.strptime(target_date, "%Y-%m-%d")
-            today = datetime.now()
+            # Make target timezone-aware
+            target = target.replace(tzinfo=user_tz)
+            today = datetime.now(user_tz)
             delta = target - today
             return delta.days
         except ValueError as e:
@@ -68,15 +87,18 @@ class DateTools:
         Returns:
             Number of days until next birthday
         """
-        today = datetime.now()
+        from app.core.config import settings
+        user_tz = settings.user_timezone
+        
+        today = datetime.now(user_tz)
         current_year = today.year
         
-        # Try this year's birthday
-        birthday = datetime(current_year, birth_month, birth_day)
+        # Try this year's birthday (make timezone-aware)
+        birthday = datetime(current_year, birth_month, birth_day, tzinfo=user_tz)
         
         # If birthday has passed this year, use next year
         if birthday < today:
-            birthday = datetime(current_year + 1, birth_month, birth_day)
+            birthday = datetime(current_year + 1, birth_month, birth_day, tzinfo=user_tz)
         
         delta = birthday - today
         return delta.days
@@ -94,6 +116,9 @@ class DateTools:
         Returns:
             Date in YYYY-MM-DD format
         """
+        from app.core.config import settings
+        user_tz = settings.user_timezone
+        
         date_text = date_text.strip()
         
         # Try common formats
@@ -111,7 +136,7 @@ class DateTools:
                 parsed = datetime.strptime(date_text, fmt)
                 # If year not provided, use current or next year
                 if parsed.year == 1900:
-                    current_year = datetime.now().year
+                    current_year = datetime.now(user_tz).year
                     parsed = parsed.replace(year=current_year)
                 return parsed.strftime("%Y-%m-%d")
             except ValueError:
@@ -124,15 +149,19 @@ class DateTools:
         return """
 Available date calculation tools:
 
-1. get_current_datetime() - Get current date/time info
-2. days_between(date1, date2=None) - Days between two dates (YYYY-MM-DD)
-3. days_until(target_date) - Days until a specific date from today
-4. days_until_birthday(month, day) - Days until next birthday
-5. parse_date_from_text(date_text) - Parse common date formats
+1. get_current_datetime() - Get current date/time info (with timezone)
+2. get_current_time() - Get current time in readable format (HH:MM AM/PM with timezone)
+3. days_between(date1, date2=None) - Days between two dates (YYYY-MM-DD)
+4. days_until(target_date) - Days until a specific date from today
+5. days_until_birthday(month, day) - Days until next birthday
+6. parse_date_from_text(date_text) - Parse common date formats
 
 Examples:
+- get_current_time() -> "09:54 AM (UTC-3)"
 - days_until_birthday(3, 30) -> days until March 30
 - days_between("2025-03-30", "2025-11-24") -> 239
+
+Note: All times are in user's timezone (UTC-3 / Brasília Time)
 """
 
 

@@ -57,6 +57,10 @@ class CalendarService:
     
     def connect(self):
         """Connect to CalDAV server."""
+        if not self.url or not self.username or not self.password:
+            logger.error("Missing CalDAV credentials")
+            return
+        
         try:
             self.client = caldav.DAVClient(
                 url=self.url,
@@ -85,7 +89,8 @@ class CalendarService:
             return []
         
         try:
-            user_tz = timezone(timedelta(hours=-3))
+            from app.core.config import settings
+            user_tz = settings.user_timezone
             start = datetime.now(user_tz)
             end = start + timedelta(days=days)
             
@@ -142,7 +147,8 @@ class CalendarService:
             return []
         
         try:
-            user_tz = timezone(timedelta(hours=-3))
+            from app.core.config import settings
+            user_tz = settings.user_timezone
             now = datetime.now(user_tz)
             start = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
             end = start + timedelta(days=1)
@@ -197,7 +203,8 @@ class CalendarService:
             return []
         
         try:
-            user_tz = timezone(timedelta(hours=-3))
+            from app.core.config import settings
+            user_tz = settings.user_timezone
             now = datetime.now(user_tz)
             start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             end = start + timedelta(days=1)

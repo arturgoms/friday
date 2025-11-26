@@ -114,7 +114,8 @@ class GoogleCalendarService:
             events = events_result.get('items', [])
             
             parsed_events = []
-            user_tz = timezone(timedelta(hours=-3))
+            from app.core.config import settings
+            user_tz = settings.user_timezone
             
             for event in events:
                 try:
@@ -154,7 +155,8 @@ class GoogleCalendarService:
     
     def get_today_events(self) -> List[CalendarEvent]:
         """Get today's events."""
-        user_tz = timezone(timedelta(hours=-3))
+        from app.core.config import settings
+        user_tz = settings.user_timezone
         now = datetime.now(user_tz)
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1)
@@ -162,7 +164,8 @@ class GoogleCalendarService:
     
     def get_tomorrow_events(self) -> List[CalendarEvent]:
         """Get tomorrow's events."""
-        user_tz = timezone(timedelta(hours=-3))
+        from app.core.config import settings
+        user_tz = settings.user_timezone
         now = datetime.now(user_tz)
         start = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1)
@@ -170,7 +173,8 @@ class GoogleCalendarService:
     
     def get_upcoming_events(self, days: int = 7) -> List[CalendarEvent]:
         """Get upcoming events for the next N days."""
-        user_tz = timezone(timedelta(hours=-3))
+        from app.core.config import settings
+        user_tz = settings.user_timezone
         start = datetime.now(user_tz)
         end = start + timedelta(days=days)
         return self.get_events(start, end)
