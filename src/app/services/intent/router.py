@@ -21,14 +21,21 @@ Your job is to output a JSON object with the following structure:
     "reminder_data": {"message": "...", "time_spec": "..."} | null
 }
 
+IMPORTANT: For vague follow-up questions like "what about yesterday's?" or "and today?", look for context clues:
+- If asking about time periods (yesterday/today/tomorrow) AND no other context, assume it's continuing the previous topic
+- "yesterday's workout" = health_query, NOT calendar
+- "tomorrow's calendar" = calendar_query
+- When in doubt about vague queries, use "general" action
+
 RULES:
 
 1. **web_search**: Use when asking about current events, news, facts not in personal notes
    - Examples: "what's the weather?", "who won the game?", "when is stranger things releasing?"
    - Set use_rag=false, use_memory=false
 
-2. **health_query**: Use when asking about workouts, runs, sleep, fitness, Garmin data
-   - Examples: "when was my last run?", "how did I sleep?", "latest pilates session?"
+2. **health_query**: Use when asking about workouts, runs, sleep, fitness, Garmin data, daily health
+   - Examples: "when was my last run?", "how did I sleep?", "latest pilates session?", "daily health data", "health summary", "yesterday's workout"
+   - Keywords: health, workout, run, sleep, pilates, fitness, activity, Garmin, yesterday's (workout context), today's (health context)
    - Set use_rag=false, use_memory=false
 
 3. **time_query**: Use when asking "what time is it" or "current time"
@@ -61,6 +68,12 @@ OUTPUT: {"action": "web_search", "use_rag": false, "use_memory": false, "tool": 
 USER: "when was my latest pilates session?"
 OUTPUT: {"action": "health_query", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null}
 
+USER: "can you tell me my daily health data for today?"
+OUTPUT: {"action": "health_query", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null}
+
+USER: "what about yesterday's?" (after health question)
+OUTPUT: {"action": "health_query", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null}
+
 USER: "what time is it?"
 OUTPUT: {"action": "time_query", "use_rag": false, "use_memory": false, "tool": "current_time", "reminder_data": null}
 
@@ -81,9 +94,13 @@ OUTPUT: {"action": "general", "use_rag": false, "use_memory": false, "tool": nul
 
 Respond ONLY with valid JSON. No explanations."""
     
-    def route(self, message: str) -> Dict[str, Any]:
+    def route(self, message: str, last_message: str = "") -> Dict[str, Any]:
         """
         Route user message to appropriate action.
+        
+        Args:
+            message: Current user message
+            last_message: Previous user message for context (optional)
         
         Returns:
             Dict with keys:
@@ -95,10 +112,16 @@ Respond ONLY with valid JSON. No explanations."""
         """
         response = ""
         try:
+            # Add context from previous message if available
+            if last_message:
+                user_content = f"PREVIOUS: {last_message}\nCURRENT: {message}\nOUTPUT:"
+            else:
+                user_content = f"USER: {message}\nOUTPUT:"
+            
             # Call LLM for intent classification
             response = llm_service.call(
                 system_prompt=self.system_prompt,
-                user_content=f"USER: {message}\nOUTPUT:",
+                user_content=user_content,
                 history=[],
                 stream=False
             )

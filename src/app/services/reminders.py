@@ -65,11 +65,27 @@ class ReminderService:
                     data = json.load(f)
                     self.reminders = [Reminder.from_dict(r) for r in data]
                     # Remove old completed reminders (older than 7 days)
-                    cutoff = datetime.now() - timedelta(days=7)
-                    self.reminders = [
-                        r for r in self.reminders
-                        if r.status == "pending" or r.created_at > cutoff
-                    ]
+                    from datetime import timezone, timedelta
+                    user_tz = timezone(timedelta(hours=-3))
+                    cutoff = datetime.now(user_tz) - timedelta(days=7)
+                    
+                    # Make cutoff timezone-naive if needed for comparison
+                    filtered_reminders = []
+                    for r in self.reminders:
+                        if r.status == "pending":
+                            filtered_reminders.append(r)
+                        else:
+                            # Compare datetimes (handle both naive and aware)
+                            created = r.created_at
+                            if created.tzinfo is None and cutoff.tzinfo is not None:
+                                created = created.replace(tzinfo=cutoff.tzinfo)
+                            elif created.tzinfo is not None and cutoff.tzinfo is None:
+                                cutoff = cutoff.replace(tzinfo=created.tzinfo)
+                            
+                            if created > cutoff:
+                                filtered_reminders.append(r)
+                    
+                    self.reminders = filtered_reminders
                     logger.info(f"Loaded {len(self.reminders)} reminders")
             except Exception as e:
                 logger.error(f"Failed to load reminders: {e}")

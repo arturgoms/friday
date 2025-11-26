@@ -38,73 +38,58 @@ class CoachingScheduler:
         return self._notifier
     
     def send_daily_report(self):
-        """Send daily coaching report."""
+        """Send comprehensive morning report."""
         try:
-            logger.info("Generating daily coaching report...")
+            logger.info("Generating morning report...")
             
-            # Get health data
-            summary = self.health_coach.get_running_summary(days=7)
-            activities = self.health_coach.get_recent_activities(limit=3)
-            recovery = self.health_coach.get_recovery_status()
+            from app.services.morning_report import generate_morning_report
+            from app.services.unified_calendar_service import UnifiedCalendarService
+            from app.services.llm import LLMService
             
-            # Build report
-            report_lines = []
-            report_lines.append("🌅 *GOOD MORNING! Your Daily Health Report*")
-            report_lines.append("")
+            # Initialize services
+            calendar_service = UnifiedCalendarService()
+            llm_service = LLMService()
             
-            # Recovery Status
-            if recovery:
-                report_lines.append("💤 *Recovery Status:*")
-                if recovery.get("training_readiness"):
-                    readiness = recovery["training_readiness"]
-                    status = "Great!" if readiness > 70 else "Moderate" if readiness > 50 else "Low"
-                    report_lines.append(f"• Training Readiness: {readiness}/100 ({status})")
-                if recovery.get("body_battery"):
-                    battery = recovery["body_battery"]
-                    report_lines.append(f"• Body Battery: {battery}/100")
-                if recovery.get("last_sleep_hours"):
-                    sleep = recovery["last_sleep_hours"]
-                    report_lines.append(f"• Last Sleep: {sleep} hours")
-                report_lines.append("")
-            
-            # Recent Activity
-            if "activities" in activities and activities["activities"]:
-                last_act = activities["activities"][0]
-                report_lines.append("🏃 *Yesterday:*")
-                report_lines.append(f"• {last_act['name']} ({last_act['type']})")
-                if last_act['distance_km'] > 0:
-                    report_lines.append(f"• {last_act['distance_km']}km in {last_act['duration_min']}min")
-                    report_lines.append(f"• Pace: {last_act['pace_min_km']} min/km")
-                    report_lines.append(f"• Avg HR: {last_act['avg_hr']} bpm")
-                report_lines.append("")
-            
-            # Week Summary
-            if "run_count" in summary:
-                report_lines.append("📊 *This Week:*")
-                report_lines.append(f"• {summary['run_count']} runs")
-                report_lines.append(f"• {summary['total_distance_km']} km total")
-                report_lines.append(f"• Avg pace: {summary['avg_pace_min_km']} min/km")
-                report_lines.append("")
-            
-            # Coaching Advice
-            report_lines.append("💡 *Coach's Advice:*")
-            if recovery.get("training_readiness", 100) < 50:
-                report_lines.append("• Consider an easy day or rest today")
-            elif recovery.get("training_readiness", 100) > 80:
-                report_lines.append("• You're well recovered! Good day for intensity")
-            else:
-                report_lines.append("• Moderate training load recommended")
-            
-            report_lines.append("")
-            report_lines.append("_Have a great day! 💪_")
+            # Generate the comprehensive morning report
+            message = generate_morning_report(
+                health_coach=self.health_coach,
+                calendar_service=calendar_service,
+                llm_service=llm_service
+            )
             
             # Send via Telegram
-            message = "\n".join(report_lines)
             self.notifier.send_message(message, parse_mode="Markdown")
             logger.info("Daily coaching report sent!")
             
         except Exception as e:
             logger.error(f"Error sending daily report: {e}")
+    
+    def send_evening_report(self):
+        """Send comprehensive evening report."""
+        try:
+            logger.info("Generating evening report...")
+            
+            from app.services.evening_report import generate_evening_report
+            from app.services.unified_calendar_service import UnifiedCalendarService
+            from app.services.llm import LLMService
+            
+            # Initialize services
+            calendar_service = UnifiedCalendarService()
+            llm_service = LLMService()
+            
+            # Generate the comprehensive evening report
+            message = generate_evening_report(
+                health_coach=self.health_coach,
+                calendar_service=calendar_service,
+                llm_service=llm_service
+            )
+            
+            # Send via Telegram
+            self.notifier.send_message(message, parse_mode="Markdown")
+            logger.info("Evening report sent!")
+            
+        except Exception as e:
+            logger.error(f"Error sending evening report: {e}")
     
     def send_weekly_report(self):
         """Send weekly coaching report."""
@@ -170,12 +155,21 @@ class CoachingScheduler:
     
     def start(self):
         """Start the scheduler."""
-        # Daily report at 7:00 AM
+        # Morning report at 9:00 AM
         self.scheduler.add_job(
             self.send_daily_report,
-            CronTrigger(hour=7, minute=0),
-            id='daily_coaching_report',
-            name='Daily Coaching Report',
+            CronTrigger(hour=9, minute=0),
+            id='daily_morning_report',
+            name='Daily Morning Report',
+            replace_existing=True
+        )
+        
+        # Evening report at 11:00 PM
+        self.scheduler.add_job(
+            self.send_evening_report,
+            CronTrigger(hour=23, minute=0),
+            id='daily_evening_report',
+            name='Daily Evening Report',
             replace_existing=True
         )
         
@@ -189,7 +183,7 @@ class CoachingScheduler:
         )
         
         self.scheduler.start()
-        logger.info("✅ Coaching scheduler started (Daily: 7AM, Weekly: Mon 8AM)")
+        logger.info("✅ Coaching scheduler started (Morning: 9AM, Evening: 11PM, Weekly: Mon 8AM)")
     
     def stop(self):
         """Stop the scheduler."""

@@ -11,8 +11,14 @@ from app.services.embeddings import embedding_service
 class VectorStore:
     """Service for vector storage and retrieval."""
     
+    _initialized = False
+    
     def __init__(self):
         """Initialize ChromaDB collections."""
+        # Prevent duplicate initialization logging
+        if VectorStore._initialized:
+            return
+            
         try:
             self.client = chromadb.PersistentClient(path=str(settings.chroma_path))
             logger.info("ChromaDB client initialized")
@@ -28,6 +34,7 @@ class VectorStore:
             )
             
             logger.info("Vector store collections ready")
+            VectorStore._initialized = True
         except Exception as e:
             logger.error(f"Failed to initialize vector store: {e}")
             raise

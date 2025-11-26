@@ -20,7 +20,7 @@ class FridayNotifier:
         self.user_id = TELEGRAM_USER_ID
         self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
     
-    def send_message(self, message: str, parse_mode: str = "Markdown"):
+    def send_message(self, message: str, parse_mode: str = "Markdown", disable_web_page_preview: bool = True):
         """Send a message to the authorized user"""
         try:
             response = requests.post(
@@ -28,7 +28,8 @@ class FridayNotifier:
                 json={
                     "chat_id": self.user_id,
                     "text": message,
-                    "parse_mode": parse_mode
+                    "parse_mode": parse_mode,
+                    "disable_web_page_preview": disable_web_page_preview
                 },
                 timeout=10
             )
