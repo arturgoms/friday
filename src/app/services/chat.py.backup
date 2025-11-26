@@ -1,0 +1,170 @@
+"""Chat orchestration service."""
+import uuid
+from typing import Dict, List, Tuple
+from app.core.config import settings
+from app.core.logging import logger
+from app.models.schemas import RetrievedChunk, MemoryItem
+from app.services.vector_store import vector_store
+from app.services.web_search import web_search_service
+from app.services.llm import llm_service
+
+
+class ChatService:
+    """Service for chat orchestration."""
+    
+    def __init__(self):
+        """Initialize chat service."""
+        self.conversation_history: Dict[str, List[dict]] = {}
+    
+    def build_context(
+        self,
+        message: str,
+        use_rag: bool,
+        use_web: bool,
+        use_memory: bool,
+    ) -> Tuple[str, bool, bool, bool, List[RetrievedChunk], List[MemoryItem]]:
+        """Build context from various sources."""
+        obsidian_ctx = ""
+        obsidian_chunks: List[RetrievedChunk] = []
+        
+        if use_rag:
+            obsidian_ctx, obsidian_chunks = vector_store.query_obsidian(message)
+        
+        memory_ctx = ""
+        memory_items: List[MemoryItem] = []
+        if use_memory:
+            memory_ctx, memory_items = vector_store.query_memory(message)
+        
+        web_ctx = ""
+        if use_web:
+            web_ctx = web_search_service.search(message)
+        
+        parts = []
+        used_rag = False
+        used_web = False
+        used_memory = False
+        
+        if obsidian_ctx:
+            parts.append("### From my notes\n" + obsidian_ctx)
+            used_rag = True
+        
+        if memory_ctx:
+            parts.append("### From your personal memory\n" + memory_ctx)
+            used_memory = True
+        
+        if web_ctx:
+            parts.append("### From the web\n" + web_ctx)
+            used_web = True
+        
+        combined = "\n\n====================\n\n".join(parts) if parts else ""
+        
+        return combined, used_rag, used_web, used_memory, obsidian_chunks, memory_items
+    
+    def get_system_prompt(self, has_web: bool = False) -> str:
+        """Get system prompt for the assistant."""
+        if has_web:
+            return (
+                f"You are Friday, {settings.authorized_user}'s personal homelab and life assistant.\n"
+                "- The user has requested web search. Prioritize fresh web information in your answer.\n"
+                "- If both web results and notes are provided, synthesize both sources.\n"
+                "- Clearly indicate when information comes from the web vs personal notes.\n"
+                "- Be concise but thorough.\n"
+            )
+        else:
+            return (
+                f"You are Friday, {settings.authorized_user}'s personal homelab and life assistant.\n"
+                "- Prefer my notes (Obsidian) when relevant.\n"
+                "- Use long-term memory for personal facts and ongoing projects.\n"
+                "- If context is missing or unclear, answer as best you can and mention uncertainty.\n"
+                "- Be concise but thorough.\n"
+            )
+    
+    def get_or_create_session(self, session_id: str = None) -> str:
+        """Get or create conversation session."""
+        if not session_id:
+            session_id = str(uuid.uuid4())
+        if session_id not in self.conversation_history:
+            self.conversation_history[session_id] = []
+        return session_id
+    
+    def get_history(self, session_id: str) -> List[dict]:
+        """Get conversation history for session."""
+        return self.conversation_history.get(session_id, [])
+    
+    def update_history(self, session_id: str, user_msg: str, assistant_msg: str):
+        """Update conversation history."""
+        history = self.conversation_history.get(session_id, [])
+        history.append({"role": "user", "content": user_msg})
+        history.append({"role": "assistant", "content": assistant_msg})
+        
+        if len(history) > settings.max_conversation_history * 2:
+            history[:] = history[-(settings.max_conversation_history * 2):]
+        
+        self.conversation_history[session_id] = history
+    
+    def chat(
+        self,
+        message: str,
+        session_id: str = None,
+        use_rag: bool = True,
+        use_web: bool = False,
+        use_memory: bool = True,
+        save_memory: bool = True,
+        stream: bool = False,
+    ):
+        """Handle chat request."""
+        session_id = self.get_or_create_session(session_id)
+        history = self.get_history(session_id)
+        
+        ctx, used_rag, used_web, used_memory, obsidian_chunks, memory_items = self.build_context(
+            message, use_rag, use_web, use_memory
+        )
+        
+        system_prompt = self.get_system_prompt()
+        
+        if ctx:
+            user_content = (
+                f"User question:\n{message}\n\n"
+                f"Context (from notes, memory, and/or web):\n\n{ctx}"
+            )
+        else:
+            user_content = message
+        
+        if stream:
+            return {
+                "stream": llm_service.call(
+                    system_prompt, user_content, history=history, stream=True
+                ),
+                "session_id": session_id,
+                "message": message,
+                "save_memory": save_memory,
+                "used_rag": used_rag,
+                "used_web": used_web,
+                "used_memory": used_memory,
+                "obsidian_chunks": obsidian_chunks,
+                "memory_items": memory_items,
+            }
+        else:
+            answer = llm_service.call(
+                system_prompt, user_content, history=history, stream=False
+            )
+            
+            self.update_history(session_id, message, answer)
+            
+            if save_memory:
+                mem_text = f"USER: {message}\nASSISTANT: {answer}"
+                vector_store.add_memory(mem_text, label="chat")
+            
+            return {
+                "answer": answer,
+                "used_rag": used_rag,
+                "used_web": used_web,
+                "used_memory": used_memory,
+                "context": obsidian_chunks if obsidian_chunks else None,
+                "memory_context": memory_items if memory_items else None,
+                "session_id": session_id,
+            }
+
+
+# Singleton instance
+chat_service = ChatService()

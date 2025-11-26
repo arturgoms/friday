@@ -1,0 +1,21 @@
+[Unit]
+Description=Friday AI Assistant
+After=network-online.target mnt-friday\x2dpool.mount
+Requires=mnt-friday\x2dpool.mount
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=artur
+WorkingDirectory=/home/artur/friday
+Environment="PATH=/home/artur/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONPATH=/home/artur/friday/src"
+ExecStartPre=/home/artur/friday/scripts/system/check_truenas.sh
+ExecStart=/home/artur/.local/bin/pipenv run uvicorn main:app --host 0.0.0.0 --port 8080 --log-level info
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/artur/friday/logs/friday.log
+StandardError=append:/home/artur/friday/logs/friday.log
+
+[Install]
+WantedBy=multi-user.target
