@@ -1,0 +1,41 @@
+{
+  "services": [
+    {
+      "name": "Proxmox",
+      "url": "https://192.168.1.15:8006",
+      "type": "https",
+      "verify_ssl": false,
+      "timeout": 10,
+      "check_interval": 300
+    },
+    {
+      "name": "Portainer",
+      "url": "http://192.168.1.16:9000",
+      "type": "https",
+      "verify_ssl": false,
+      "timeout": 10,
+      "check_interval": 300
+    },
+    {
+      "name": "Immich",
+      "url": "http://192.168.1.16:3001",
+      "type": "http",
+      "timeout": 10,
+      "check_interval": 300
+    },
+    {
+      "name": "TrueNAS",
+      "url": "http://192.168.1.17",
+      "type": "http",
+      "timeout": 10,
+      "check_interval": 300
+    },
+    {
+      "name": "Grafana",
+      "url": "http://192.168.1.16:8087",
+      "type": "http",
+      "timeout": 10,
+      "check_interval": 300
+    }
+  ]
+}

@@ -1,0 +1,308 @@
+#!/bin/bash
+# Friday AI - Convenience CLI
+
+FRIDAY_DIR="/home/artur/friday"
+
+case "$1" in
+    status)
+        echo "📊 Friday AI System Status"
+        echo "=========================="
+        systemctl status vllm.service friday.service telegram-bot.service homelab-monitor.service --no-pager 2>/dev/null | grep -E "(●|Active:)"
+        ;;
+    
+    logs)
+        SERVICE="${2:-friday}"
+        tail -f "$FRIDAY_DIR/logs/${SERVICE}.log"
+        ;;
+    
+    notify)
+        shift
+        MESSAGE="$1"
+        SEVERITY="${2:-info}"
+        cd "$FRIDAY_DIR"
+        bash scripts/monitoring/send_notification.sh "$MESSAGE" "$SEVERITY"
+        ;;
+    
+    report)
+        cd "$FRIDAY_DIR"
+        bash scripts/monitoring/status_report.sh
+        ;;
+    
+    test)
+        cd "$FRIDAY_DIR"
+        bash scripts/testing/test_friday.sh
+        ;;
+    
+    reminders)
+        ACTION="${2:-list}"
+        case "$ACTION" in
+            list)
+                echo "📅 Pending reminders:"
+                python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.reminders import reminder_service
+reminders = reminder_service.list_pending_reminders()
+if not reminders:
+    print('  No pending reminders')
+else:
+    for r in reminders:
+        time_str = r.remind_at.strftime('%Y-%m-%d %H:%M:%S')
+        print(f'  [{r.id[:8]}] {r.message}')
+        print(f'    at {time_str}')
+"
+                ;;
+            cancel)
+                REMINDER_ID="$3"
+                if [ -z "$REMINDER_ID" ]; then
+                    echo "❌ Please provide a reminder ID"
+                    echo "Usage: friday reminders cancel <id>"
+                    exit 1
+                fi
+                python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.reminders import reminder_service
+if reminder_service.cancel_reminder('$REMINDER_ID'):
+    print('✅ Reminder cancelled')
+else:
+    print('❌ Reminder not found')
+"
+                ;;
+            *)
+                echo "Usage: friday reminders [list|cancel]"
+                echo ""
+                echo "  list              List pending reminders"
+                echo "  cancel <id>       Cancel a reminder"
+                ;;
+        esac
+        ;;
+    
+    memory)
+        ACTION="${2:-list}"
+        API_KEY="${FRIDAY_API_KEY:-5b604c9f8e2d1be2978d91b51f2b3fe70b64f2b552cea1870e764dd6016c0de9}"
+        
+        case "$ACTION" in
+            add)
+                shift 2  # Remove 'memory' and 'add'
+                CONTENT="$*"
+                if [ -z "$CONTENT" ]; then
+                    echo "❌ Please provide content to remember"
+                    echo "Usage: friday memory add <text>"
+                    exit 1
+                fi
+                echo "💾 Saving memory..."
+                curl -s -X POST -H "X-API-Key: $API_KEY" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"content\": \"$CONTENT\", \"tags\": [\"cli\"]}" \
+                    http://localhost:8080/remember | python3 -m json.tool
+                ;;
+            list)
+                echo "📝 Listing memories..."
+                curl -s -H "X-API-Key: $API_KEY" \
+                    http://localhost:8080/admin/memories | python3 -m json.tool
+                ;;
+            delete)
+                MEMORY_ID="$3"
+                if [ -z "$MEMORY_ID" ]; then
+                    echo "❌ Please provide a memory ID"
+                    echo "Usage: friday memory delete <memory_id>"
+                    exit 1
+                fi
+                echo "🗑️  Deleting memory: $MEMORY_ID"
+                curl -s -X DELETE -H "X-API-Key: $API_KEY" \
+                    "http://localhost:8080/admin/memories/$MEMORY_ID" | python3 -m json.tool
+                ;;
+            clear)
+                echo "⚠️  This will delete ALL memories!"
+                read -p "Are you sure? (y/n): " -n 1 -r
+                echo
+                if [[ $REPLY =~ ^[Yy]$ ]]; then
+                    echo "🗑️  Clearing all memories..."
+                    curl -s -X DELETE -H "X-API-Key: $API_KEY" \
+                        http://localhost:8080/admin/memories | python3 -m json.tool
+                else
+                    echo "Cancelled."
+                fi
+                ;;
+            drop-all)
+                echo "⚠️⚠️⚠️  DANGER: This will delete ALL memories AND chat history!"
+                echo "This includes:"
+                echo "  - Explicit memories (/remember entries)"
+                echo "  - All chat conversation history"
+                echo "  - Everything in ChromaDB memory collection"
+                echo ""
+                read -p "Type 'DELETE ALL' to confirm: " -r
+                echo
+                if [[ $REPLY == "DELETE ALL" ]]; then
+                    echo "🗑️  Dropping entire memory collection..."
+                    curl -s -X DELETE -H "X-API-Key: $API_KEY" \
+                        http://localhost:8080/admin/memories/all | python3 -m json.tool
+                    
+                    # Also clean up memory files
+                    if [ -d "$FRIDAY_DIR/data/memory" ]; then
+                        echo "🗑️  Cleaning up memory files..."
+                        rm -rf "$FRIDAY_DIR/data/memory"/*
+                        echo "✅ Memory files cleaned"
+                    fi
+                else
+                    echo "Cancelled."
+                fi
+                ;;
+            *)
+                echo "Usage: friday memory [add|list|delete|clear|drop-all]"
+                echo ""
+                echo "  add <text>        Create a new memory"
+                echo "  list              List explicit memories only"
+                echo "  delete <id>       Delete specific memory"
+                echo "  clear             Clear all explicit memories"
+                echo "  drop-all          Delete EVERYTHING (explicit + chat history)"
+                ;;
+        esac
+        ;;
+    
+    monitor)
+        cd "$FRIDAY_DIR"
+        bash scripts/monitoring/monitor.sh
+        ;;
+    
+    sync)
+        cd "$FRIDAY_DIR"
+        bash scripts/system/sync_nextcloud.sh
+        ;;
+    
+    restart)
+        SERVICE="${2:-all}"
+        if [ "$SERVICE" = "all" ]; then
+            echo "🔄 Restarting all services..."
+            sudo systemctl restart vllm.service friday.service telegram-bot.service homelab-monitor.service
+            echo "✅ All services restarted!"
+        elif [[ "$SERVICE" == *","* ]]; then
+            # Handle comma-separated services
+            IFS=',' read -ra SERVICES <<< "$SERVICE"
+            echo "🔄 Restarting services: ${SERVICES[*]}..."
+            SERVICE_LIST=""
+            for svc in "${SERVICES[@]}"; do
+                SERVICE_LIST="$SERVICE_LIST ${svc}.service"
+            done
+            sudo systemctl restart $SERVICE_LIST
+            echo "✅ Services restarted: ${SERVICES[*]}"
+        else
+            echo "🔄 Restarting ${SERVICE}.service..."
+            sudo systemctl restart "${SERVICE}.service"
+            echo "✅ ${SERVICE}.service restarted!"
+        fi
+        ;;
+    
+    install-services)
+        echo "📦 Installing Friday AI services..."
+        echo ""
+        
+        # Copy service files
+        echo "Copying service files to /etc/systemd/system/..."
+        sudo cp "$FRIDAY_DIR/services/"*.service /etc/systemd/system/
+        
+        # Reload systemd
+        echo "Reloading systemd daemon..."
+        sudo systemctl daemon-reload
+        
+        # Enable services
+        echo "Enabling services to start on boot..."
+        sudo systemctl enable vllm.service
+        sudo systemctl enable friday.service
+        sudo systemctl enable telegram-bot.service
+        
+        # Ask about homelab-monitor
+        echo ""
+        read -p "Enable homelab monitoring service? (y/n): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            sudo systemctl enable homelab-monitor.service
+            echo "✅ Homelab monitor enabled"
+        fi
+        
+        echo ""
+        echo "✅ Services installed and enabled!"
+        echo ""
+        echo "To start services now, run:"
+        echo "  friday restart all"
+        echo ""
+        echo "Or start individually:"
+        echo "  sudo systemctl start vllm.service"
+        echo "  sudo systemctl start friday.service"
+        echo "  sudo systemctl start telegram-bot.service"
+        ;;
+    
+    uninstall-services)
+        echo "🗑️  Uninstalling Friday AI services..."
+        echo ""
+        
+        read -p "Are you sure you want to stop and disable all services? (y/n): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Cancelled."
+            exit 0
+        fi
+        
+        # Stop services
+        echo "Stopping services..."
+        sudo systemctl stop vllm.service friday.service telegram-bot.service homelab-monitor.service 2>/dev/null
+        
+        # Disable services
+        echo "Disabling services..."
+        sudo systemctl disable vllm.service friday.service telegram-bot.service homelab-monitor.service 2>/dev/null
+        
+        # Remove service files
+        echo "Removing service files..."
+        sudo rm -f /etc/systemd/system/vllm.service
+        sudo rm -f /etc/systemd/system/friday.service
+        sudo rm -f /etc/systemd/system/telegram-bot.service
+        sudo rm -f /etc/systemd/system/homelab-monitor.service
+        
+        # Reload systemd
+        echo "Reloading systemd daemon..."
+        sudo systemctl daemon-reload
+        
+        echo ""
+        echo "✅ Services uninstalled!"
+        ;;
+    
+    *)
+        cat << 'HELP'
+Friday AI - CLI Tool
+
+Usage: friday <command> [options]
+
+Commands:
+  status                  Show status of all services
+  logs [service]          Tail logs (friday|vllm|telegram_bot|homelab_monitor)
+  notify "msg" [sev]      Send notification (severity: info|warning|error|success|critical)
+  report                  Send system status report via Telegram
+  test                    Run test suite
+  reminders [action]      Manage reminders (list|cancel <id>)
+  memory [action]         Manage memories (add|list|delete|clear|drop-all)
+  monitor                 Show system monitor
+  sync                    Sync Nextcloud and reindex
+  restart [service]       Restart service(s) (all|friday,telegram-bot|service1,service2)
+  install-services        Install and enable all systemd services
+  uninstall-services      Stop, disable, and remove all services
+
+Examples:
+  friday status
+  friday logs friday
+  friday notify "Backup complete!" success
+  friday report
+  friday test
+  friday reminders list
+  friday reminders cancel abc12345
+  friday memory add "I love pizza"
+  friday memory list
+  friday memory delete abc123
+  friday memory clear
+  friday memory drop-all
+  friday restart friday,telegram-bot
+  friday install-services
+
+HELP
+        ;;
+esac
