@@ -23,7 +23,8 @@ def generate_morning_report(health_coach, calendar_service, llm_service) -> str:
     - Weather
     - AI-generated autism-friendly insight
     """
-    user_tz = timezone(timedelta(hours=-3))
+    from app.core.config import settings
+    user_tz = settings.user_timezone
     now = datetime.now(user_tz)
     today = now.strftime("%A, %B %d, %Y")
     

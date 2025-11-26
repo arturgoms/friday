@@ -24,19 +24,17 @@ async def startup_event():
     logger.info(f"LLM endpoint: {settings.llm_base_url}")
     logger.info(f"LLM model: {settings.llm_model_name}")
     
-    # Start file watcher
+    # Start background services
     try:
         from app.services.file_watcher import file_watcher
         from app.services.scheduler import task_scheduler
-        from app.services.coaching_scheduler import coaching_scheduler
         from app.services.reminders import reminder_service
         
         file_watcher.start()
         task_scheduler.start()
-        coaching_scheduler.start()
         reminder_service.start_background_task()
         
-        logger.info("File watcher, scheduler, coaching, and reminders started")
+        logger.info("File watcher, scheduler, and reminders started")
     except Exception as e:
         logger.error(f"Failed to start services: {e}")
     
@@ -52,11 +50,9 @@ async def shutdown_event():
     try:
         from app.services.file_watcher import file_watcher
         from app.services.scheduler import task_scheduler
-        from app.services.coaching_scheduler import coaching_scheduler
         from app.services.reminders import reminder_service
         
         task_scheduler.stop()
-        coaching_scheduler.stop()
         reminder_service.stop_background_task()
         file_watcher.stop()
     except Exception as e:
