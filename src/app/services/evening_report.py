@@ -207,10 +207,19 @@ def generate_evening_report(health_coach, calendar_service, llm_service) -> str:
             rec_sleep = sleep['total_sleep_hours']
         
         # Calculate bedtime recommendation
-        # Check tomorrow's calendar for earliest event
+        # Check tomorrow's calendar for earliest REAL event (not all-day, after 6 AM)
         earliest_event = None
         if data["tomorrow_calendar"]:
-            earliest_event = data["tomorrow_calendar"][0]
+            for event in data["tomorrow_calendar"]:
+                event_time_str = event["time"]
+                try:
+                    event_time = datetime.strptime(event_time_str, "%I:%M %p").time()
+                    # Skip events before 6 AM (likely all-day events or overnight)
+                    if event_time.hour >= 6:
+                        earliest_event = event
+                        break
+                except Exception:
+                    continue
         
         if earliest_event:
             # Parse earliest event time and subtract sleep time + 1.5h buffer

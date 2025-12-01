@@ -14,7 +14,7 @@ class IntentRouter:
 
 Your job is to output a JSON object with the following structure:
 {
-    "action": "web_search" | "health_query" | "time_query" | "calendar_query" | "reminder_query" | "reminder_create" | "reminder_delete" | "memory_save" | "memory_ambiguous" | "note_create" | "note_update" | "note_search" | "note_get" | "general",
+    "action": "web_search" | "health_query" | "time_query" | "calendar_query" | "reminder_query" | "reminder_create" | "reminder_delete" | "memory_save" | "memory_ambiguous" | "note_create" | "note_update" | "note_search" | "note_get" | "morning_report" | "evening_report" | "general",
     "use_rag": true/false,
     "use_memory": true/false,
     "tool": "current_time" | "calendar_today" | "calendar_tomorrow" | "calendar_week" | "calendar_next" | "reminder_list" | "reminder_next" | null,
@@ -112,7 +112,17 @@ RULES:
     - Keywords: get note, show note, read note, open note, what's in my note
     - Set use_rag=false, use_memory=false
 
-14. **general**: Use for everything else (greetings, questions about notes content, personal info)
+14. **morning_report**: Use when user asks for morning briefing/report
+    - Examples: "give me my morning briefing", "morning report", "what's my morning summary?", "daily briefing"
+    - Keywords: morning briefing, morning report, morning summary, daily briefing, start my day
+    - Set use_rag=false, use_memory=false
+
+15. **evening_report**: Use when user asks for evening briefing/report
+    - Examples: "give me my evening report", "evening briefing", "end of day summary", "nightly report"
+    - Keywords: evening briefing, evening report, evening summary, nightly report, end of day
+    - Set use_rag=false, use_memory=false
+
+16. **general**: Use for everything else (greetings, questions about notes content, personal info)
     - For questions ABOUT note contents (what does my note say about X?), use general with use_rag=true
     - Set use_rag=true, use_memory=true
 
@@ -211,6 +221,18 @@ OUTPUT: {"action": "note_get", "use_rag": false, "use_memory": false, "tool": nu
 
 USER: "read my Python best practices note"
 OUTPUT: {"action": "note_get", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": {"title": "Python best practices"}}
+
+USER: "give me my morning briefing"
+OUTPUT: {"action": "morning_report", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": null}
+
+USER: "morning report"
+OUTPUT: {"action": "morning_report", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": null}
+
+USER: "give me my evening report"
+OUTPUT: {"action": "evening_report", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": null}
+
+USER: "evening briefing"
+OUTPUT: {"action": "evening_report", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": null}
 
 USER: "hello"
 OUTPUT: {"action": "general", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": null}
