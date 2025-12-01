@@ -118,6 +118,24 @@ def remember(req: RememberRequest, x_api_key: Optional[str] = Header(None)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/admin/reload-personality")
+def reload_personality(x_api_key: Optional[str] = Header(None)):
+    """Reload Friday's personality from the About file."""
+    verify_auth(x_api_key)
+    
+    try:
+        personality = chat_service.reload_personality()
+        return {
+            "status": "ok",
+            "message": "Personality reloaded",
+            "personality_length": len(personality),
+            "preview": personality[:200] + "..." if len(personality) > 200 else personality
+        }
+    except Exception as e:
+        logger.error(f"Reload personality error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/admin/reindex")
 def reindex_obsidian(x_api_key: Optional[str] = Header(None), sync_nextcloud: bool = False):
     """Rebuild Obsidian index from scratch."""

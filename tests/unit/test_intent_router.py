@@ -30,17 +30,19 @@ class TestIntentRouter:
         assert intent["action"] == expected_action, \
             f"Message '{message}' should route to {expected_action}, got {intent['action']}"
     
-    @pytest.mark.parametrize("message,expected_action", [
-        ("Tell me about Camila from my notes", "general"),
-        ("What do my notes say about work?", "general"),
-        ("Search my notes for information about pizza", "general"),
+    @pytest.mark.parametrize("message", [
+        "Tell me about Camila from my notes",
+        "What do my notes say about work?",
+        "Search my notes for information about pizza",
     ])
-    def test_rag_queries(self, router, message, expected_action):
+    def test_rag_queries(self, router, message):
         """Test that personal notes queries route correctly."""
         intent = router.route(message)
-        assert intent["action"] == expected_action
+        # Should route to general, note_search, or similar RAG-enabled action
+        assert intent["action"] in ["general", "note_search", "rag_query"], \
+            f"Personal notes query '{message}' should route to RAG-enabled action, got: {intent['action']}"
         # Should enable RAG for personal notes
-        assert intent.get("use_rag") is True or intent["action"] == "general", \
+        assert intent.get("use_rag") is True or intent["action"] in ["general", "note_search"], \
             f"Personal notes query should use RAG"
     
     @pytest.mark.parametrize("message,expected_action", [
@@ -72,14 +74,41 @@ class TestIntentRouter:
     @pytest.mark.parametrize("message", [
         "Remind me to call mom in 30 minutes",
         "Set a reminder for tomorrow at 3pm",
-        "Remember to buy milk",
+        "Remember to send the email in an hour",
     ])
     def test_reminder_queries(self, router, message):
-        """Test that reminder creation queries route correctly."""
+        """Test that reminder creation queries (with time) route to reminder_create."""
         intent = router.route(message)
-        # Reminders might go to general, tool_execution, or reminder_create
-        assert intent["action"] in ["tool_execution", "general", "reminder", "reminder_create"], \
-            f"Reminder query should route appropriately, got: {intent['action']}"
+        assert intent["action"] == "reminder_create", \
+            f"Reminder query with time should route to reminder_create, got: {intent['action']}"
+        assert intent.get("reminder_data") is not None, \
+            "Reminder should have reminder_data"
+    
+    @pytest.mark.parametrize("message", [
+        "Remember that I like pizza",
+        "Remember my favorite color is black",
+        "Remember that Camila is my wife",
+        "I want you to know I work at Counterpart",
+    ])
+    def test_memory_save_queries(self, router, message):
+        """Test that 'remember that' (facts) route to memory_save."""
+        intent = router.route(message)
+        assert intent["action"] == "memory_save", \
+            f"Memory save query should route to memory_save, got: {intent['action']}"
+        assert intent.get("memory_data") is not None, \
+            "Memory save should have memory_data"
+    
+    @pytest.mark.parametrize("message", [
+        "Remember to buy milk",
+        "Remember to call mom",
+    ])
+    def test_ambiguous_remember_queries(self, router, message):
+        """Test that 'remember to [action]' without time routes to memory_ambiguous."""
+        intent = router.route(message)
+        assert intent["action"] == "memory_ambiguous", \
+            f"Ambiguous 'remember to' (no time) should route to memory_ambiguous, got: {intent['action']}"
+        assert intent.get("memory_data") is not None, \
+            "Ambiguous query should have memory_data for clarification"
     
     def test_conversational_queries(self, router):
         """Test that conversational queries route to general."""
@@ -110,6 +139,43 @@ class TestIntentRouter:
             # Should route to health_query or general
             assert intent["action"] in ["health_query", "general"], \
                 f"Health query '{message}' should enable health data"
+    
+    def test_who_am_i_query(self, router):
+        """Test that 'Who am I?' queries use RAG to fetch user profile from notes.
+        
+        These queries should retrieve from 'Artur Gomes.md' and understand that
+        the user (Artur) wrote all the notes - they are his ideas/projects.
+        """
+        messages = [
+            "Who am I?",
+            "Tell me about myself",
+            "What do you know about me?",
+        ]
+        
+        for message in messages:
+            intent = router.route(message)
+            # Should use RAG to look up user's personal notes (Artur Gomes.md)
+            assert intent["action"] in ["general", "note_search", "rag_query"], \
+                f"Identity query '{message}' should route to RAG-enabled action, got: {intent['action']}"
+    
+    def test_who_are_you_query(self, router):
+        """Test that 'Who are you?' queries route appropriately.
+        
+        These queries should retrieve from '5.0 About/' folder which contains
+        Friday's identity, capabilities, and purpose.
+        """
+        messages = [
+            "Who are you?",
+            "What is your name?",
+            "Tell me about yourself",
+            "What can you do?",
+        ]
+        
+        for message in messages:
+            intent = router.route(message)
+            # Can route to general (system prompt) or RAG (About folder)
+            assert intent["action"] in ["general", "note_search", "rag_query"], \
+                f"Assistant identity query '{message}' should route appropriately, got: {intent['action']}"
     
     def test_intent_has_required_fields(self, router):
         """Test that router always returns required fields."""

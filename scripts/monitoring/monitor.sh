@@ -58,7 +58,7 @@ echo ""
 # Check disk usage
 echo "💾 Disk Usage:"
 du -sh /home/artur/friday/chroma_db 2>/dev/null | awk '{print "  ChromaDB: " $1}'
-du -sh /home/artur/my-brain 2>/dev/null | awk '{print "  Vault: " $1}'
+du -sh /home/artur/friday/brain 2>/dev/null | awk '{print "  Brain: " $1}'
 echo ""
 
 echo "======================================="

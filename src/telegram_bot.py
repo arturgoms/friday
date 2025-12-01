@@ -5,6 +5,7 @@ Allows you to interact with Friday AI from your phone via Telegram
 import os
 import logging
 import requests
+import tempfile
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
@@ -306,6 +307,150 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle voice messages."""
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("⛔ Unauthorized")
+        return
+    
+    try:
+        # Send typing indicator while processing
+        await update.message.chat.send_action(action="typing")
+        
+        # Get voice message file
+        voice = update.message.voice
+        voice_file = await context.bot.get_file(voice.file_id)
+        
+        # Download to temporary file
+        with tempfile.NamedTemporaryFile(suffix='.ogg', delete=False) as tmp_file:
+            tmp_path = tmp_file.name
+            await voice_file.download_to_drive(tmp_path)
+        
+        try:
+            # Transcribe using external Whisper service
+            whisper_url = os.getenv('WHISPER_SERVICE_URL')
+            
+            logger.info(f"Whisper URL from env: {whisper_url}")
+            
+            if not whisper_url:
+                await update.message.reply_text(
+                    "❌ Voice transcription not configured. Please set WHISPER_SERVICE_URL in .env file\n"
+                    "Example: WHISPER_SERVICE_URL=http://your-server:8001"
+                )
+                return
+            
+            # Send audio file to Whisper service using curl (workaround for urllib3 bug)
+            # Using onerahmet/openai-whisper-asr-webservice API format
+            logger.info(f"Sending audio file to {whisper_url}/asr")
+            logger.info(f"File path: {tmp_path}, exists: {os.path.exists(tmp_path)}")
+            
+            import subprocess
+            import json
+            
+            curl_result = subprocess.run([
+                'curl', '-s', '-X', 'POST',
+                '--http1.1',  # Force HTTP/1.1
+                '-m', '120',  # Timeout
+                f'{whisper_url}/asr?task=transcribe&language=pt&output=json',
+                '-F', f'audio_file=@{tmp_path}'
+            ], capture_output=True, text=True, timeout=130)
+            
+            logger.info(f"Curl return code: {curl_result.returncode}")
+            logger.info(f"Curl stdout: {curl_result.stdout[:500] if curl_result.stdout else 'empty'}")
+            
+            if curl_result.returncode != 0:
+                logger.error(f"Curl stderr: {curl_result.stderr}")
+                await update.message.reply_text(
+                    f"❌ Transcription failed: {curl_result.stderr[:200]}"
+                )
+                return
+            
+            # Parse response - the API returns JSON with "text" field
+            try:
+                transcribe_data = json.loads(curl_result.stdout)
+                transcribed_text = transcribe_data.get('text', curl_result.stdout)
+            except json.JSONDecodeError:
+                # If not JSON, the response might be plain text
+                transcribed_text = curl_result.stdout.strip()
+            
+            if not transcribed_text:
+                await update.message.reply_text(
+                    f"❌ Transcription failed: empty response"
+                )
+                return
+            
+            logger.info(f"Voice transcribed via Whisper service: {transcribed_text}")
+            
+            # Process the transcribed text as a regular message (no extra messages)
+            user_id = update.effective_user.id
+            use_web = should_use_web_search(transcribed_text)
+            
+            logger.info(f"Voice message from {update.effective_user.first_name} (ID: {user_id}): {transcribed_text} [Web: {use_web}]")
+            
+            # Send typing indicator
+            await update.message.chat.send_action(action="typing")
+            
+            # Call Friday API
+            headers = {}
+            if FRIDAY_API_KEY:
+                headers['X-API-Key'] = FRIDAY_API_KEY
+            
+            response = requests.post(
+                f"{FRIDAY_API_URL}/chat",
+                json={
+                    "message": transcribed_text,
+                    "use_rag": True,
+                    "use_memory": True,
+                    "use_web": use_web,
+                    "save_memory": True
+                },
+                headers=headers,
+                timeout=120
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                answer = data['answer']
+                
+                logger.info(f"Friday's response: {answer[:200]}")
+                
+                # Add context info
+                context_info = []
+                if data.get('used_rag'):
+                    context_info.append("📚 Notes")
+                if data.get('used_memory'):
+                    context_info.append("💭 Memory")
+                if data.get('used_health'):
+                    context_info.append("🏃 Health Data")
+                if data.get('used_web'):
+                    context_info.append("🌐 Web")
+                
+                footer = f"\n\n_{' + '.join(context_info)}_" if context_info else ""
+                
+                # Split long messages
+                if len(answer) > 4000:
+                    chunks = [answer[i:i+4000] for i in range(0, len(answer), 4000)]
+                    for chunk in chunks:
+                        await update.message.reply_text(chunk)
+                    if footer:
+                        await update.message.reply_text(footer, parse_mode='Markdown')
+                else:
+                    await update.message.reply_text(answer + footer, parse_mode='Markdown')
+            else:
+                await update.message.reply_text(
+                    f"❌ Error: {response.status_code}\n{response.text[:200]}"
+                )
+        
+        finally:
+            # Clean up temporary file
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+    
+    except Exception as e:
+        logger.error(f"Voice message handling error: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Error processing voice message: {str(e)}")
+
+
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle errors."""
     logger.error(f"Update {update} caused error {context.error}")
@@ -324,6 +469,7 @@ def main():
     application.add_handler(CommandHandler("remember", remember_command))
     application.add_handler(CommandHandler("sync", sync_command))
     application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(MessageHandler(filters.VOICE, handle_voice))  # Voice messages
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
     

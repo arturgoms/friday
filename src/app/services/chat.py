@@ -15,6 +15,7 @@ from app.services.date_tools import date_tools
 from app.services.reminders import reminder_service
 from app.services.calendar_service import calendar_service
 from app.services.post_chat_processor import post_chat_processor
+from app.services.obsidian import obsidian_service
 
 
 class ChatService:
@@ -24,6 +25,39 @@ class ChatService:
         """Initialize chat service."""
         self.conversation_history: Dict[str, List[dict]] = {}
         self._health_coach = None
+        self._personality = None
+    
+    @property
+    def personality(self) -> str:
+        """Lazy load Friday's personality from the About file."""
+        if self._personality is None:
+            self._personality = self._load_personality()
+        return self._personality
+    
+    def _load_personality(self) -> str:
+        """Load Friday's personality from 5.0 About/Who is Friday.md"""
+        try:
+            personality_path = settings.about_path / "Who is Friday.md"
+            if personality_path.exists():
+                content = personality_path.read_text(encoding="utf-8")
+                # Remove frontmatter (between --- markers)
+                if content.startswith("---"):
+                    end_frontmatter = content.find("---", 3)
+                    if end_frontmatter != -1:
+                        content = content[end_frontmatter + 3:].strip()
+                logger.info(f"Loaded Friday personality from {personality_path}")
+                return content
+            else:
+                logger.warning(f"Personality file not found: {personality_path}")
+                return ""
+        except Exception as e:
+            logger.error(f"Failed to load personality: {e}")
+            return ""
+    
+    def reload_personality(self):
+        """Force reload personality from file (useful after edits)."""
+        self._personality = None
+        return self.personality
     
     @property
     def health_coach(self):
@@ -58,6 +92,66 @@ class ChatService:
             history[:] = history[-(settings.max_conversation_history * 2):]
         
         self.conversation_history[session_id] = history
+    
+    def _load_user_profile(self) -> str:
+        """Load the user's profile file (Artur Gomes.md) for identity queries."""
+        try:
+            profile_path = settings.vault_path / settings.user_profile_file
+            if profile_path.exists():
+                content = profile_path.read_text(encoding="utf-8")
+                logger.info(f"Loaded user profile from {profile_path}")
+                return content
+            else:
+                logger.warning(f"User profile not found: {profile_path}")
+                return ""
+        except Exception as e:
+            logger.error(f"Failed to load user profile: {e}")
+            return ""
+    
+    def _personalize_memory(self, content: str) -> str:
+        """
+        Replace first-person pronouns with the user's name for better searchability.
+        
+        "my birthday is march 30" -> "Artur's birthday is March 30"
+        "I like pizza" -> "Artur likes pizza"
+        """
+        import re
+        
+        # Get user's first name from settings
+        user_name = "Artur"  # Could be made configurable
+        
+        # Replace patterns (case-insensitive)
+        # "my X" -> "Artur's X"
+        content = re.sub(r'\bmy\b', f"{user_name}'s", content, flags=re.IGNORECASE)
+        
+        # "I am X" -> "Artur is X"
+        content = re.sub(r'\bI am\b', f"{user_name} is", content, flags=re.IGNORECASE)
+        content = re.sub(r"\bI'm\b", f"{user_name} is", content, flags=re.IGNORECASE)
+        
+        # "I like X" -> "Artur likes X"
+        content = re.sub(r'\bI like\b', f"{user_name} likes", content, flags=re.IGNORECASE)
+        
+        # "I have X" -> "Artur has X"
+        content = re.sub(r'\bI have\b', f"{user_name} has", content, flags=re.IGNORECASE)
+        
+        # "I use X" -> "Artur uses X"
+        content = re.sub(r'\bI use\b', f"{user_name} uses", content, flags=re.IGNORECASE)
+        
+        # "I work X" -> "Artur works X"
+        content = re.sub(r'\bI work\b', f"{user_name} works", content, flags=re.IGNORECASE)
+        
+        # "I live X" -> "Artur lives X"
+        content = re.sub(r'\bI live\b', f"{user_name} lives", content, flags=re.IGNORECASE)
+        
+        # Generic "I [verb]" -> "Artur [verb]s" (simple verbs)
+        # This is a fallback - won't be grammatically perfect but better than "I"
+        content = re.sub(r'\bI\b', user_name, content)
+        
+        # Capitalize first letter
+        if content:
+            content = content[0].upper() + content[1:]
+        
+        return content
     
     def fetch_health_context(self, message: str) -> str:
         """Fetch Garmin health/activity data."""
@@ -156,16 +250,65 @@ class ChatService:
         
         # RAG/Obsidian notes
         if use_rag:
-            obsidian_ctx, obsidian_chunks = vector_store.query_obsidian(message)
-            if obsidian_ctx:
-                context_parts.append("### From your notes\n" + obsidian_ctx)
-                used_rag = True
+            # Check for identity queries - these need special handling
+            message_lower = message.lower()
+            is_user_identity_query = any(phrase in message_lower for phrase in [
+                'who am i', 'tell me about myself', 'what do you know about me',
+                'my profile', 'my information', 'about me'
+            ])
+            
+            if is_user_identity_query:
+                # For "Who am I?" queries, always load the user's profile file first
+                user_profile_ctx = self._load_user_profile()
+                if user_profile_ctx:
+                    context_parts.append("### Your profile (from Artur Gomes.md)\n" + user_profile_ctx)
+                    used_rag = True
+                # Also do regular RAG but with better query
+                obsidian_ctx, obsidian_chunks = vector_store.query_obsidian("Artur Gomes personal information")
+                if obsidian_ctx:
+                    context_parts.append("### Additional notes\n" + obsidian_ctx)
+            else:
+                obsidian_ctx, obsidian_chunks = vector_store.query_obsidian(message)
+                if obsidian_ctx:
+                    context_parts.append("### From your notes\n" + obsidian_ctx)
+                    used_rag = True
         
-        # Memory
+        # Memory - search BOTH markdown memories AND user profile (Artur Gomes.md)
         if use_memory:
-            memory_ctx, memory_items = vector_store.query_memory(message)
-            if memory_ctx:
-                context_parts.append("### From your memory\n" + memory_ctx)
+            from app.services.memory_store import MemoryStore
+            memory_store = MemoryStore()
+            
+            # 1. Always load user profile for personal queries (authoritative source)
+            user_profile_ctx = self._load_user_profile()
+            if user_profile_ctx:
+                context_parts.append("### From your profile (Artur Gomes.md)\n" + user_profile_ctx)
+                memory_items.append({"id": "profile", "content": "User profile loaded"})
+            
+            # 2. Also search memories for recently learned facts
+            markdown_memories = memory_store.search_memories(message, limit=5)
+            
+            if markdown_memories:
+                memory_parts = []
+                for mem in markdown_memories:
+                    # Extract just the content, skip the markdown formatting
+                    content = mem.get('full_content', '')
+                    # Clean up: remove the header and context sections
+                    if content:
+                        # Take the main content (between title and Context section)
+                        lines = content.split('\n')
+                        clean_lines = []
+                        for line in lines:
+                            if line.strip().startswith('## Context'):
+                                break
+                            if line.strip() and not line.startswith('#'):
+                                clean_lines.append(line.strip())
+                        clean_content = ' '.join(clean_lines)
+                        if clean_content:
+                            memory_parts.append(f"[Memory] {clean_content}")
+                            memory_items.append(mem)
+                
+                if memory_parts:
+                    context_parts.append("### From your memories\n" + "\n\n".join(memory_parts))
         
         # Web search
         if action == 'web_search':
@@ -297,8 +440,27 @@ class ChatService:
         user_tz = settings.user_timezone
         now = datetime.now(user_tz)
         today = now.strftime("%A, %B %d, %Y")
+        current_time = now.strftime("%I:%M %p")
         
-        base = f"You are Friday, {settings.authorized_user}'s assistant. Today is {today}."
+        # Load personality from file (cached)
+        personality = self.personality
+        
+        # Build base prompt with personality and context
+        base = f"Today is {today}, {current_time}.\n\n"
+        
+        if personality:
+            # Use the personality from the file
+            base += f"{personality}\n\n"
+        else:
+            # Fallback if file not found
+            base += "You are Friday, a personal AI assistant for Artur Gomes.\n\n"
+        
+        # Always add this critical context
+        base += (
+            f"CRITICAL: The user speaking to you is Artur Gomes ({settings.authorized_user}). "
+            f"All notes in the vault were written by Artur - they are HIS ideas, projects, and knowledge. "
+            f"Do NOT confuse Artur with other people mentioned in his notes."
+        )
         
         if action == "web_search":
             return (
@@ -372,11 +534,205 @@ class ChatService:
                     last_user_msg = msg.get('content', '')
                     break
         
+        # Check for pending memory conflict resolution
+        pending_key = session_id + "_pending_memory"
+        if pending_key in self.conversation_history:
+            pending = self.conversation_history[pending_key]
+            message_lower = message.lower().strip()
+            
+            if message_lower in ['update', 'yes', '1', 'replace']:
+                # Update the existing memory
+                from app.services.memory_store import MemoryStore
+                memory_store = MemoryStore()
+                
+                # Delete old conflicting memories
+                for conflict in pending['conflicts']:
+                    memory_store.delete_memory(conflict['id'])
+                
+                # Add the new memory
+                memory_id, _ = memory_store.add_memory(
+                    content=pending['content'],
+                    label="explicit_memory",
+                    tags=pending['tags'],
+                    force=True
+                )
+                
+                del self.conversation_history[pending_key]
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": f"✅ Updated! Old memory replaced with: \"{pending['content']}\"",
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": pending['content'],
+                }
+            
+            elif message_lower in ['add anyway', 'add', '2', 'keep both', 'both']:
+                # Add anyway, keeping both
+                from app.services.memory_store import MemoryStore
+                memory_store = MemoryStore()
+                
+                memory_id, _ = memory_store.add_memory(
+                    content=pending['content'],
+                    label="explicit_memory",
+                    tags=pending['tags'],
+                    force=True
+                )
+                
+                del self.conversation_history[pending_key]
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": f"✅ Added! I now have both memories stored.",
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": pending['content'],
+                }
+            
+            elif message_lower in ['cancel', 'no', 'nevermind', 'forget it']:
+                del self.conversation_history[pending_key]
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": "OK, I won't save that memory.",
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+        
         intent = intent_router.route(message, last_message=last_user_msg)
         action = intent['action']
         tool = intent.get('tool')
         reminder_data = intent.get('reminder_data')
         reminder_index = intent.get('reminder_index')
+        memory_data = intent.get('memory_data')
+        
+        # Handle memory_save - store a fact in memory
+        if action == 'memory_save' and memory_data:
+            logger.info(f"[Stage 1] Saving memory: {memory_data}")
+            try:
+                from app.services.memory_store import MemoryStore
+                memory_store = MemoryStore()
+                
+                content = memory_data.get('content', '')
+                tags = memory_data.get('tags', [])
+                
+                # Replace "my/I/me" with the user's name for better searchability
+                content = self._personalize_memory(content)
+                
+                # Check for conflicts first
+                memory_id, conflicts = memory_store.add_memory(
+                    content=content,
+                    label="explicit_memory",
+                    tags=tags
+                )
+                
+                if conflicts:
+                    # Found conflicting memories - ask user what to do
+                    conflict_list = "\n".join([
+                        f"  • \"{c['content'][:100]}...\"" if len(c['content']) > 100 else f"  • \"{c['content']}\""
+                        for c in conflicts[:3]
+                    ])
+                    
+                    answer = (
+                        f"⚠️ I found existing memories that might conflict with \"{content}\":\n\n"
+                        f"{conflict_list}\n\n"
+                        f"Would you like me to:\n"
+                        f"1. **Update** the existing memory (replace the old info)\n"
+                        f"2. **Add anyway** (keep both memories)\n\n"
+                        f"Reply with \"update\" or \"add anyway\""
+                    )
+                    
+                    # Store pending memory in session for follow-up
+                    self.conversation_history[session_id + "_pending_memory"] = {
+                        "content": content,
+                        "tags": tags,
+                        "conflicts": conflicts
+                    }
+                    
+                    return {
+                        "session_id": session_id,
+                        "message": message,
+                        "answer": answer,
+                        "used_rag": False,
+                        "used_web": False,
+                        "used_memory": False,
+                        "used_health": False,
+                        "obsidian_chunks": [],
+                        "memory_items": [],
+                        "extracted_memory": None,
+                    }
+                
+                answer = f"✅ Got it! I'll remember: \"{content}\""
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": content,
+                }
+            except Exception as e:
+                logger.error(f"Memory save error: {e}", exc_info=True)
+                answer = f"❌ Failed to save memory: {str(e)}"
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+        
+        # Handle memory_ambiguous - ask for clarification
+        if action == 'memory_ambiguous' and memory_data:
+            logger.info(f"[Stage 1] Ambiguous memory/reminder: {memory_data}")
+            content = memory_data.get('content', '')
+            
+            answer = (
+                f"I'm not sure what you mean by \"remember to {content}\".\n\n"
+                f"Did you want me to:\n"
+                f"1. **Set a reminder** - I'll notify you at a specific time\n"
+                f"   → Say: \"Remind me to {content} in 30 minutes\" or \"at 3pm\"\n\n"
+                f"2. **Save to memory** - I'll remember this fact for future conversations\n"
+                f"   → Say: \"Remember that I need to {content}\" or \"Save this: {content}\""
+            )
+            
+            return {
+                "session_id": session_id,
+                "message": message,
+                "answer": answer,
+                "used_rag": False,
+                "used_web": False,
+                "used_memory": False,
+                "used_health": False,
+                "obsidian_chunks": [],
+                "memory_items": [],
+                "extracted_memory": None,
+            }
         
         # Handle reminder deletion
         if action == 'reminder_delete' and reminder_index is not None:
@@ -546,6 +902,226 @@ class ChatService:
                     "extracted_memory": None,
                 }
         
+        # Handle note operations
+        note_data = intent.get('note_data')
+        
+        # Handle note creation
+        if action == 'note_create' and note_data:
+            logger.info(f"[Stage 1] Creating note: {note_data}")
+            try:
+                title = note_data.get('title', 'Untitled')
+                content = note_data.get('content', '')
+                folder = note_data.get('folder')
+                tags = note_data.get('tags', [])
+                
+                filepath = obsidian_service.create_note(
+                    title=title,
+                    content=content,
+                    folder=folder,
+                    tags=tags
+                )
+                
+                # Escape underscores for Telegram markdown
+                safe_title = title.replace('_', '\\_')
+                answer = f"✅ Created note: {safe_title}"
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+            except Exception as e:
+                logger.error(f"Note creation error: {e}", exc_info=True)
+                answer = f"❌ Failed to create note: {str(e)}"
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+        
+        # Handle note update
+        if action == 'note_update' and note_data:
+            logger.info(f"[Stage 1] Updating note: {note_data}")
+            try:
+                title = note_data.get('title', '')
+                content = note_data.get('content', '')
+                append = note_data.get('append', True)
+                add_date_header = note_data.get('add_date_header', False)
+                
+                # Add date header if requested
+                if add_date_header:
+                    today_str = datetime.now().strftime("%d/%m/%y")
+                    content = f"### {today_str}\n\n{content}"
+                
+                if not title:
+                    answer = "❌ Please specify which note to update"
+                else:
+                    filepath = obsidian_service.update_note(
+                        title=title,
+                        new_content=content,
+                        append=append
+                    )
+                    
+                    if filepath:
+                        action_word = "Added to" if append else "Updated"
+                        safe_title = title.replace('_', '\\_')
+                        answer = f"✅ {action_word} note: {safe_title}"
+                    else:
+                        answer = f"❌ Note not found: '{title}'"
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+            except Exception as e:
+                logger.error(f"Note update error: {e}", exc_info=True)
+                answer = f"❌ Failed to update note: {str(e)}"
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+        
+        # Handle note search
+        if action == 'note_search':
+            logger.info(f"[Stage 1] Searching notes: {note_data}")
+            try:
+                query = note_data.get('title', '') if note_data else ''
+                
+                if query:
+                    # Search by query
+                    results = obsidian_service.search_notes(query, limit=10)
+                    if results:
+                        safe_query = query.replace('_', '\\_')
+                        answer = f"📝 Found {len(results)} note(s) matching '{safe_query}':\n\n"
+                        for i, note in enumerate(results, 1):
+                            safe_title = note['title'].replace('_', '\\_')
+                            answer += f"{i}. {safe_title}\n"
+                            if note.get('preview'):
+                                safe_preview = note['preview'][:100].replace('_', '\\_')
+                                answer += f"   {safe_preview}...\n"
+                    else:
+                        answer = f"No notes found matching '{query}'"
+                else:
+                    # List recent notes
+                    results = obsidian_service.list_notes(limit=10)
+                    if results:
+                        answer = "📝 Recent notes:\n\n"
+                        for i, note in enumerate(results, 1):
+                            safe_title = note['title'].replace('_', '\\_')
+                            answer += f"{i}. {safe_title}\n"
+                    else:
+                        answer = "No notes found in your vault"
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+            except Exception as e:
+                logger.error(f"Note search error: {e}", exc_info=True)
+                answer = f"❌ Failed to search notes: {str(e)}"
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+        
+        # Handle note get (retrieve full note content)
+        if action == 'note_get':
+            logger.info(f"[Stage 1] Getting note: {note_data}")
+            try:
+                title = note_data.get('title', '') if note_data else ''
+                
+                if not title:
+                    answer = "❌ Please specify which note you want to see"
+                else:
+                    result = obsidian_service.get_note(title)
+                    if result:
+                        content = result['content']
+                        # Strip frontmatter for cleaner display
+                        if "---" in content:
+                            parts = content.split("---", 2)
+                            if len(parts) >= 3:
+                                content = parts[2].strip()
+                        # Escape underscores for Telegram markdown
+                        safe_title = result['title'].replace('_', '\\_')
+                        safe_content = content.replace('_', '\\_')
+                        answer = f"📝 {safe_title}\n\n{safe_content}"
+                    else:
+                        answer = f"❌ Note not found: '{title}'"
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+            except Exception as e:
+                logger.error(f"Note get error: {e}", exc_info=True)
+                answer = f"❌ Failed to get note: {str(e)}"
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+        
         # If it's a tool query, execute it directly and return
         if tool:
             logger.info(f"[Stage 1] Executing tool: {tool}")
@@ -602,7 +1178,7 @@ class ChatService:
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     loop.run_until_complete(
-                        post_chat_processor.process_conversation(message, answer)
+                        post_chat_processor.process_conversation(message, answer, history)
                     )
                     loop.close()
                 except Exception as e:

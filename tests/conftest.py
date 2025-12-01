@@ -1,6 +1,7 @@
 """Pytest configuration and shared fixtures."""
 import os
 import sys
+from pathlib import Path
 from typing import Dict, Any, Generator
 
 try:
@@ -123,3 +124,66 @@ def test_memory_id(api_client) -> Generator[str, None, None]:
             os.remove(memory_file)
     except Exception:
         pass  # Best effort cleanup
+
+
+@pytest.fixture
+def brain_paths():
+    """Provide brain folder paths for testing."""
+    from app.core.config import settings
+    
+    return {
+        "brain": settings.brain_path,
+        "vault": settings.vault_path,
+        "memories": settings.memories_path,
+        "journal": settings.journal_path,
+        "reports": settings.reports_path,
+        "reminders": settings.reminders_path
+    }
+
+
+@pytest.fixture
+def memory_store():
+    """Provide memory store instance for testing."""
+    from app.services.memory_store import MemoryStore
+    return MemoryStore()
+
+
+@pytest.fixture
+def brain_service():
+    """Provide brain service instance for testing."""
+    from app.services.brain_service import BrainService
+    return BrainService()
+
+
+@pytest.fixture
+def test_brain_memory(memory_store) -> Generator[Dict[str, Any], None, None]:
+    """Create a test memory in brain folder and cleanup after."""
+    import time
+    timestamp = int(time.time())
+    
+    memory_id, _ = memory_store.add_memory(
+        content=f"Test brain memory {timestamp}: Created by pytest fixture",
+        label="pytest",
+        tags=["test", "fixture"],
+        force=True
+    )
+    
+    # Find the created file (filename is just the ID now)
+    memory_files = list(memory_store.memories_path.glob(f"{memory_id}*.md"))
+    memory_file = memory_files[0] if memory_files else None
+    
+    yield {
+        "id": memory_id,
+        "filepath": str(memory_file) if memory_file else None,
+        "timestamp": timestamp
+    }
+    
+    # Cleanup
+    try:
+        if memory_file and memory_file.exists():
+            memory_file.unlink()
+    except Exception:
+        pass
+
+
+
