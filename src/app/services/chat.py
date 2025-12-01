@@ -1122,6 +1122,100 @@ class ChatService:
                     "extracted_memory": None,
                 }
         
+        # Handle morning report
+        if action == 'morning_report':
+            logger.info(f"[Stage 1] Generating morning report")
+            try:
+                from app.services.morning_report import generate_morning_report
+                from app.services.unified_calendar_service import UnifiedCalendarService
+                from app.services.llm import LLMService
+                
+                # Get health coach
+                health_coach = self.health_coach
+                calendar_service = UnifiedCalendarService()
+                llm_svc = LLMService()
+                
+                answer = generate_morning_report(
+                    health_coach=health_coach,
+                    calendar_service=calendar_service,
+                    llm_service=llm_svc
+                )
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": True,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+            except Exception as e:
+                logger.error(f"Morning report error: {e}", exc_info=True)
+                answer = f"❌ Failed to generate morning report: {str(e)}"
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+        
+        # Handle evening report
+        if action == 'evening_report':
+            logger.info(f"[Stage 1] Generating evening report")
+            try:
+                from app.services.evening_report import generate_evening_report
+                from app.services.unified_calendar_service import UnifiedCalendarService
+                from app.services.llm import LLMService
+                
+                # Get health coach
+                health_coach = self.health_coach
+                calendar_service = UnifiedCalendarService()
+                llm_svc = LLMService()
+                
+                answer = generate_evening_report(
+                    health_coach=health_coach,
+                    calendar_service=calendar_service,
+                    llm_service=llm_svc
+                )
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": True,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+            except Exception as e:
+                logger.error(f"Evening report error: {e}", exc_info=True)
+                answer = f"❌ Failed to generate evening report: {str(e)}"
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+        
         # If it's a tool query, execute it directly and return
         if tool:
             logger.info(f"[Stage 1] Executing tool: {tool}")
