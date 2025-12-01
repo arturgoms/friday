@@ -151,6 +151,14 @@ class TaskScheduler:
         except Exception as e:
             logger.error(f"Error sending weekly report: {e}")
     
+    def run_proactive_checks(self):
+        """Run proactive monitoring checks and send alerts."""
+        try:
+            from app.services.proactive_monitor import proactive_monitor
+            proactive_monitor.check_and_notify()
+        except Exception as e:
+            logger.error(f"Error running proactive checks: {e}")
+    
     def start(self):
         """Start the scheduler."""
         from app.services.file_watcher import file_watcher
@@ -165,6 +173,15 @@ class TaskScheduler:
             trigger=IntervalTrigger(seconds=10),
             id='process_files',
             name='Process pending file changes',
+            replace_existing=True
+        )
+        
+        # Proactive monitoring every 5 minutes
+        self.scheduler.add_job(
+            self.run_proactive_checks,
+            trigger=IntervalTrigger(minutes=5),
+            id='proactive_monitor',
+            name='Proactive Monitoring',
             replace_existing=True
         )
         
@@ -198,6 +215,7 @@ class TaskScheduler:
         self.scheduler.start()
         logger.info(f"✅ Task scheduler started with timezone UTC{settings.timezone_offset_hours:+d}")
         logger.info("   - File watcher: every 10s")
+        logger.info("   - Proactive monitor: every 5 min")
         logger.info("   - Morning report: 9:00 AM")
         logger.info("   - Evening report: 11:00 PM")
         logger.info("   - Weekly report: Monday 8:00 AM")
