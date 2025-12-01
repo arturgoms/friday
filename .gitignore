@@ -16,6 +16,8 @@ ENV/
 # Environment variables
 .env
 data/google_token.pickle
+data/google_credentials.json
+
 
 # Logs
 *.log
