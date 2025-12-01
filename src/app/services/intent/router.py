@@ -14,12 +14,14 @@ class IntentRouter:
 
 Your job is to output a JSON object with the following structure:
 {
-    "action": "web_search" | "health_query" | "time_query" | "calendar_query" | "reminder_query" | "reminder_create" | "reminder_delete" | "general",
+    "action": "web_search" | "health_query" | "time_query" | "calendar_query" | "reminder_query" | "reminder_create" | "reminder_delete" | "memory_save" | "memory_ambiguous" | "note_create" | "note_update" | "note_search" | "note_get" | "general",
     "use_rag": true/false,
     "use_memory": true/false,
     "tool": "current_time" | "calendar_today" | "calendar_tomorrow" | "calendar_week" | "calendar_next" | "reminder_list" | "reminder_next" | null,
     "reminder_data": {"message": "...", "time_spec": "..."} | null,
-    "reminder_index": null | int
+    "reminder_index": null | int,
+    "memory_data": {"content": "...", "tags": [...]} | null,
+    "note_data": {"title": "...", "content": "...", "folder": "...", "tags": [...]} | null
 }
 
 IMPORTANT: For vague follow-up questions like "what about yesterday's?" or "and today?", look for context clues:
@@ -53,8 +55,11 @@ RULES:
    - Set tool="reminder_list" or "reminder_next"
    - Set use_rag=false, use_memory=false
 
-6. **reminder_create**: Use when user asks to be reminded of something
-   - Examples: "remind me to call mom in 30 minutes", "set reminder for 3pm"
+6. **reminder_create**: Use when user wants to be REMINDED to DO something (an ACTION with TIME)
+   - MUST have a TIME reference (in X minutes, at 3pm, tomorrow, in an hour, etc.)
+   - MUST be about an ACTION to perform (call, buy, send, take, do, check, etc.)
+   - Examples: "remind me to call mom in 30 minutes", "set reminder for 3pm to take medicine"
+   - Keywords: "remind me to", "reminder to", "don't forget to" + TIME
    - Extract message and time specification to reminder_data
    - Set use_rag=false, use_memory=false
 
@@ -64,8 +69,52 @@ RULES:
    - For "delete all", set reminder_index to -999 (special value meaning "all")
    - Set use_rag=false, use_memory=false
 
-8. **general**: Use for everything else (greetings, questions about notes, personal info)
-   - Set use_rag=true, use_memory=true
+8. **memory_save**: Use when user wants Friday to REMEMBER a FACT (store in memory)
+   - User wants to store INFORMATION/FACTS, not set a reminder for an action
+   - Keywords: "remember that", "remember my", "don't forget that", "I want you to know", "save this", "keep in mind"
+   - Pattern: "remember THAT [fact]" vs "remember TO [action]"
+   - Examples: "remember that I like pizza", "remember my favorite color is black", "remember that Camila is my wife"
+   - NO time reference needed (facts are timeless)
+   - Extract content to memory_data
+   - Set use_rag=false, use_memory=false
+
+9. **memory_ambiguous**: Use when "remember to [action]" has NO time reference - AMBIGUOUS case
+   - Examples: "remember to buy milk" (no time), "remember to call mom" (no time)
+   - This is ambiguous - could be a reminder (timed) or a note/memory (fact)
+   - Use this action so the system can ask for clarification
+   - Extract the action to memory_data.content
+   - Set use_rag=false, use_memory=false
+
+10. **note_create**: Use when user wants to create a new note in Obsidian
+    - Examples: "create a note about Python best practices", "make a note titled Meeting Notes", "write a note about my project ideas"
+    - Extract title and content to note_data. If content not provided, use empty string.
+    - Keywords: create note, make note, new note, write note, add note
+    - Set use_rag=false, use_memory=false
+
+11. **note_update**: Use when user wants to update/edit/append to an existing note
+   - Examples: "add to my Python note: ...", "update the Meeting Notes with...", "append to my ideas note", "lets add X to the note", "add X under today's date"
+   - IMPORTANT: If user says "add [content]" or "lets add [content]" WITHOUT saying "create" or "new", assume they want to UPDATE an existing note
+   - Extract title and new_content to note_data. Set note_data.append=true if appending.
+   - If previous context mentioned a specific note, use that as the title
+   - DATE HANDLING: If user says "under today's date" or "for today", set note_data.add_date_header=true
+   - Keywords: update note, edit note, add to note, append to note, modify note, lets add, add under
+   - Set use_rag=false, use_memory=false
+
+12. **note_search**: Use when user wants to find or list notes (but not read full content)
+    - Examples: "find my notes about Python", "search notes for machine learning", "list my recent notes", "what notes do I have?"
+    - Extract search query to note_data.title (use empty string for listing all)
+    - Keywords: find note, search note, list notes, what notes
+    - Set use_rag=false, use_memory=false
+
+13. **note_get**: Use when user wants to READ/GET/SHOW the FULL CONTENT of a specific note
+    - Examples: "get my note about therapy", "show me my Python note", "read my ideas note", "open my meeting notes", "what's in my shopping list note?"
+    - Extract the note title/topic to note_data.title
+    - Keywords: get note, show note, read note, open note, what's in my note
+    - Set use_rag=false, use_memory=false
+
+14. **general**: Use for everything else (greetings, questions about notes content, personal info)
+    - For questions ABOUT note contents (what does my note say about X?), use general with use_rag=true
+    - Set use_rag=true, use_memory=true
 
 Examples:
 
@@ -102,11 +151,81 @@ OUTPUT: {"action": "reminder_delete", "use_rag": false, "use_memory": false, "to
 USER: "delete all reminders"
 OUTPUT: {"action": "reminder_delete", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": -999}
 
+USER: "remember that I like pizza"
+OUTPUT: {"action": "memory_save", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "memory_data": {"content": "I like pizza", "tags": ["preference", "food"]}}
+
+USER: "remember my favorite color is black"
+OUTPUT: {"action": "memory_save", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "memory_data": {"content": "My favorite color is black", "tags": ["preference", "color"]}}
+
+USER: "remember that Camila is my wife"
+OUTPUT: {"action": "memory_save", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "memory_data": {"content": "Camila is my wife", "tags": ["family", "relationship"]}}
+
+USER: "I want you to know I'm allergic to peanuts"
+OUTPUT: {"action": "memory_save", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "memory_data": {"content": "I'm allergic to peanuts", "tags": ["health", "allergy"]}}
+
+USER: "remember to buy milk"
+OUTPUT: {"action": "memory_ambiguous", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "memory_data": {"content": "buy milk"}}
+
+USER: "remember to call mom"
+OUTPUT: {"action": "memory_ambiguous", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "memory_data": {"content": "call mom"}}
+
+USER: "remember to call mom tomorrow"
+OUTPUT: {"action": "reminder_create", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": {"message": "call mom", "time_spec": "tomorrow"}, "reminder_index": null}
+
+USER: "remind me to call mom in 30 minutes"
+OUTPUT: {"action": "reminder_create", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": {"message": "call mom", "time_spec": "30 minutes"}, "reminder_index": null}
+
 USER: "what did I write about machine learning?"
-OUTPUT: {"action": "general", "use_rag": true, "use_memory": true, "tool": null, "reminder_data": null, "reminder_index": null}
+OUTPUT: {"action": "general", "use_rag": true, "use_memory": true, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": null}
+
+USER: "create a note about Python best practices"
+OUTPUT: {"action": "note_create", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": {"title": "Python best practices", "content": "", "folder": null, "tags": ["python", "programming"]}}
+
+USER: "make a note titled Project Ideas with content: Build an AI assistant"
+OUTPUT: {"action": "note_create", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": {"title": "Project Ideas", "content": "Build an AI assistant", "folder": null, "tags": ["ideas", "projects"]}}
+
+USER: "add to my Python note: remember to use type hints"
+OUTPUT: {"action": "note_update", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": {"title": "Python", "content": "remember to use type hints", "append": true}}
+
+USER: "update the Meeting Notes with: Action items from today's meeting"
+OUTPUT: {"action": "note_update", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": {"title": "Meeting Notes", "content": "Action items from today's meeting", "append": true}}
+
+PREVIOUS: "get my note about things to say in therapy"
+CURRENT: "lets add 'Discussão com a camila sobre bagunça' under today's date"
+OUTPUT: {"action": "note_update", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": {"title": "things to say in therapy", "content": "- [ ] Discussão com a camila sobre bagunça", "append": true, "add_date_header": true}}
+
+USER: "add 'buy groceries' to my todo note"
+OUTPUT: {"action": "note_update", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": {"title": "todo", "content": "- [ ] buy groceries", "append": true}}
+
+USER: "find my notes about Django"
+OUTPUT: {"action": "note_search", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": {"title": "Django"}}
+
+USER: "list my recent notes"
+OUTPUT: {"action": "note_search", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": {"title": ""}}
+
+USER: "get my note about things to say in therapy"
+OUTPUT: {"action": "note_get", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": {"title": "things to say in therapy"}}
+
+USER: "show me my shopping list note"
+OUTPUT: {"action": "note_get", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": {"title": "shopping list"}}
+
+USER: "read my Python best practices note"
+OUTPUT: {"action": "note_get", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": {"title": "Python best practices"}}
 
 USER: "hello"
-OUTPUT: {"action": "general", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null}
+OUTPUT: {"action": "general", "use_rag": false, "use_memory": false, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": null}
+
+USER: "which phone do I use?"
+OUTPUT: {"action": "general", "use_rag": true, "use_memory": true, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": null}
+
+USER: "what's my favorite color?"
+OUTPUT: {"action": "general", "use_rag": true, "use_memory": true, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": null}
+
+USER: "what do you know about me?"
+OUTPUT: {"action": "general", "use_rag": true, "use_memory": true, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": null}
+
+USER: "who is Camila?"
+OUTPUT: {"action": "general", "use_rag": true, "use_memory": true, "tool": null, "reminder_data": null, "reminder_index": null, "note_data": null}
 
 Respond ONLY with valid JSON. No explanations."""
     

@@ -180,6 +180,79 @@ else:
         esac
         ;;
     
+    index)
+        ACTION="${2:-status}"
+        cd "$FRIDAY_DIR"
+        
+        case "$ACTION" in
+            rebuild)
+                echo "🔄 Rebuilding RAG index..."
+                echo "   Source: ~/friday/brain/1. Notes/"
+                echo ""
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.vector_store import vector_store
+from app.core.config import settings
+
+print(f'📁 Indexing documents from: {settings.vault_path}')
+print('')
+
+count = vector_store.rebuild_index()
+
+print('')
+print(f'✅ Index rebuilt: {count} chunks indexed')
+"
+                ;;
+            status)
+                echo "📊 RAG Index Status"
+                echo "==================="
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.vector_store import vector_store
+from app.services.memory_store import MemoryStore
+from app.core.config import settings
+from pathlib import Path
+
+# Count source files
+vault_files = list(settings.vault_path.rglob('*.md'))
+
+# Count brain memories
+memory_store = MemoryStore()
+brain_memories = memory_store.count()
+
+# Count other brain folders
+journal_files = list(settings.journal_path.glob('*.md')) if settings.journal_path.exists() else []
+report_files = list(settings.reports_path.glob('*.md')) if settings.reports_path.exists() else []
+reminder_files = list(settings.reminders_path.glob('*.json')) if settings.reminders_path.exists() else []
+
+stats = vector_store.get_stats()
+
+print(f'📁 Brain folder: {settings.brain_path}')
+print(f'')
+print(f'📚 Vault (1. Notes):')
+print(f'   Files: {len(vault_files)}')
+print(f'   Indexed chunks: {stats[\"obsidian_chunks\"]}')
+print(f'')
+print(f'🧠 Friday (5. Friday):')
+print(f'   Memories: {brain_memories}')
+print(f'   Journal entries: {len(journal_files)}')
+print(f'   Reports: {len(report_files)}')
+print(f'   Reminders: {len(reminder_files)}')
+print(f'')
+print(f'💾 ChromaDB entries: {stats[\"memory_entries\"]}')
+"
+                ;;
+            *)
+                echo "Usage: friday index [rebuild|status]"
+                echo ""
+                echo "  status    Show index statistics (default)"
+                echo "  rebuild   Rebuild the entire RAG index"
+                ;;
+        esac
+        ;;
+    
     monitor)
         cd "$FRIDAY_DIR"
         bash scripts/monitoring/monitor.sh
@@ -298,6 +371,7 @@ Commands:
   notify "msg" [sev]      Send notification (severity: info|warning|error|success|critical)
   report                  Send system status report via Telegram
   test [type]             Run tests (all|unit|integration|bash)
+  index [action]          Manage RAG index (status|rebuild)
   reminders [action]      Manage reminders (list|cancel <id>)
   memory [action]         Manage memories (add|list|delete|clear|drop-all)
   monitor                 Show system monitor
@@ -314,6 +388,8 @@ Examples:
   friday test              # Run all tests
   friday test unit         # Run only unit tests
   friday test integration  # Run only integration tests
+  friday index status      # Show index stats
+  friday index rebuild     # Rebuild RAG index from brain/1. Notes/
   friday reminders list
   friday reminders cancel abc12345
   friday memory add "I love pizza"

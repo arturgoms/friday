@@ -109,6 +109,6 @@ pkill -f "python main.py"
 
 - **Model**: Qwen2.5-7B-Instruct (16K context)
 - **GPU**: RTX 3090 24GB (~21GB used)
-- **Vault**: ~/my-brain (170 files, 1016 chunks)
+- **Vault**: ~/friday/brain/1. Notes (synced via Syncthing)
 - **Features**: RAG, Auto-reindex, Memory, Web search, Streaming
 - **Status**: ✅ Fully operational

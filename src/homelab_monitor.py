@@ -198,24 +198,28 @@ class HomelabMonitor:
                 "warning"
             )
         
-        # Check TrueNAS mount
-        if os.path.ismount('/mnt/friday-pool'):
-            vault_disk = psutil.disk_usage('/mnt/friday-pool')
-            vault_percent = vault_disk.percent
-            results['truenas'] = vault_percent
-            
-            if vault_percent > self.disk_usage_threshold and self.should_alert("disk_truenas_full"):
-                self.notifier.send_alert(
-                    "TrueNAS Disk Space Low",
-                    f"TrueNAS mount is {vault_percent}% full ({vault_disk.free // (1024**3)}GB free)",
-                    "warning"
-                )
+        # Check brain folder (synced via Syncthing)
+        brain_path = os.path.expanduser("~/friday/brain")
+        if os.path.isdir(brain_path):
+            # Count markdown files as health check
+            vault_path = os.path.join(brain_path, "1. Notes")
+            if os.path.isdir(vault_path):
+                md_count = len([f for f in os.listdir(vault_path) if f.endswith('.md')])
+                results['brain_files'] = md_count
+            else:
+                results['brain_files'] = 0
+                if self.should_alert("brain_vault_missing"):
+                    self.notifier.send_alert(
+                        "Brain Vault Missing",
+                        "The vault folder (1. Notes) is not found in brain/",
+                        "warning"
+                    )
         else:
-            results['truenas'] = None
-            if self.should_alert("truenas_unmounted"):
+            results['brain_files'] = None
+            if self.should_alert("brain_missing"):
                 self.notifier.send_alert(
-                    "TrueNAS Mount Missing",
-                    "The TrueNAS share is not mounted!",
+                    "Brain Folder Missing",
+                    "The brain folder is not found at ~/friday/brain/",
                     "error"
                 )
         
@@ -301,7 +305,7 @@ class HomelabMonitor:
             "GPU Util": f"{gpu.get('utilization', 'N/A')}%" if gpu else "N/A",
             "Memory": f"{memory['percent']}%",
             "Disk (root)": f"{disk.get('root', 'N/A')}%",
-            "Disk (TrueNAS)": f"{disk.get('truenas', 'N/A')}%" if disk.get('truenas') else "Not mounted",
+            "Brain Files": f"{disk.get('brain_files', 0)} notes" if disk.get('brain_files') is not None else "Missing",
             "  ": "",
             "📊 Friday Stats": "",
             "Vault Chunks": friday.get('obsidian_chunks', 'N/A'),

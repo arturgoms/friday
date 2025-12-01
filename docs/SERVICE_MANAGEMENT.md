@@ -166,17 +166,17 @@ sudo systemctl daemon-reload
 ./friday restart all
 ```
 
-### TrueNAS mount issue
+### Brain folder issue
 
 ```bash
-# Check mount
-mount | grep friday-pool
+# Check brain folder
+ls -la ~/friday/brain
 
-# Test mount script
-bash scripts/system/check_truenas.sh
+# Test brain check script
+bash scripts/system/check_brain.sh
 
-# Manual mount
-bash scripts/system/mount_truenas.sh
+# Check Syncthing status
+systemctl --user status syncthing
 ```
 
 ### Port conflicts

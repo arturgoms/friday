@@ -99,8 +99,8 @@ class TestRAGSystem:
     
     @pytest.mark.parametrize("query,expected_keywords", [
         ("Tell me about Camila", ["veterinarian", "wife", "email"]),
-        ("When is my birthday?", ["march", "30"]),
-        ("Where do I work?", ["counterpart"]),
+        ("What is Artur Gomes birthday?", ["march", "30", "1996"]),
+        ("What company does Artur work at?", ["counterpart"]),
     ])
     def test_specific_personal_queries(self, api_client, check_api_running, query, expected_keywords):
         """Test specific queries about personal information."""
@@ -120,6 +120,8 @@ class TestMemorySystem:
     
     def test_create_memory(self, api_client, check_api_running):
         """Test creating a new memory."""
+        from pathlib import Path
+        
         timestamp = int(time.time())
         
         response = api_client.post("/remember", json={
@@ -135,15 +137,10 @@ class TestMemorySystem:
         assert "filepath" in data
         assert "chunks_indexed" in data
         
-        # Cleanup
-        try:
-            memories = api_client.get("/admin/memories?limit=200").json()
-            for mem in memories.get("memories", []):
-                if f"Test memory {timestamp}" in mem.get("full_content", ""):
-                    api_client.delete(f"/admin/memories/{mem['id']}")
-                    break
-        except Exception:
-            pass
+        # Cleanup - delete the file directly
+        filepath = data.get("filepath")
+        if filepath and Path(filepath).exists():
+            Path(filepath).unlink()
     
     def test_list_memories(self, api_client, check_api_running):
         """Test listing memories."""

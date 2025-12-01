@@ -9,12 +9,32 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+# Brain paths (Syncthing synced folder)
+BRAIN_PATH = Path(os.getenv("BRAIN_PATH", str(Path.home() / "friday" / "brain")))
+
+
 class Settings(BaseModel):
     """Application settings."""
     
-    # Paths
-    vault_path: Path = Path(os.getenv("VAULT_PATH", str(Path.home() / "my-brain")))
-    memory_path: Path = Path(os.getenv("MEMORY_PATH", str(Path.home() / "my-brain" / "1. Notes")))
+    # Brain Paths (Syncthing synced - editable in Obsidian)
+    brain_path: Path = BRAIN_PATH
+    
+    # RAG Knowledge Base (read-only for Friday)
+    vault_path: Path = BRAIN_PATH / "1. Notes"
+    
+    # Friday's Data (read-write for Friday)
+    friday_path: Path = BRAIN_PATH / "5. Friday"
+    about_path: Path = BRAIN_PATH / "5. Friday" / "5.0 About"
+    memories_path: Path = BRAIN_PATH / "5. Friday" / "5.1 Memories"
+    journal_path: Path = BRAIN_PATH / "5. Friday" / "5.2 Journal"
+    reports_path: Path = BRAIN_PATH / "5. Friday" / "5.3 Reports"
+    reminders_path: Path = BRAIN_PATH / "5. Friday" / "5.4 Reminders"
+    
+    # User identity file (for "Who am I?" queries)
+    user_profile_file: str = "Artur Gomes.md"
+    
+    # Legacy paths (kept for backwards compatibility)
+    memory_path: Path = BRAIN_PATH / "5. Friday" / "5.1 Memories"
     chroma_path: Path = Path("/home/artur/friday/data/chroma_db")
     
     # Models

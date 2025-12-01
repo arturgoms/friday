@@ -49,7 +49,11 @@ class Reminder:
 class ReminderService:
     """Service for managing reminders."""
     
-    def __init__(self, storage_path: str = "/home/artur/friday/data/reminders.json"):
+    def __init__(self, storage_path: str = None):
+        from app.core.config import settings
+        # Use brain folder for reminders (Syncthing synced)
+        if storage_path is None:
+            storage_path = settings.reminders_path / "reminders.json"
         self.storage_path = Path(storage_path)
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         self.reminders: List[Reminder] = []
