@@ -278,6 +278,10 @@ class ProactiveMonitor:
                 for event in today_events:
                     event_start = event.start
                     
+                    # Skip all-day events (events starting before 6 AM)
+                    if event_start.hour < 6:
+                        continue
+                    
                     # Make timezone-aware if needed
                     if event_start.tzinfo is None:
                         event_start = event_start.replace(tzinfo=settings.user_timezone)
@@ -314,8 +318,11 @@ class ProactiveMonitor:
                             self._mark_alert_sent(alert_key)
                 
                 # Check for conflicts (overlapping events)
-                for i, event1 in enumerate(today_events):
-                    for event2 in today_events[i+1:]:
+                # Filter out all-day events (events starting before 6 AM are likely all-day)
+                real_events = [e for e in today_events if e.start.hour >= 6]
+                
+                for i, event1 in enumerate(real_events):
+                    for event2 in real_events[i+1:]:
                         # Check if events overlap
                         e1_start = event1.start
                         e1_end = event1.end if hasattr(event1, 'end') and event1.end else e1_start + timedelta(hours=1)
