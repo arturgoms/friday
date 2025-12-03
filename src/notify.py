@@ -59,6 +59,53 @@ class FridayNotifier:
         
         return self.send_message(formatted_message)
     
+    def send_proactive_alert(self, title: str, message: str, alert_key: str | None = None, category: str = "info"):
+        """Send a proactive alert with an Ack button."""
+        emoji_map = {
+            "health": "🏥",
+            "calendar": "📅",
+            "task": "✅",
+            "reminder": "⏰",
+            "context": "💡",
+            "weather": "🌤️",
+            "info": "ℹ️"
+        }
+        
+        emoji = emoji_map.get(category, "📢")
+        
+        formatted_message = f"{emoji} **{title}**\n{message}"
+        
+        try:
+            payload = {
+                "chat_id": self.user_id,
+                "text": formatted_message,
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": True
+            }
+            
+            # Add Ack button if we have an alert_key
+            if alert_key:
+                payload["reply_markup"] = {
+                    "inline_keyboard": [[
+                        {"text": "✓ Got it", "callback_data": f"ack:{alert_key}"}
+                    ]]
+                }
+            
+            response = requests.post(
+                f"{self.base_url}/sendMessage",
+                json=payload,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("result", {}).get("message_id")
+            return None
+            
+        except Exception as e:
+            print(f"Failed to send proactive alert: {e}")
+            return None
+    
     def send_system_status(self, status_dict: dict):
         """Send system status report"""
         message = "📊 *System Status Report*\n\n"

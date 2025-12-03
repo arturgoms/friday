@@ -3,12 +3,16 @@ Friday AI - Telegram Bot Interface
 Allows you to interact with Friday AI from your phone via Telegram
 """
 import os
+import sys
 import logging
 import requests
 import tempfile
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from dotenv import load_dotenv
+
+# Add src to path for imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 load_dotenv()
 
@@ -92,13 +96,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/remember <text> - Save a memory\n"
         "/reminders - List all pending reminders\n"
         "/sync - Sync with Nextcloud\n"
-        "/stats - Show system stats\n\n"
+        "/stats - Show system stats\n"
+        "/feedback - View feedback statistics\n\n"
         "*Just send me a message* to ask anything!\n\n"
-        "💡 I automatically search the web when you ask about:\n"
+        "💡 Use 👍/👎 buttons to rate my answers and help me improve!\n\n"
+        "🌐 I automatically search the web when you ask about:\n"
         "• Latest/current information\n"
         "• News and updates\n"
-        "• General knowledge questions\n"
-        "• Weather, stocks, etc.",
+        "• General knowledge questions",
         parse_mode='Markdown'
     )
 
@@ -200,6 +205,32 @@ async def sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 
+async def reminders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /reminders command - list all pending reminders."""
+    if not is_authorized(update.effective_user.id):
+        return
+    
+    try:
+        from app.services.reminders import reminder_service
+        
+        pending = reminder_service.list_pending_reminders()
+        
+        if not pending:
+            await update.message.reply_text("📋 No pending reminders.")
+            return
+        
+        msg = "🔔 *Pending Reminders*\n\n"
+        for i, reminder in enumerate(sorted(pending, key=lambda r: r.remind_at), 1):
+            remind_at = reminder.remind_at.strftime("%a %d %b %H:%M")
+            msg += f"{i}. {reminder.message}\n   ⏰ {remind_at}\n\n"
+        
+        await update.message.reply_text(msg, parse_mode='Markdown')
+        
+    except Exception as e:
+        logger.error(f"Reminders error: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /stats command."""
     if not is_authorized(update.effective_user.id):
@@ -289,15 +320,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             footer = f"\n\n_{' + '.join(context_info)}_" if context_info else ""
             
+            # Create feedback buttons
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("👍", callback_data=f"feedback:up"),
+                    InlineKeyboardButton("👎", callback_data=f"feedback:down")
+                ]
+            ])
+            
+            # Store context for feedback (in memory for now, could use context.user_data)
+            if not hasattr(context, 'bot_data'):
+                context.bot_data = {}
+            
             # Split long messages
             if len(answer) > 4000:
                 chunks = [answer[i:i+4000] for i in range(0, len(answer), 4000)]
-                for chunk in chunks:
+                for chunk in chunks[:-1]:
                     await update.message.reply_text(chunk)
-                if footer:
-                    await update.message.reply_text(footer, parse_mode='Markdown')
+                # Add buttons only to last message
+                sent_msg = await update.message.reply_text(
+                    chunks[-1] + footer, 
+                    parse_mode='Markdown',
+                    reply_markup=keyboard
+                )
             else:
-                await update.message.reply_text(answer + footer, parse_mode='Markdown')
+                sent_msg = await update.message.reply_text(
+                    answer + footer, 
+                    parse_mode='Markdown',
+                    reply_markup=keyboard
+                )
+            
+            # Store message context for feedback
+            context.bot_data[f"msg_{sent_msg.message_id}"] = {
+                "user_message": user_message,
+                "ai_response": answer,
+                "context_type": "health" if data.get('used_health') else "rag" if data.get('used_rag') else "general",
+                "intent_action": data.get('intent', {}).get('action', 'unknown') if isinstance(data.get('intent'), dict) else 'unknown'
+            }
         else:
             await update.message.reply_text(
                 f"❌ Error: {response.status_code}\n{response.text[:200]}"
@@ -451,6 +510,131 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error processing voice message: {str(e)}")
 
 
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle all button callbacks (feedback and ack)."""
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_authorized(query.from_user.id):
+        return
+    
+    callback_data = query.data
+    
+    # Handle feedback callbacks
+    if callback_data.startswith("feedback:"):
+        await handle_feedback_callback(query, context)
+    
+    # Handle alert acknowledgment callbacks
+    elif callback_data.startswith("ack:"):
+        await handle_ack_callback(query, context)
+
+
+async def handle_feedback_callback(query, context):
+    """Handle feedback button clicks."""
+    callback_data = query.data
+    feedback_type = callback_data.split(":")[1]  # 'up' or 'down'
+    
+    if feedback_type == "done":
+        return  # Already processed
+    
+    message_id = query.message.message_id
+    
+    # Get stored context for this message
+    msg_key = f"msg_{message_id}"
+    msg_context = context.bot_data.get(msg_key, {})
+    
+    try:
+        # Store feedback
+        from app.services.feedback_store import get_feedback_store
+        feedback_store = get_feedback_store()
+        
+        feedback_store.add_feedback(
+            user_message=msg_context.get("user_message", "Unknown"),
+            ai_response=msg_context.get("ai_response", "Unknown"),
+            feedback=feedback_type,
+            message_id=str(message_id),
+            context_type=msg_context.get("context_type"),
+            intent_action=msg_context.get("intent_action")
+        )
+        
+        # Update message to show feedback received
+        emoji = "👍" if feedback_type == "up" else "👎"
+        await query.edit_message_reply_markup(
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"{emoji} Thanks for feedback!", callback_data="feedback:done")]
+            ])
+        )
+        
+        logger.info(f"Feedback recorded: {feedback_type} for message {message_id}")
+        
+        # Clean up stored context
+        if msg_key in context.bot_data:
+            del context.bot_data[msg_key]
+            
+    except Exception as e:
+        logger.error(f"Error storing feedback: {e}")
+        await query.edit_message_reply_markup(reply_markup=None)
+
+
+async def handle_ack_callback(query, context):
+    """Handle alert acknowledgment button clicks."""
+    callback_data = query.data
+    alert_key = callback_data.split(":", 1)[1]  # Get everything after "ack:"
+    
+    try:
+        # Import the proactive monitor to acknowledge the alert
+        from app.services.proactive_monitor import proactive_monitor
+        proactive_monitor.acknowledge_alert(alert_key)
+        
+        # Update the message to show it's been acknowledged
+        await query.edit_message_reply_markup(
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✓ Acknowledged", callback_data="ack:done")]
+            ])
+        )
+        
+        logger.info(f"Alert acknowledged: {alert_key}")
+        
+    except Exception as e:
+        logger.error(f"Error acknowledging alert: {e}")
+        # Still remove the button even if there's an error
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except:
+            pass
+
+
+async def feedback_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /feedback command - show feedback statistics."""
+    if not is_authorized(update.effective_user.id):
+        return
+    
+    try:
+        from app.services.feedback_store import get_feedback_store
+        feedback_store = get_feedback_store()
+        
+        stats = feedback_store.get_feedback_stats(days=30)
+        
+        overall = stats["overall"]
+        msg = f"📊 *Feedback Stats (Last 30 Days)*\n\n"
+        msg += f"*Overall:*\n"
+        msg += f"- Total responses rated: {overall['total']}\n"
+        msg += f"- 👍 Thumbs up: {overall['thumbs_up']}\n"
+        msg += f"- 👎 Thumbs down: {overall['thumbs_down']}\n"
+        msg += f"- Approval rate: {overall['approval_rate']}%\n\n"
+        
+        if stats["by_intent"]:
+            msg += "*By Intent:*\n"
+            for item in stats["by_intent"][:5]:
+                msg += f"- {item['intent']}: {item['approval_rate']}% ({item['total']} ratings)\n"
+        
+        await update.message.reply_text(msg, parse_mode='Markdown')
+        
+    except Exception as e:
+        logger.error(f"Error getting feedback stats: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle errors."""
     logger.error(f"Update {update} caused error {context.error}")
@@ -469,6 +653,9 @@ def main():
     application.add_handler(CommandHandler("remember", remember_command))
     application.add_handler(CommandHandler("sync", sync_command))
     application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(CommandHandler("reminders", reminders_command))
+    application.add_handler(CommandHandler("feedback", feedback_stats_command))
+    application.add_handler(CallbackQueryHandler(handle_callback, pattern="^(feedback:|ack:)"))
     application.add_handler(MessageHandler(filters.VOICE, handle_voice))  # Voice messages
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)

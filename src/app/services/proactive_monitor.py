@@ -6,6 +6,7 @@ and assist the user before they need to ask.
 """
 import os
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from enum import Enum
@@ -29,6 +30,7 @@ class ProactiveAlert:
     title: str
     message: str
     priority: AlertPriority
+    alert_key: Optional[str] = None  # Unique key for tracking ack status
     data: Optional[Dict] = None
     created_at: Optional[datetime] = None
     
@@ -71,8 +73,74 @@ class ProactiveMonitor:
         self._health_coach = None
         self._calendar_service = None
         self._notifier = None
-        self._last_alerts: Dict[str, datetime] = {}  # Prevent duplicate alerts
-        self._alert_cooldown_minutes = 60  # Don't repeat same alert within this time
+        self._alert_cooldown_minutes = 30  # Resend unacked alerts after this time
+        self._cooldown_file = Path("/home/artur/friday/data/alert_cooldowns.json")
+        self._acked_file = Path("/home/artur/friday/data/alert_acked.json")
+        self._last_alerts: Dict[str, datetime] = self._load_cooldowns()
+        self._acked_alerts: Dict[str, datetime] = self._load_acked()
+    
+    def _load_cooldowns(self) -> Dict[str, datetime]:
+        """Load alert cooldowns from file to survive restarts."""
+        try:
+            if self._cooldown_file.exists():
+                import json
+                with open(self._cooldown_file, 'r') as f:
+                    data = json.load(f)
+                # Convert ISO strings back to datetime
+                cooldowns = {}
+                for key, value in data.items():
+                    try:
+                        cooldowns[key] = datetime.fromisoformat(value)
+                    except:
+                        pass
+                return cooldowns
+        except Exception as e:
+            logger.error(f"Error loading cooldowns: {e}")
+        return {}
+    
+    def _load_acked(self) -> Dict[str, datetime]:
+        """Load acknowledged alerts from file."""
+        try:
+            if self._acked_file.exists():
+                import json
+                with open(self._acked_file, 'r') as f:
+                    data = json.load(f)
+                acked = {}
+                for key, value in data.items():
+                    try:
+                        acked[key] = datetime.fromisoformat(value)
+                    except:
+                        pass
+                return acked
+        except Exception as e:
+            logger.error(f"Error loading acked alerts: {e}")
+        return {}
+    
+    def _save_cooldowns(self):
+        """Save alert cooldowns to file."""
+        try:
+            import json
+            # Convert datetime to ISO strings
+            data = {k: v.isoformat() for k, v in self._last_alerts.items()}
+            
+            # Ensure directory exists
+            self._cooldown_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(self._cooldown_file, 'w') as f:
+                json.dump(data, f)
+        except Exception as e:
+            logger.error(f"Error saving cooldowns: {e}")
+    
+    def _save_acked(self):
+        """Save acknowledged alerts to file."""
+        try:
+            import json
+            data = {k: v.isoformat() for k, v in self._acked_alerts.items()}
+            self._acked_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._acked_file, 'w') as f:
+                json.dump(data, f)
+        except Exception as e:
+            logger.error(f"Error saving acked alerts: {e}")
     
     @property
     def health_coach(self):
@@ -110,19 +178,74 @@ class ProactiveMonitor:
         return self._notifier
     
     def _should_send_alert(self, alert_key: str) -> bool:
-        """Check if we should send this alert (cooldown check)."""
-        now = datetime.now(settings.user_timezone)
+        """
+        Check if we should send this alert.
         
+        Logic:
+        - If already acknowledged today, don't send
+        - If not acknowledged and cooldown passed, send again
+        - If never sent, send
+        """
+        # Reload acked alerts from disk (in case user acked via Telegram)
+        self._acked_alerts = self._load_acked()
+        
+        now = datetime.now(settings.user_timezone)
+        today = now.date()
+        
+        # Check if already acknowledged today
+        if alert_key in self._acked_alerts:
+            acked_time = self._acked_alerts[alert_key]
+            if acked_time.date() == today:
+                return False  # Already acked today, don't resend
+        
+        # Check cooldown (only resend after cooldown if not acked)
         if alert_key in self._last_alerts:
             last_sent = self._last_alerts[alert_key]
+            # Handle timezone-naive datetimes from storage
+            if last_sent.tzinfo is None:
+                last_sent = last_sent.replace(tzinfo=settings.user_timezone)
             if (now - last_sent).total_seconds() < self._alert_cooldown_minutes * 60:
-                return False
+                return False  # Cooldown not passed yet
         
         return True
     
     def _mark_alert_sent(self, alert_key: str):
         """Mark an alert as sent."""
         self._last_alerts[alert_key] = datetime.now(settings.user_timezone)
+        self._save_cooldowns()
+    
+    def acknowledge_alert(self, alert_key: str):
+        """Mark an alert as acknowledged by user."""
+        self._acked_alerts[alert_key] = datetime.now(settings.user_timezone)
+        self._save_acked()
+        logger.info(f"Alert acknowledged: {alert_key}")
+    
+    def is_alert_acked(self, alert_key: str) -> bool:
+        """Check if alert was acknowledged today."""
+        if alert_key not in self._acked_alerts:
+            return False
+        acked_time = self._acked_alerts[alert_key]
+        today = datetime.now(settings.user_timezone).date()
+        return acked_time.date() == today
+    
+    def cleanup_old_acks(self):
+        """Remove acks older than 24 hours."""
+        now = datetime.now(settings.user_timezone)
+        cutoff = now - timedelta(hours=24)
+        
+        old_keys = []
+        for k, v in self._acked_alerts.items():
+            # Handle timezone-naive datetimes from storage
+            ack_time = v if v.tzinfo else v.replace(tzinfo=settings.user_timezone)
+            if ack_time < cutoff:
+                old_keys.append(k)
+        
+        for key in old_keys:
+            del self._acked_alerts[key]
+        
+        if old_keys:
+            self._save_acked()
+            logger.info(f"Cleaned up {len(old_keys)} old alert acks")
     
     def check_health_alerts(self) -> List[ProactiveAlert]:
         """Check health metrics for concerning patterns."""
@@ -149,6 +272,7 @@ class ProactiveMonitor:
                                    f"**Recommendation:** Stop what you're doing and rest. "
                                    f"Consider a short nap or at minimum, sit down and relax for 15-20 minutes.",
                             priority=AlertPriority.URGENT,
+                            alert_key=alert_key,
                             data={"body_battery": bb}
                         ))
                         self._mark_alert_sent(alert_key)
@@ -163,6 +287,7 @@ class ProactiveMonitor:
                                    f"**Recommendation:** Take it easy. Avoid intense activities "
                                    f"and prioritize rest when possible.",
                             priority=AlertPriority.HIGH,
+                            alert_key=alert_key,
                             data={"body_battery": bb}
                         ))
                         self._mark_alert_sent(alert_key)
@@ -181,6 +306,7 @@ class ProactiveMonitor:
                                    f"**Recommendation:** Skip intense workouts today. "
                                    f"Light stretching or a gentle walk is okay, but your body needs recovery.",
                             priority=AlertPriority.HIGH,
+                            alert_key=alert_key,
                             data={"training_readiness": tr}
                         ))
                         self._mark_alert_sent(alert_key)
@@ -197,6 +323,7 @@ class ProactiveMonitor:
                                f"**Recommendation:** Your body is still recovering from recent activity. "
                                f"Focus on sleep, hydration, and nutrition.",
                         priority=AlertPriority.MEDIUM,
+                        alert_key=alert_key,
                         data={"recovery_time": rt}
                     ))
                     self._mark_alert_sent(alert_key)
@@ -216,6 +343,7 @@ class ProactiveMonitor:
                                    f"**Recommendation:** This can indicate stress or fatigue. "
                                    f"Consider meditation, deep breathing, or reducing today's demands.",
                             priority=AlertPriority.MEDIUM,
+                            alert_key=alert_key,
                             data={"hrv": hrv, "hrv_avg": hrv_avg}
                         ))
                         self._mark_alert_sent(alert_key)
@@ -237,6 +365,7 @@ class ProactiveMonitor:
                                    f"**Recommendation:** Consider a lighter day. "
                                    f"Avoid caffeine after 2pm and try to go to bed earlier tonight.",
                             priority=AlertPriority.HIGH,
+                            alert_key=alert_key,
                             data={"sleep_score": sleep['sleep_score']}
                         ))
                         self._mark_alert_sent(alert_key)
@@ -252,6 +381,7 @@ class ProactiveMonitor:
                                    f"**Recommendation:** If possible, take a 20-minute nap today. "
                                    f"Prioritize getting to bed early tonight.",
                             priority=AlertPriority.HIGH,
+                            alert_key=alert_key,
                             data={"sleep_hours": sleep['total_sleep_hours']}
                         ))
                         self._mark_alert_sent(alert_key)
@@ -299,6 +429,7 @@ class ProactiveMonitor:
                                 message=f"**{event.summary}** starts in ~30 minutes "
                                        f"({event_start.strftime('%I:%M %p')}){location_str}",
                                 priority=AlertPriority.MEDIUM,
+                                alert_key=alert_key,
                                 data={"event": event.summary, "time": event_start.isoformat()}
                             ))
                             self._mark_alert_sent(alert_key)
@@ -313,6 +444,7 @@ class ProactiveMonitor:
                                 title="Event Starting Soon!",
                                 message=f"**{event.summary}** starts in 5 minutes!{location_str}",
                                 priority=AlertPriority.HIGH,
+                                alert_key=alert_key,
                                 data={"event": event.summary, "time": event_start.isoformat()}
                             ))
                             self._mark_alert_sent(alert_key)
@@ -321,8 +453,23 @@ class ProactiveMonitor:
                 # Filter out all-day events (events starting before 6 AM are likely all-day)
                 real_events = [e for e in today_events if e.start.hour >= 6]
                 
-                for i, event1 in enumerate(real_events):
-                    for event2 in real_events[i+1:]:
+                # Deduplicate events with same name and time (same event in multiple calendars)
+                seen_events = set()
+                unique_events = []
+                for event in real_events:
+                    event_key = (event.summary.lower().strip(), event.start.hour, event.start.minute)
+                    if event_key not in seen_events:
+                        seen_events.add(event_key)
+                        unique_events.append(event)
+                
+                for i, event1 in enumerate(unique_events):
+                    for event2 in unique_events[i+1:]:
+                        # Skip if events have similar names (likely same event in different calendars)
+                        name1 = event1.summary.lower().strip()
+                        name2 = event2.summary.lower().strip()
+                        if name1 in name2 or name2 in name1:
+                            continue
+                        
                         # Check if events overlap
                         e1_start = event1.start
                         e1_end = event1.end if hasattr(event1, 'end') and event1.end else e1_start + timedelta(hours=1)
@@ -339,6 +486,7 @@ class ProactiveMonitor:
                                            f"• {event2.summary} ({event2.start.strftime('%I:%M %p')})\n\n"
                                            f"You may need to reschedule one of them.",
                                     priority=AlertPriority.HIGH,
+                                    alert_key=alert_key,
                                     data={"event1": event1.summary, "event2": event2.summary}
                                 ))
                                 self._mark_alert_sent(alert_key)
@@ -361,6 +509,7 @@ class ProactiveMonitor:
                                            f"{event.start.strftime('%I:%M %p')} tomorrow.\n\n"
                                            f"Consider going to bed early tonight!",
                                     priority=AlertPriority.MEDIUM,
+                                    alert_key=alert_key,
                                     data={"event": event.summary}
                                 ))
                                 self._mark_alert_sent(alert_key)
@@ -393,6 +542,7 @@ class ProactiveMonitor:
                         title=f"{len(urgent_tasks)} Important Task(s) Due Today",
                         message=f"Don't forget:\n{task_list}",
                         priority=AlertPriority.MEDIUM,
+                        alert_key=alert_key,
                         data={"count": len(urgent_tasks)}
                     ))
                     self._mark_alert_sent(alert_key)
@@ -414,6 +564,7 @@ class ProactiveMonitor:
                         title=f"{len(overdue_tasks)} Overdue Task(s)",
                         message=f"These tasks are past due:\n{task_list}{more_text}",
                         priority=AlertPriority.HIGH,
+                        alert_key=alert_key,
                         data={"count": len(overdue_tasks)}
                     ))
                     self._mark_alert_sent(alert_key)
@@ -444,24 +595,37 @@ class ProactiveMonitor:
                 forecast = response.json()
                 now = datetime.now(settings.user_timezone)
                 
-                # Check next 6 hours for rain
+                # Collect all rain times in next 6 hours
+                rain_times = []
                 for entry in forecast.get('list', [])[:3]:  # Next ~9 hours
                     weather_main = entry['weather'][0]['main'].lower()
                     entry_time = datetime.fromtimestamp(entry['dt'], tz=settings.user_timezone)
                     
                     if 'rain' in weather_main or 'storm' in weather_main:
-                        alert_key = f"weather_rain_{entry_time.strftime('%Y%m%d%H')}"
-                        if self._should_send_alert(alert_key):
-                            alerts.append(ProactiveAlert(
-                                category="weather",
-                                title="Rain Expected",
-                                message=f"Rain is expected around {entry_time.strftime('%I:%M %p')}.\n\n"
-                                       f"**Recommendation:** Bring an umbrella if you're going out!",
-                                priority=AlertPriority.LOW,
-                                data={"time": entry_time.isoformat()}
-                            ))
-                            self._mark_alert_sent(alert_key)
-                        break  # Only one rain alert
+                        rain_times.append(entry_time)
+                
+                if rain_times:
+                    # Use date-based alert key - only ONE rain alert per day
+                    alert_key = f"weather_rain_{now.strftime('%Y%m%d')}"
+                    
+                    if self._should_send_alert(alert_key):
+                        # Format the rain times
+                        if len(rain_times) == 1:
+                            time_str = f"around {rain_times[0].strftime('%I:%M %p')}"
+                        else:
+                            times = [t.strftime('%I:%M %p') for t in rain_times]
+                            time_str = f"around {times[0]} and later"
+                        
+                        alerts.append(ProactiveAlert(
+                            category="weather",
+                            title="Rain Expected Today",
+                            message=f"Rain is expected {time_str}.\n\n"
+                                   f"**Recommendation:** Bring an umbrella if you're going out!",
+                            priority=AlertPriority.LOW,
+                            alert_key=alert_key,
+                            data={"times": [t.isoformat() for t in rain_times]}
+                        ))
+                        self._mark_alert_sent(alert_key)
         
         except Exception as e:
             logger.error(f"Error checking weather alerts: {e}", exc_info=True)
@@ -492,6 +656,7 @@ class ProactiveMonitor:
                             message="You haven't logged a run in the past 2 weeks.\n\n"
                                    "Is everything okay? Even a short walk can help maintain fitness.",
                             priority=AlertPriority.LOW,
+                            alert_key=alert_key,
                             data={"days_since_run": 14}
                         ))
                         self._mark_alert_sent(alert_key)
@@ -529,6 +694,7 @@ class ProactiveMonitor:
                             title=dyn_alert.title,
                             message=dyn_alert.description,
                             priority=priority_map.get(dyn_alert.priority, AlertPriority.MEDIUM),
+                            alert_key=alert_key,
                             data={"alert_id": dyn_alert.alert_id}
                         ))
                         
@@ -584,7 +750,7 @@ class ProactiveMonitor:
         return all_alerts
     
     def send_alerts(self, alerts: List[ProactiveAlert]):
-        """Send alerts via Telegram."""
+        """Send alerts via Telegram with Ack button."""
         if not alerts:
             return
         
@@ -594,9 +760,14 @@ class ProactiveMonitor:
         
         for alert in alerts:
             try:
-                message = alert.to_telegram_message()
-                self.notifier.send_message(message, parse_mode="Markdown")
-                logger.info(f"Sent proactive alert: {alert.title}")
+                # Use send_proactive_alert which includes the Ack button
+                self.notifier.send_proactive_alert(
+                    title=alert.title,
+                    message=alert.message,
+                    alert_key=alert.alert_key,
+                    category=alert.category
+                )
+                logger.info(f"Sent proactive alert: {alert.title} (key: {alert.alert_key})")
             except Exception as e:
                 logger.error(f"Failed to send alert '{alert.title}': {e}")
     
