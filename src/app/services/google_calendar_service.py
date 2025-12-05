@@ -119,6 +119,20 @@ class GoogleCalendarService:
             
             for event in events:
                 try:
+                    # Skip declined events
+                    # Check if the user has declined this event
+                    attendees = event.get('attendees', [])
+                    user_declined = False
+                    for attendee in attendees:
+                        if attendee.get('self', False):  # This is the calendar owner
+                            if attendee.get('responseStatus') == 'declined':
+                                user_declined = True
+                                break
+                    
+                    if user_declined:
+                        logger.debug(f"Skipping declined event: {event.get('summary', 'No title')}")
+                        continue
+                    
                     # Parse start time
                     start = event['start'].get('dateTime', event['start'].get('date'))
                     end = event['end'].get('dateTime', event['end'].get('date'))

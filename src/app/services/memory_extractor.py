@@ -47,6 +47,101 @@ class MemoryExtractor:
             self._llm_service = llm_service
         return self._llm_service
     
+    def _extract_json_array(self, response: str) -> Optional[str]:
+        """
+        Extract JSON array from LLM response with robust parsing.
+        Handles markdown code blocks, malformed JSON, and common LLM issues.
+        """
+        import json
+        
+        # Clean up the response
+        response = response.strip()
+        
+        # Strategy 1: Try to find JSON in markdown code blocks
+        code_block_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', response)
+        if code_block_match:
+            candidate = code_block_match.group(1).strip()
+            cleaned = self._clean_json_string(candidate)
+            if self._is_valid_json_array(cleaned):
+                return cleaned
+        
+        # Strategy 2: Find JSON array by matching brackets properly
+        # Look for the outermost [ ... ] with proper bracket matching
+        start_idx = response.find('[')
+        if start_idx != -1:
+            bracket_count = 0
+            end_idx = -1
+            in_string = False
+            escape_next = False
+            
+            for i, char in enumerate(response[start_idx:], start_idx):
+                if escape_next:
+                    escape_next = False
+                    continue
+                if char == '\\':
+                    escape_next = True
+                    continue
+                if char == '"' and not escape_next:
+                    in_string = not in_string
+                    continue
+                if in_string:
+                    continue
+                if char == '[':
+                    bracket_count += 1
+                elif char == ']':
+                    bracket_count -= 1
+                    if bracket_count == 0:
+                        end_idx = i
+                        break
+            
+            if end_idx != -1:
+                candidate = response[start_idx:end_idx + 1]
+                cleaned = self._clean_json_string(candidate)
+                if self._is_valid_json_array(cleaned):
+                    return cleaned
+        
+        # Strategy 3: Try the entire response as JSON
+        cleaned = self._clean_json_string(response)
+        if self._is_valid_json_array(cleaned):
+            return cleaned
+        
+        # Strategy 4: If response is empty array indicators
+        if response in ['[]', 'empty', 'none', 'null', 'Nothing memorable']:
+            return '[]'
+        
+        return None
+    
+    def _clean_json_string(self, json_str: str) -> str:
+        """Clean common JSON issues from LLM output."""
+        # Remove any leading/trailing whitespace
+        json_str = json_str.strip()
+        
+        # Remove trailing commas before ] or }
+        json_str = re.sub(r',\s*]', ']', json_str)
+        json_str = re.sub(r',\s*}', '}', json_str)
+        
+        # Fix unescaped newlines inside strings (replace with \n)
+        # This is tricky - we need to be careful not to break valid JSON
+        
+        # Fix single quotes to double quotes (common LLM mistake)
+        # Only do this if the JSON doesn't parse and has single quotes
+        if "'" in json_str and '"' not in json_str:
+            json_str = json_str.replace("'", '"')
+        
+        # Remove any control characters except \n, \r, \t
+        json_str = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', json_str)
+        
+        return json_str
+    
+    def _is_valid_json_array(self, json_str: str) -> bool:
+        """Check if string is a valid JSON array."""
+        import json
+        try:
+            data = json.loads(json_str)
+            return isinstance(data, list)
+        except (json.JSONDecodeError, TypeError):
+            return False
+    
     async def extract_from_conversation(
         self,
         user_message: str,
@@ -135,30 +230,49 @@ JSON OUTPUT:"""
             # Parse JSON response
             import json
             
-            # Extract JSON from response (handle markdown code blocks)
-            json_match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                # Try to find JSON array directly
-                json_match = re.search(r'(\[.*?\])', response, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(1)
-                else:
-                    logger.warning(f"Could not find JSON in extraction response: {response[:200]}")
-                    return []
+            json_str = self._extract_json_array(response)
+            if json_str is None:
+                logger.warning(f"Could not find JSON in extraction response: {response[:200]}")
+                return []
             
             extractions_data = json.loads(json_str)
             
             # Convert to MemoryExtraction objects
             extractions = []
             for data in extractions_data:
-                if data.get("confidence", 0) >= 0.5:  # Only keep confident extractions
+                # Validate required fields exist
+                if not isinstance(data, dict):
+                    logger.warning(f"Skipping non-dict extraction: {data}")
+                    continue
+                
+                content = data.get("content")
+                memory_type = data.get("type")
+                confidence = data.get("confidence", 0)
+                
+                # Skip if missing required fields
+                if not content or not memory_type:
+                    logger.warning(f"Skipping extraction with missing fields: {data}")
+                    continue
+                
+                # Ensure confidence is a number
+                try:
+                    confidence = float(confidence)
+                except (ValueError, TypeError):
+                    confidence = 0.5
+                
+                if confidence >= 0.5:  # Only keep confident extractions
+                    # Handle entities - could be list or string
+                    entities = data.get("entities", [])
+                    if isinstance(entities, str):
+                        entities = [e.strip() for e in entities.split(",") if e.strip()]
+                    elif not isinstance(entities, list):
+                        entities = []
+                    
                     extraction = MemoryExtraction(
-                        content=data["content"],
-                        memory_type=data["type"],
-                        entities=data.get("entities", []),
-                        confidence=data["confidence"],
+                        content=str(content),
+                        memory_type=str(memory_type),
+                        entities=entities,
+                        confidence=confidence,
                         metadata={"extracted_at": datetime.now().isoformat()}
                     )
                     extractions.append(extraction)

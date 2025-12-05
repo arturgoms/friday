@@ -86,23 +86,33 @@ class HomelabMonitor:
             is_up = self.check_external_service(service)
             results[name] = is_up
             
-            # Alert if service is down
-            if not is_up and self.should_alert(f"external_{name.lower()}_down"):
-                self.notifier.send_alert(
-                    f"{name} Unreachable",
-                    f"{name} at {service['url']} is not responding!",
-                    "error"
-                )
+            down_key = f"external_{name.lower()}_down"
+            was_down_key = f"external_{name.lower()}_was_down"
             
-            # Alert when service comes back up (if we had alerted before)
-            if is_up and f"external_{name.lower()}_down" in self.alert_states:
-                # Service recovered
-                if self.should_alert(f"external_{name.lower()}_up"):
+            if not is_up:
+                # Service is down
+                if self.should_alert(down_key):
+                    self.notifier.send_alert(
+                        f"{name} Unreachable",
+                        f"{name} at {service['url']} is not responding!",
+                        "error"
+                    )
+                # Mark that this service was down
+                self.alert_states[was_down_key] = True
+            else:
+                # Service is up - check if it was previously down
+                if self.alert_states.get(was_down_key):
+                    # Service recovered! Send alert and clear the "was down" flag
                     self.notifier.send_alert(
                         f"{name} Recovered",
                         f"{name} at {service['url']} is back online!",
                         "success"
                     )
+                    # Clear the flag so we don't alert again
+                    del self.alert_states[was_down_key]
+                    # Also clear the down cooldown so next time it goes down we alert immediately
+                    if down_key in self.alert_states:
+                        del self.alert_states[down_key]
         
         return results
     

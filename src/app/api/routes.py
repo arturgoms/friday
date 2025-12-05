@@ -1,7 +1,11 @@
 """API routes."""
+import json
+import time
+import uuid
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Header, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Header, Query, Request
+from fastapi.responses import StreamingResponse, JSONResponse
+from pydantic import BaseModel
 from app.core.config import settings
 from app.core.logging import logger
 from app.models.schemas import (
@@ -15,6 +19,242 @@ from app.services.llm import llm_service
 from app.services.task_manager import task_manager
 
 router = APIRouter()
+
+
+# ===== OpenAI-Compatible API for OpenWebUI =====
+
+class OpenAIMessage(BaseModel):
+    role: str
+    content: str
+
+class OpenAIChatRequest(BaseModel):
+    model: str = "friday"
+    messages: List[OpenAIMessage]
+    temperature: Optional[float] = 0.7
+    max_tokens: Optional[int] = None
+    stream: Optional[bool] = False
+
+@router.get("/v1/models")
+def list_models():
+    """OpenAI-compatible models list endpoint."""
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": "friday",
+                "object": "model",
+                "created": 1700000000,
+                "owned_by": "local",
+                "permission": [],
+                "root": "friday",
+                "parent": None,
+            }
+        ]
+    }
+
+@router.post("/v1/chat/completions")
+async def openai_chat_completions(request: OpenAIChatRequest):
+    """
+    OpenAI-compatible chat completions endpoint.
+    This allows OpenWebUI to use Friday as a model.
+    """
+    try:
+        # Extract the last user message
+        user_message = ""
+        for msg in reversed(request.messages):
+            if msg.role == "user":
+                user_message = msg.content
+                break
+        
+        if not user_message:
+            raise HTTPException(status_code=400, detail="No user message found")
+        
+        # Detect and skip OpenWebUI internal prompts (tags, suggestions, etc.)
+        openwebui_internal_patterns = [
+            "Generate 1-3 broad tags",
+            "Suggest 3-5 relevant follow-up",
+            "categorizing the main themes",
+            "### Task:",
+            "high-level domains",
+        ]
+        
+        is_internal_prompt = any(pattern.lower() in user_message.lower() for pattern in openwebui_internal_patterns)
+        
+        if is_internal_prompt:
+            # Return empty/minimal response for internal prompts
+            # Don't process these through Friday's full pipeline
+            logger.debug(f"Skipping OpenWebUI internal prompt: {user_message[:50]}...")
+            
+            response_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
+            created = int(time.time())
+            
+            if request.stream:
+                def skip_stream():
+                    yield f"data: {json.dumps({'id': response_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'friday', 'choices': [{'index': 0, 'delta': {'content': ''}, 'finish_reason': 'stop'}]})}\n\n"
+                    yield "data: [DONE]\n\n"
+                return StreamingResponse(skip_stream(), media_type="text/event-stream")
+            else:
+                return {
+                    "id": response_id,
+                    "object": "chat.completion",
+                    "created": created,
+                    "model": "friday",
+                    "choices": [{"index": 0, "message": {"role": "assistant", "content": ""}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+                }
+        
+        # Generate a session ID from the conversation
+        # Use a hash of the first message to maintain session across requests
+        session_id = f"openwebui_{hash(request.messages[0].content) if request.messages else 'default'}"
+        
+        # Format as OpenAI response
+        response_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
+        created = int(time.time())
+        
+        if request.stream:
+            # Streaming response
+            def generate_stream():
+                chunk_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
+                
+                try:
+                    # Call Friday's chat service with streaming
+                    result = chat_service.chat(
+                        message=user_message,
+                        session_id=session_id,
+                        stream=True
+                    )
+                    
+                    # Check if we got a stream or a direct result
+                    if isinstance(result, dict) and "stream" in result:
+                        # True LLM streaming
+                        stream = result["stream"]
+                        for chunk in stream:
+                            if chunk.choices[0].delta.content:
+                                content = chunk.choices[0].delta.content
+                                chunk_data = {
+                                    "id": chunk_id,
+                                    "object": "chat.completion.chunk",
+                                    "created": created,
+                                    "model": "friday",
+                                    "choices": [{
+                                        "index": 0,
+                                        "delta": {"content": content},
+                                        "finish_reason": None
+                                    }]
+                                }
+                                yield f"data: {json.dumps(chunk_data)}\n\n"
+                    else:
+                        # Direct result (tool response) - simulate streaming
+                        answer = result.get("answer", "I couldn't generate a response.") if isinstance(result, dict) else str(result)
+                        
+                        # Stream character by character for smooth effect
+                        buffer = ""
+                        for char in answer:
+                            buffer += char
+                            # Send every few characters or on newlines for smoother streaming
+                            if len(buffer) >= 3 or char in '\n.!?,:;':
+                                chunk_data = {
+                                    "id": chunk_id,
+                                    "object": "chat.completion.chunk",
+                                    "created": created,
+                                    "model": "friday",
+                                    "choices": [{
+                                        "index": 0,
+                                        "delta": {"content": buffer},
+                                        "finish_reason": None
+                                    }]
+                                }
+                                yield f"data: {json.dumps(chunk_data)}\n\n"
+                                buffer = ""
+                        
+                        # Send remaining buffer
+                        if buffer:
+                            chunk_data = {
+                                "id": chunk_id,
+                                "object": "chat.completion.chunk",
+                                "created": created,
+                                "model": "friday",
+                                "choices": [{
+                                    "index": 0,
+                                    "delta": {"content": buffer},
+                                    "finish_reason": None
+                                }]
+                            }
+                            yield f"data: {json.dumps(chunk_data)}\n\n"
+                    
+                except Exception as e:
+                    logger.error(f"Streaming error: {e}", exc_info=True)
+                    error_chunk = {
+                        "id": chunk_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": "friday",
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"content": f"Error: {str(e)}"},
+                            "finish_reason": None
+                        }]
+                    }
+                    yield f"data: {json.dumps(error_chunk)}\n\n"
+                
+                # Send final chunk
+                final_chunk = {
+                    "id": chunk_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": "friday",
+                    "choices": [{
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop"
+                    }]
+                }
+                yield f"data: {json.dumps(final_chunk)}\n\n"
+                yield "data: [DONE]\n\n"
+            
+            return StreamingResponse(
+                generate_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                }
+            )
+        else:
+            # Non-streaming response
+            result = chat_service.chat(
+                message=user_message,
+                session_id=session_id,
+                stream=False
+            )
+            
+            answer = result.get("answer", "I couldn't generate a response.")
+            
+            return {
+                "id": response_id,
+                "object": "chat.completion",
+                "created": created,
+                "model": "friday",
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": answer
+                    },
+                    "finish_reason": "stop"
+                }],
+                "usage": {
+                    "prompt_tokens": len(user_message.split()),
+                    "completion_tokens": len(answer.split()),
+                    "total_tokens": len(user_message.split()) + len(answer.split())
+                }
+            }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"OpenAI chat completions error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def verify_auth(x_api_key: Optional[str] = None):
@@ -238,6 +478,29 @@ def debug_info(x_api_key: Optional[str] = Header(None)):
         "pending_files": pending_count,
         **stats,
     }
+
+
+@router.get("/admin/alerts/skipped")
+def get_skipped_alerts(x_api_key: Optional[str] = Header(None)):
+    """Get alerts that were skipped today due to budget exhaustion."""
+    verify_auth(x_api_key)
+    
+    try:
+        from app.services.proactive_monitor import proactive_monitor
+        
+        skipped = proactive_monitor.get_skipped_alerts()
+        stats = proactive_monitor.get_budget_stats()
+        
+        return {
+            "status": "ok",
+            "date": stats.get("date"),
+            "budget_stats": stats,
+            "skipped_count": len(skipped),
+            "skipped_alerts": skipped
+        }
+    except Exception as e:
+        logger.error(f"Get skipped alerts error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/admin/memories")

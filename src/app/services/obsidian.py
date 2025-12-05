@@ -3,7 +3,7 @@ import re
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from app.core.config import settings
 from app.core.logging import logger
 
@@ -20,7 +20,18 @@ class ObsidianService:
             settings.memory_path.mkdir(parents=True, exist_ok=True)
             logger.info(f"Created memory path: {settings.memory_path}")
         
+        # Lazy-load obsidian_knowledge to avoid circular imports
+        self._knowledge = None
+        
         logger.info(f"Obsidian service initialized: {settings.vault_path}")
+    
+    @property
+    def knowledge(self):
+        """Lazy load ObsidianKnowledge."""
+        if self._knowledge is None:
+            from app.services.obsidian_knowledge import obsidian_knowledge
+            self._knowledge = obsidian_knowledge
+        return self._knowledge
     
     def load_all_documents(self) -> List[dict]:
         """Load all markdown files from vault and Friday's About folder."""
@@ -182,6 +193,7 @@ class ObsidianService:
         content: str,
         folder: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        base_path: Optional[Path] = None,
     ) -> Path:
         """
         Create a new note in the vault.
@@ -189,19 +201,23 @@ class ObsidianService:
         Args:
             title: Note title (will be used as filename)
             content: Note content (markdown)
-            folder: Optional subfolder within vault
+            folder: Optional subfolder within vault (relative to base_path)
             tags: Optional list of tags for frontmatter
+            base_path: Base path for the note. Defaults to brain_path.
             
         Returns:
             Path to the created file
         """
         filename = self.sanitize_filename(title) + ".md"
         
+        # Use brain_path as default base (covers all folders: 0-5)
+        base = base_path or settings.brain_path
+        
         if folder:
-            target_dir = settings.vault_path / folder
+            target_dir = base / folder
             target_dir.mkdir(parents=True, exist_ok=True)
         else:
-            target_dir = settings.vault_path
+            target_dir = base
         
         filepath = target_dir / filename
         
@@ -237,6 +253,153 @@ class ObsidianService:
         except Exception as e:
             logger.error(f"Failed to create note: {e}")
             raise
+    
+    def create_note_smart(
+        self,
+        title: str,
+        content: str,
+        note_type: Optional[str] = None,
+        additional_tags: Optional[List[str]] = None,
+        use_template: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Create a note using Obsidian knowledge to auto-select folder and tags.
+        
+        This is the preferred method for creating notes as it follows the
+        user's Obsidian conventions automatically.
+        
+        Args:
+            title: Note title
+            content: Note content (markdown)
+            note_type: Type of note (daily, meeting, memory, journal, idea, note, etc.)
+                       If None, defaults to 'note' which goes to Inbox
+            additional_tags: Extra tags to add beyond auto-detected ones
+            use_template: If True, use appropriate template if available
+            
+        Returns:
+            Dict with:
+                - path: Path to created file
+                - folder: Folder used
+                - tags: Tags applied
+                - template_used: Name of template used (if any)
+        """
+        note_type = note_type or "note"
+        
+        # Get folder and tags from obsidian knowledge
+        folder = self.knowledge.get_folder_for_note_type(note_type)
+        tags = self.knowledge.get_tags_for_note_type(note_type)
+        
+        # Add content-based tag suggestions
+        suggested_tags = self.knowledge.suggest_tags_for_content(content, title)
+        for tag in suggested_tags:
+            if tag not in tags:
+                tags.append(tag)
+        
+        # Add any additional tags
+        if additional_tags:
+            for tag in additional_tags:
+                if tag not in tags:
+                    tags.append(tag)
+        
+        # Check for template
+        template_used = None
+        template_content = None
+        if use_template:
+            # Map note types to template names
+            template_map = {
+                "daily": "Friday Journal",
+                "journal": "Friday Journal",
+                "memory": "Friday Memory",
+                "report": "Friday Report",
+                "reminder": "Friday Reminder",
+                "idea": "Friday Idea",
+                "meeting": "Meeting",  # User's meeting template
+            }
+            template_name = template_map.get(note_type)
+            if template_name:
+                template_content = self.knowledge.get_template(template_name)
+                if template_content:
+                    template_used = template_name
+        
+        # Build the note content
+        if template_content:
+            # Process template - replace placeholders
+            processed_template = self._process_template(template_content, {
+                "title": title,
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "time": datetime.now().strftime("%H:%M"),
+                "content": content,
+            })
+            final_content = processed_template
+        else:
+            final_content = content
+        
+        # Create the note using the standard method
+        filepath = self.create_note(
+            title=title,
+            content=final_content,
+            folder=folder,
+            tags=tags,
+        )
+        
+        return {
+            "path": filepath,
+            "folder": folder,
+            "tags": tags,
+            "template_used": template_used,
+        }
+    
+    def _process_template(self, template: str, variables: Dict[str, str]) -> str:
+        """
+        Process a template by replacing placeholders.
+        
+        Handles common template patterns:
+        - {{date}}, {{time}}, {{title}}
+        - Templater syntax: <% tp.date.now() %>
+        """
+        result = template
+        
+        # Remove frontmatter from template (we build our own)
+        if result.startswith("---"):
+            end_fm = result.find("---", 3)
+            if end_fm != -1:
+                result = result[end_fm + 3:].strip()
+        
+        # Replace simple placeholders
+        for key, value in variables.items():
+            result = result.replace(f"{{{{{key}}}}}", value)
+            result = result.replace(f"{{{{ {key} }}}}", value)
+        
+        # Handle Templater date syntax (common patterns)
+        result = re.sub(
+            r'<%\s*tp\.date\.now\(\s*["\']?YYYY-MM-DD["\']?\s*\)\s*%>',
+            variables.get("date", datetime.now().strftime("%Y-%m-%d")),
+            result
+        )
+        result = re.sub(
+            r'<%\s*tp\.date\.now\(\s*\)\s*%>',
+            variables.get("date", datetime.now().strftime("%Y-%m-%d")),
+            result
+        )
+        result = re.sub(
+            r'<%\s*tp\.file\.title\s*%>',
+            variables.get("title", ""),
+            result
+        )
+        
+        # If content variable provided and template has a content section, insert it
+        content = variables.get("content", "")
+        if content:
+            # Look for common content markers
+            if "## Content" in result:
+                result = result.replace("## Content\n", f"## Content\n{content}\n")
+            elif "## Notes" in result:
+                result = result.replace("## Notes\n", f"## Notes\n{content}\n")
+            elif not any(marker in result for marker in ["## ", "### "]):
+                # If no sections, append content
+                result = result + "\n" + content
+        
+        return result
     
     def update_note(
         self,

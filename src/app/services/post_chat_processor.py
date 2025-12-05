@@ -58,6 +58,25 @@ class PostChatProcessor:
             self._task_manager = task_manager
         return self._task_manager
     
+    def _is_internal_or_system_message(self, message: str) -> bool:
+        """Check if a message looks like an internal/system prompt (e.g., from OpenWebUI)."""
+        if not message:
+            return True
+        
+        internal_patterns = [
+            "generate 1-3 broad tags",
+            "suggest 3-5 relevant follow-up",
+            "categorizing the main themes",
+            "### task:",
+            "high-level domains",
+            "as a **user**",
+            "based on the chat history",
+            "help continue or deepen the discussion",
+        ]
+        
+        message_lower = message.lower()
+        return any(pattern in message_lower for pattern in internal_patterns)
+    
     async def process_conversation(
         self,
         user_message: str,
@@ -84,6 +103,11 @@ class PostChatProcessor:
             "tasks_created": 0,
             "alerts_created": 0,
         }
+        
+        # Skip processing for internal/system messages (e.g., OpenWebUI tag generation)
+        if self._is_internal_or_system_message(user_message):
+            logger.debug(f"Skipping post-processing for internal message: {user_message[:50]}...")
+            return results
         
         try:
             # Extract memories

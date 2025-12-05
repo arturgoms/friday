@@ -14,8 +14,16 @@ from app.services.intent.router import intent_router
 from app.services.date_tools import date_tools
 from app.services.reminders import reminder_service
 from app.services.calendar_service import calendar_service
+from app.services.unified_calendar_service import unified_calendar_service
 from app.services.post_chat_processor import post_chat_processor
 from app.services.obsidian import obsidian_service
+from app.services.conversation_memory import conversation_memory
+from app.services.correction_detector import correction_detector
+from app.services.obsidian_knowledge import obsidian_knowledge
+from app.services.relationship_state import relationship_tracker, opinion_store
+from app.services.task_manager import task_manager, TaskStatus, TaskPriority, TaskContext
+from app.services.alert_store import alert_store, AlertType
+from app.services.memory_store import MemoryStore
 
 
 class ChatService:
@@ -389,6 +397,12 @@ class ChatService:
                 context_parts.append(health_ctx)
                 used_health = True
         
+        # Conversation memory - add context from past conversations on this topic
+        # This includes corrections I've received, advice I've given, etc.
+        conv_memory_ctx = conversation_memory.get_context_for_message(message)
+        if conv_memory_ctx:
+            context_parts.append(conv_memory_ctx)
+        
         combined_context = "\n\n".join(context_parts) if context_parts else ""
         
         return combined_context, used_rag, used_web, used_health, obsidian_chunks, memory_items
@@ -498,6 +512,79 @@ class ChatService:
                 return f"Your next reminder is '{next_r.message}' in {time_text}"
             return "You have no pending reminders."
         
+        elif tool == "calendar_find_free":
+            # This is handled in the main chat flow with free_time_data
+            # But we can return a default result if called directly
+            free_slots = unified_calendar_service.find_free_slots(days=7, duration_minutes=60)
+            if free_slots:
+                result = "📅 Free time slots in the next 7 days:\n\n"
+                for slot in free_slots[:10]:  # Limit to 10 slots
+                    result += f"• {slot['date']}: {slot['start']} - {slot['end']} ({slot['duration_minutes']} min)\n"
+                return result
+            return "No free slots found in your calendar for the next 7 days."
+        
+        elif tool == "task_list":
+            tasks = task_manager.list_tasks(status=TaskStatus.TODO, limit=20)
+            in_progress = task_manager.list_tasks(status=TaskStatus.IN_PROGRESS, limit=10)
+            all_tasks = in_progress + tasks
+            
+            if all_tasks:
+                result = "📋 Your tasks:\n\n"
+                for task in all_tasks:
+                    status_icon = "🔄" if task.status == TaskStatus.IN_PROGRESS else "⬜"
+                    priority_icon = {"URGENT": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🟢"}.get(task.priority.name, "")
+                    due_str = f" (due {task.due_date.strftime('%b %d')})" if task.due_date else ""
+                    result += f"{status_icon} {priority_icon} {task.title}{due_str}\n"
+                return result
+            return "You have no pending tasks."
+        
+        elif tool == "task_today":
+            tasks = task_manager.get_tasks_for_today()
+            if tasks:
+                result = "📋 Today's tasks:\n\n"
+                for task in tasks:
+                    status_icon = "🔄" if task.status == TaskStatus.IN_PROGRESS else "⬜"
+                    priority_icon = {"URGENT": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🟢"}.get(task.priority.name, "")
+                    result += f"{status_icon} {priority_icon} {task.title}\n"
+                return result
+            return "You have no tasks scheduled for today."
+        
+        elif tool == "alert_list":
+            alerts = alert_store.list_active_alerts()
+            if alerts:
+                result = "🔔 Active alerts:\n\n"
+                for alert in alerts:
+                    type_icon = {
+                        "date_reminder": "📅",
+                        "recurring": "🔁",
+                        "condition": "⚡",
+                        "health_watch": "❤️",
+                        "deadline": "⏰",
+                    }.get(alert.alert_type.value, "🔔")
+                    
+                    trigger_info = ""
+                    if alert.recurring_pattern:
+                        trigger_info = f" ({alert.recurring_pattern})"
+                    elif alert.trigger_date:
+                        trigger_info = f" ({alert.trigger_date.strftime('%b %d')})"
+                    
+                    result += f"{type_icon} {alert.title}{trigger_info}\n"
+                    result += f"   ID: {alert.alert_id}\n"
+                return result
+            return "You have no active alerts."
+        
+        elif tool == "memory_list":
+            memory_store = MemoryStore()
+            memories = memory_store.list_memories(limit=15)
+            if memories:
+                result = "🧠 Your memories:\n\n"
+                for mem in memories:
+                    content_preview = mem['content'][:80] + "..." if len(mem['content']) > 80 else mem['content']
+                    result += f"• {content_preview}\n"
+                    result += f"  (ID: {mem['id']})\n\n"
+                return result
+            return "I haven't stored any memories yet."
+        
         return ""
     
     def generate_system_prompt(self, action: str, message: str = "") -> str:
@@ -582,14 +669,37 @@ class ChatService:
                 )
         
         elif action == "general":
+            # Add corrections awareness
+            corrections_context = conversation_memory.get_all_corrections_context()
+            corrections_note = ""
+            if corrections_context:
+                corrections_note = f"\n\n{corrections_context}\n"
+            
+            # Add Obsidian knowledge for note-related queries
+            obsidian_context = obsidian_knowledge.get_context_for_llm()
+            
+            # Add relationship context for tone/behavior adjustment
+            relationship_context = relationship_tracker.get_context_for_llm()
+            
+            # Add opinions context - Friday's learned views and patterns
+            opinions_context = opinion_store.get_context_for_llm(message)
+            
             return (
                 f"{base}\n\n"
+                f"{corrections_note}"
+                f"{relationship_context}\n\n"
+                f"{opinions_context}\n\n"
+                f"{obsidian_context}\n\n"
                 "Rules:\n"
-                "• Use provided context (notes/memory) ONLY if it helps answer the question\n"
-                "• For greetings/small talk: be warm and brief\n"
-                "• For questions: answer directly using relevant context\n"
-                "• Be concise and helpful\n"
-                "• Use Markdown formatting: *bold*, `code`, bullets"
+                "• For GREETINGS and SMALL TALK (hey, what's up, how are you): respond naturally and briefly like a friend would. Don't dump information or context.\n"
+                "• Use provided context (notes/memory) ONLY if the user is actually asking about something in their notes\n"
+                "• If you've been corrected on a topic before, use the CORRECT information\n"
+                "• Express your opinions when relevant - you have views based on our interactions\n"
+                "• Push back if you think something is a bad idea - be honest\n"
+                "• When creating or suggesting notes, follow the Obsidian note system above\n"
+                "• Adjust your tone based on relationship context and user's apparent mood\n"
+                "• Be concise and conversational, not robotic or overly structured\n"
+                "• Use Markdown formatting only when helpful: *bold*, `code`, bullets"
             )
         
         else:
@@ -1308,6 +1418,889 @@ class ChatService:
                     "extracted_memory": None,
                 }
         
+        # Handle vault health check
+        if action == 'vault_health':
+            logger.info(f"[Stage 1] Running vault health check")
+            try:
+                health_result = obsidian_knowledge.run_health_check()
+                
+                # Format the response
+                score = health_result["health_score"]
+                status = health_result["status"].replace("_", " ").title()
+                
+                answer_lines = [f"## Vault Health Check: {status} ({score}/100)\n"]
+                
+                summary = health_result["summary"]
+                answer_lines.append("### Summary")
+                answer_lines.append(f"- **Inbox backlog:** {summary['inbox_backlog']} notes")
+                answer_lines.append(f"- **Stale notes:** {summary['stale_notes']} (30+ days)")
+                answer_lines.append(f"- **Missing tags:** {summary['missing_tags']} notes")
+                answer_lines.append(f"- **Misplaced notes:** {summary['misplaced_notes']}")
+                answer_lines.append("")
+                
+                if health_result["recommendations"]:
+                    answer_lines.append("### Recommendations")
+                    for rec in health_result["recommendations"]:
+                        answer_lines.append(f"- {rec}")
+                
+                answer = "\n".join(answer_lines)
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+            except Exception as e:
+                logger.error(f"Vault health check error: {e}", exc_info=True)
+                answer = f"❌ Failed to run vault health check: {str(e)}"
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+        
+        # Handle body_health_check - comprehensive Garmin health assessment
+        if action == 'body_health_check':
+            logger.info(f"[Stage 1] Running body health check")
+            try:
+                from app.services.health_coach import get_health_coach
+                
+                health_coach = get_health_coach()
+                if not health_coach:
+                    answer = "❌ Health coach is not available. Check InfluxDB connection."
+                else:
+                    health_result = health_coach.run_health_check()
+                    
+                    # Format the response
+                    score = health_result["health_score"]
+                    status = health_result["status"].replace("_", " ").title()
+                    emoji = health_result["status_emoji"]
+                    
+                    answer_lines = [f"## Body Health Check: {status} {emoji} ({score}/100)\n"]
+                    
+                    # Key metrics
+                    details = health_result.get("details", {})
+                    if details:
+                        answer_lines.append("### Current Metrics")
+                        if "body_battery" in details:
+                            answer_lines.append(f"- **Body Battery:** {details['body_battery']}/100")
+                        if "training_readiness" in details:
+                            answer_lines.append(f"- **Training Readiness:** {details['training_readiness']}/100")
+                        if "hrv" in details:
+                            hrv_avg = details.get('hrv_7day_avg', 'N/A')
+                            answer_lines.append(f"- **HRV:** {details['hrv']}ms (7-day avg: {hrv_avg}ms)")
+                        if "recovery_time_hours" in details:
+                            answer_lines.append(f"- **Recovery Time:** {details['recovery_time_hours']}h")
+                        if "last_sleep" in details:
+                            sleep = details["last_sleep"]
+                            answer_lines.append(f"- **Last Sleep:** {sleep.get('total_sleep', 'N/A')} (score: {sleep.get('sleep_score', 'N/A')})")
+                        if "current_stress" in details or "avg_stress_today" in details:
+                            current = details.get('current_stress', 'N/A')
+                            avg_today = details.get('avg_stress_today', 'N/A')
+                            avg_7day = details.get('avg_stress_7day', 'N/A')
+                            if current != 'N/A':
+                                answer_lines.append(f"- **Stress:** {current}/100 (today avg: {avg_today}, 7-day avg: {avg_7day})")
+                            else:
+                                answer_lines.append(f"- **Stress (today avg):** {avg_today}/100 (7-day avg: {avg_7day})")
+                        answer_lines.append("")
+                    
+                    # Issues
+                    if health_result.get("issues"):
+                        answer_lines.append("### Issues Found")
+                        for issue in health_result["issues"]:
+                            answer_lines.append(f"- ⚠️ {issue}")
+                        answer_lines.append("")
+                    
+                    # Recommendations
+                    answer_lines.append("### Recommendations")
+                    for rec in health_result.get("recommendations", []):
+                        answer_lines.append(f"- {rec}")
+                    
+                    answer = "\n".join(answer_lines)
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": True,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+            except Exception as e:
+                logger.error(f"Body health check error: {e}", exc_info=True)
+                answer = f"❌ Failed to run body health check: {str(e)}"
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+        
+        # Handle calendar_find_free - find free time slots with LLM-powered suggestions
+        if action == 'calendar_find_free':
+            logger.info(f"[Stage 1] Finding free time slots with smart suggestions")
+            try:
+                import os
+                import requests
+                
+                free_time_data = intent.get('free_time_data', {}) or {}
+                days = free_time_data.get('days', 7)
+                duration = free_time_data.get('duration_minutes', 60)
+                purpose = free_time_data.get('purpose', '')
+                start_from_day = free_time_data.get('start_from_day', 0)  # Skip first N days
+                
+                # Handle "next week" - calculate days until next Monday
+                if free_time_data.get('next_week'):
+                    user_tz = settings.user_timezone
+                    today = datetime.now(user_tz).date()
+                    days_until_monday = (7 - today.weekday()) % 7
+                    if days_until_monday == 0:  # Today is Monday, so next week is 7 days
+                        days_until_monday = 7
+                    start_from_day = days_until_monday
+                    logger.info(f"'Next week' detected - starting from day {start_from_day} (Monday)")
+                
+                # Get free slots from calendar
+                # If start_from_day is set, we need to fetch enough days to cover that period
+                fetch_days = days + start_from_day if start_from_day > 0 else days
+                free_slots = unified_calendar_service.find_free_slots(
+                    days=fetch_days,
+                    duration_minutes=duration
+                )
+                
+                # Filter slots to start from a specific day (for "next week" queries)
+                if start_from_day > 0:
+                    user_tz = settings.user_timezone
+                    start_date = (datetime.now(user_tz) + timedelta(days=start_from_day)).date()
+                    free_slots = [s for s in free_slots if s['datetime_start'].date() >= start_date]
+                    logger.info(f"Filtered to start from day {start_from_day} ({start_date}), {len(free_slots)} slots remaining")
+                
+                # Log what we got before filtering
+                total_slots_before = len(free_slots)
+                logger.info(f"Found {total_slots_before} total free slots before weekend filtering")
+                
+                # Filter out weekends for activities that require weekdays
+                purpose_lower = (purpose or '').lower()
+                weekday_only_activities = ['barber', 'haircut', 'hair cut', 'salon', 'bank', 'post office', 'government', 'dmv', 'office']
+                
+                needs_weekday = any(activity in purpose_lower for activity in weekday_only_activities)
+                if needs_weekday:
+                    # Filter to only weekdays (Monday=0 to Friday=4)
+                    weekend_slots = [slot for slot in free_slots if slot['datetime_start'].weekday() >= 5]
+                    free_slots = [
+                        slot for slot in free_slots 
+                        if slot['datetime_start'].weekday() < 5  # 0-4 are Mon-Fri
+                    ]
+                    logger.info(f"Filtered to weekdays only for '{purpose}': {len(weekend_slots)} weekend slots removed, {len(free_slots)} weekday slots remaining")
+                
+                if not free_slots:
+                    # Try to explain why there are no slots
+                    if needs_weekday and total_slots_before > 0:
+                        answer = f"❌ No free weekday slots found for {purpose}. Your weekdays appear to be fully booked. You had {total_slots_before} weekend slots available - would you like me to look further ahead or show weekend options anyway?"
+                    else:
+                        answer = f"❌ No free slots found in your calendar for the specified period."
+                    return {
+                        "session_id": session_id,
+                        "message": message,
+                        "answer": answer,
+                        "used_rag": False,
+                        "used_web": False,
+                        "used_memory": False,
+                        "used_health": False,
+                        "obsidian_chunks": [],
+                        "memory_items": [],
+                        "extracted_memory": None,
+                    }
+                
+                # Format slots for LLM context
+                slots_text = "FREE TIME SLOTS:\n"
+                for slot in free_slots[:15]:  # Limit to 15 slots
+                    day_name = slot['datetime_start'].strftime("%A")  # Full day name
+                    slots_text += f"- {slot['date']} ({day_name}): {slot['start']} - {slot['end']} ({slot['duration_minutes']} min available)\n"
+                
+                # Get upcoming events for context
+                upcoming_events = unified_calendar_service.get_upcoming_events(days=days)
+                events_text = "\nUPCOMING EVENTS:\n"
+                for event in upcoming_events[:10]:
+                    event_day = event.start.strftime("%a, %b %d")
+                    event_time = event.start.strftime("%I:%M %p")
+                    events_text += f"- {event_day} at {event_time}: {event.summary}\n"
+                
+                # Get reminders for context
+                pending_reminders = reminder_service.list_pending_reminders()
+                reminders_text = ""
+                if pending_reminders:
+                    reminders_text = "\nPENDING REMINDERS:\n"
+                    for r in pending_reminders[:5]:
+                        reminders_text += f"- {r.message} (at {r.remind_at.strftime('%a %I:%M %p')})\n"
+                
+                # Get weather forecast for the next days
+                weather_text = ""
+                try:
+                    weather_api_key = os.getenv('WEATHER_API_KEY')
+                    city = os.getenv('WEATHER_CITY', 'São Paulo')
+                    
+                    if weather_api_key:
+                        # Get current weather
+                        current_url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={weather_api_key}&units=metric&lang=en"
+                        current_response = requests.get(current_url, timeout=5)
+                        
+                        # Get forecast
+                        forecast_url = f"http://api.openweathermap.org/data/2.5/forecast?q={city}&appid={weather_api_key}&units=metric&lang=en"
+                        forecast_response = requests.get(forecast_url, timeout=5)
+                        
+                        if current_response.status_code == 200:
+                            current = current_response.json()
+                            weather_text = f"\nWEATHER:\n"
+                            weather_text += f"- Current: {current['weather'][0]['description']}, {current['main']['temp']:.0f}°C\n"
+                        
+                        if forecast_response.status_code == 200:
+                            forecast = forecast_response.json()
+                            # Get forecast for next few days (one entry per day around midday)
+                            seen_dates = set()
+                            for entry in forecast['list']:
+                                entry_time = datetime.fromtimestamp(entry['dt'], tz=settings.user_timezone)
+                                entry_date = entry_time.date()
+                                
+                                # Skip today, get midday forecasts for next days
+                                if entry_date <= datetime.now(settings.user_timezone).date():
+                                    continue
+                                if entry_date in seen_dates:
+                                    continue
+                                if entry_time.hour < 11 or entry_time.hour > 14:
+                                    continue
+                                
+                                seen_dates.add(entry_date)
+                                day_name = entry_time.strftime("%A, %b %d")
+                                desc = entry['weather'][0]['description']
+                                temp = entry['main']['temp']
+                                
+                                # Flag rainy days
+                                rain_warning = ""
+                                if 'rain' in desc.lower() or 'storm' in desc.lower() or 'shower' in desc.lower():
+                                    rain_warning = " ⚠️ RAIN"
+                                
+                                weather_text += f"- {day_name}: {desc}, {temp:.0f}°C{rain_warning}\n"
+                                
+                                if len(seen_dates) >= 5:
+                                    break
+                except Exception as e:
+                    logger.debug(f"Weather fetch for scheduling skipped: {e}")
+                
+                # Get memory context
+                from app.services.memory_store import memory_store
+                memory_context = memory_store.get_context_string(purpose if purpose else message, limit=3)
+                memory_text = ""
+                if memory_context:
+                    memory_text = f"\nRELEVANT MEMORIES:\n{memory_context}\n"
+                
+                # Build LLM prompt for smart suggestions
+                suggestion_prompt = f"""You are helping the user find the best time for: {purpose if purpose else 'an activity'}
+
+The user asked: "{message}"
+
+Here is the context:
+
+{slots_text}
+{events_text}
+{reminders_text}
+{weather_text}
+{memory_text}
+
+TODAY: {datetime.now(settings.user_timezone).strftime("%A, %B %d, %Y")}
+
+IMPORTANT RULES for suggesting times:
+1. **Prefer earlier dates**: For simple errands (haircut, shopping, etc.), suggest the EARLIEST available slots first. Don't skip to later dates without a good reason.
+2. **Barber shops / hair salons**: ALWAYS suggest WEEKDAYS ONLY (Monday-Friday). Barbers are typically closed on Sundays and often on Saturdays too. NEVER suggest weekend slots for haircuts.
+3. **Outdoor activities**: Avoid days with rain in the forecast
+4. **Medical appointments**: Suggest morning slots when possible
+5. **Errands/shopping**: Consider store hours and avoid rainy days
+
+YOUR RESPONSE MUST INCLUDE:
+
+**Recommended slots (2-3):**
+- Suggest specific times (e.g., "Monday at 10:00 AM", not "Monday 9am-5pm")
+- Briefly explain WHY each slot is good
+
+**Not recommended (1-2):**
+- List any early slots you're SKIPPING and explain WHY
+- For example: "I'm not suggesting Monday because..." or "Tuesday morning isn't ideal because..."
+
+This helps the user understand your reasoning. Keep it concise."""
+
+                # Call LLM for smart suggestions
+                answer = llm_service.call(
+                    system_prompt="You are Friday, a helpful AI assistant. Give practical scheduling suggestions based on the user's calendar and context. Be concise and friendly.",
+                    user_content=suggestion_prompt,
+                    history=[],
+                    stream=False
+                )
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": True,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+            except Exception as e:
+                logger.error(f"Calendar find free error: {e}", exc_info=True)
+                answer = f"❌ Failed to find free time: {str(e)}"
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+        
+        # Handle calendar_create - create new calendar event
+        if action == 'calendar_create':
+            logger.info(f"[Stage 1] Creating calendar event")
+            try:
+                calendar_data = intent.get('calendar_data', {}) or {}
+                summary = calendar_data.get('summary', 'New Event')
+                date_str = calendar_data.get('date', 'today')
+                time_str = calendar_data.get('time', '09:00')
+                duration = calendar_data.get('duration_minutes', 60)
+                location = calendar_data.get('location')
+                
+                # Parse date and time
+                user_tz = settings.user_timezone
+                now = datetime.now(user_tz)
+                
+                # Parse date
+                if date_str.lower() == 'today':
+                    event_date = now.date()
+                elif date_str.lower() == 'tomorrow':
+                    event_date = (now + timedelta(days=1)).date()
+                else:
+                    # Try to parse day name (e.g., "Friday")
+                    import calendar
+                    day_names = list(calendar.day_name)
+                    day_lower = date_str.lower().capitalize()
+                    if day_lower in day_names:
+                        target_day = day_names.index(day_lower)
+                        days_ahead = target_day - now.weekday()
+                        if days_ahead <= 0:
+                            days_ahead += 7
+                        event_date = (now + timedelta(days=days_ahead)).date()
+                    else:
+                        # Try parsing as date
+                        try:
+                            event_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                        except ValueError:
+                            event_date = now.date()
+                
+                # Parse time
+                import re
+                time_match = re.match(r'(\d{1,2})(?::(\d{2}))?\s*(am|pm)?', time_str.lower())
+                if time_match:
+                    hour = int(time_match.group(1))
+                    minute = int(time_match.group(2) or 0)
+                    ampm = time_match.group(3)
+                    
+                    if ampm == 'pm' and hour != 12:
+                        hour += 12
+                    elif ampm == 'am' and hour == 12:
+                        hour = 0
+                else:
+                    hour, minute = 9, 0
+                
+                start_dt = datetime.combine(event_date, datetime.min.time().replace(hour=hour, minute=minute), tzinfo=user_tz)
+                end_dt = start_dt + timedelta(minutes=duration)
+                
+                event = unified_calendar_service.create_event(
+                    summary=summary,
+                    start=start_dt,
+                    end=end_dt,
+                    location=location
+                )
+                
+                if event:
+                    answer = f"✅ Created event: **{summary}**\n"
+                    answer += f"📅 {start_dt.strftime('%a, %b %d at %I:%M %p')}\n"
+                    answer += f"⏱️ Duration: {duration} minutes"
+                    if location:
+                        answer += f"\n📍 {location}"
+                else:
+                    answer = "❌ Failed to create event. Please try again."
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+            except Exception as e:
+                logger.error(f"Calendar create error: {e}", exc_info=True)
+                answer = f"❌ Failed to create event: {str(e)}"
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+        
+        # Handle task_create - create new task
+        if action == 'task_create':
+            logger.info(f"[Stage 1] Creating task")
+            try:
+                task_data = intent.get('task_data', {}) or {}
+                title = task_data.get('title', '')
+                priority_str = task_data.get('priority', 'medium').upper()
+                context_str = task_data.get('context', 'any').upper()
+                due_date_str = task_data.get('due_date')
+                
+                if not title:
+                    answer = "❌ Please specify what task you want to create."
+                else:
+                    # Parse priority
+                    priority = getattr(TaskPriority, priority_str, TaskPriority.MEDIUM)
+                    
+                    # Parse context
+                    context = getattr(TaskContext, context_str, TaskContext.ANY)
+                    
+                    # Parse due date
+                    due_date = None
+                    if due_date_str:
+                        user_tz = settings.user_timezone
+                        now = datetime.now(user_tz)
+                        if due_date_str.lower() == 'today':
+                            due_date = now.replace(hour=23, minute=59)
+                        elif due_date_str.lower() == 'tomorrow':
+                            due_date = (now + timedelta(days=1)).replace(hour=23, minute=59)
+                    
+                    task = task_manager.create_task(
+                        title=title,
+                        priority=priority,
+                        context=context,
+                        due_date=due_date
+                    )
+                    
+                    priority_icon = {"URGENT": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🟢"}.get(priority.name, "")
+                    answer = f"✅ Created task: {priority_icon} {title}"
+                    if due_date:
+                        answer += f" (due {due_date.strftime('%b %d')})"
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+            except Exception as e:
+                logger.error(f"Task create error: {e}", exc_info=True)
+                answer = f"❌ Failed to create task: {str(e)}"
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+        
+        # Handle task_complete - mark task as done
+        if action == 'task_complete':
+            logger.info(f"[Stage 1] Completing task")
+            try:
+                task_data = intent.get('task_data', {}) or {}
+                task_id_or_title = task_data.get('task_id', '')
+                
+                if not task_id_or_title:
+                    answer = "❌ Please specify which task to complete."
+                else:
+                    # First try to find by exact ID
+                    task = task_manager.get_task(task_id_or_title)
+                    
+                    # If not found, search by title
+                    if not task:
+                        tasks = task_manager.list_tasks(status=TaskStatus.TODO, limit=100)
+                        tasks += task_manager.list_tasks(status=TaskStatus.IN_PROGRESS, limit=100)
+                        
+                        # Find task by partial title match
+                        search_lower = task_id_or_title.lower()
+                        for t in tasks:
+                            if search_lower in t.title.lower():
+                                task = t
+                                break
+                    
+                    if task:
+                        task_manager.update_task_status(task.id, TaskStatus.DONE)
+                        answer = f"✅ Completed: {task.title}"
+                    else:
+                        answer = f"❌ Task not found: '{task_id_or_title}'"
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+            except Exception as e:
+                logger.error(f"Task complete error: {e}", exc_info=True)
+                answer = f"❌ Failed to complete task: {str(e)}"
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+        
+        # Handle alert_create - create new proactive alert
+        if action == 'alert_create':
+            logger.info(f"[Stage 1] Creating alert")
+            try:
+                alert_data = intent.get('alert_data', {}) or {}
+                title = alert_data.get('title', 'New Alert')
+                description = alert_data.get('description', '')
+                trigger_condition = alert_data.get('trigger_condition')
+                trigger_date_str = alert_data.get('trigger_date')
+                recurring = alert_data.get('recurring')
+                
+                # Determine alert type
+                if trigger_condition:
+                    alert_type = AlertType.CONDITION
+                elif recurring:
+                    alert_type = AlertType.RECURRING
+                else:
+                    alert_type = AlertType.DATE_REMINDER
+                
+                # Parse trigger date if provided
+                trigger_date = None
+                if trigger_date_str:
+                    user_tz = settings.user_timezone
+                    now = datetime.now(user_tz)
+                    
+                    # Parse day name for recurring
+                    import calendar
+                    day_names = [d.lower() for d in calendar.day_name]
+                    if trigger_date_str.lower() in day_names:
+                        target_day = day_names.index(trigger_date_str.lower())
+                        days_ahead = target_day - now.weekday()
+                        if days_ahead <= 0:
+                            days_ahead += 7
+                        trigger_date = (now + timedelta(days=days_ahead)).replace(hour=9, minute=0)
+                
+                alert = alert_store.create_alert(
+                    title=title,
+                    description=description,
+                    alert_type=alert_type,
+                    trigger_date=trigger_date,
+                    trigger_condition=trigger_condition,
+                    recurring_pattern=recurring,
+                    source_context=f"Created from chat: {message[:200]}"
+                )
+                
+                answer = f"✅ Created alert: **{title}**\n"
+                if recurring:
+                    answer += f"🔁 Recurring: {recurring}\n"
+                if trigger_condition:
+                    answer += f"⚡ Condition: {trigger_condition}\n"
+                if trigger_date:
+                    answer += f"📅 First trigger: {trigger_date.strftime('%a, %b %d at %I:%M %p')}"
+                answer += f"\n\nAlert ID: {alert.alert_id}"
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+            except Exception as e:
+                logger.error(f"Alert create error: {e}", exc_info=True)
+                answer = f"❌ Failed to create alert: {str(e)}"
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+        
+        # Handle alert_delete - delete/deactivate an alert
+        if action == 'alert_delete':
+            logger.info(f"[Stage 1] Deleting alert")
+            try:
+                alert_data = intent.get('alert_data', {}) or {}
+                alert_id_or_topic = alert_data.get('alert_id', '')
+                
+                if not alert_id_or_topic:
+                    answer = "❌ Please specify which alert to delete."
+                else:
+                    # Try to find by ID or topic
+                    alerts = alert_store.list_active_alerts()
+                    found_alert = None
+                    
+                    search_lower = alert_id_or_topic.lower()
+                    for alert in alerts:
+                        if alert.alert_id == alert_id_or_topic or search_lower in alert.title.lower():
+                            found_alert = alert
+                            break
+                    
+                    if found_alert:
+                        alert_store.deactivate_alert(found_alert.alert_id)
+                        answer = f"✅ Deactivated alert: {found_alert.title}"
+                    else:
+                        answer = f"❌ Alert not found: '{alert_id_or_topic}'"
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+            except Exception as e:
+                logger.error(f"Alert delete error: {e}", exc_info=True)
+                answer = f"❌ Failed to delete alert: {str(e)}"
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+        
+        # Handle budget_status - show skipped alerts and budget info
+        if action == 'budget_status':
+            logger.info(f"[Stage 1] Getting budget status")
+            try:
+                from app.services.proactive_monitor import proactive_monitor
+                
+                stats = proactive_monitor.get_budget_stats()
+                skipped = proactive_monitor.get_skipped_alerts()
+                
+                # Build response
+                lines = [
+                    f"📊 **Alert Budget Status** ({stats.get('date', 'today')})",
+                    f"",
+                    f"• Messages sent: {stats.get('messages_sent', 0)}/{5}",
+                    f"• Remaining budget: {stats.get('remaining', 0)}",
+                    f"• User responses: {stats.get('user_responses', 0)}",
+                    f"• Ignored: {stats.get('ignored', 0)}",
+                ]
+                
+                if skipped:
+                    lines.append(f"")
+                    lines.append(f"**⏭️ Skipped Alerts ({len(skipped)}):**")
+                    for i, alert in enumerate(skipped, 1):
+                        lines.append(f"")
+                        lines.append(f"{i}. **{alert.get('title', 'Untitled')}** [{alert.get('priority', 'unknown')}]")
+                        lines.append(f"   {alert.get('message', '')[:100]}")
+                        lines.append(f"   _Skipped at: {alert.get('skipped_at', 'unknown')[:16]}_")
+                else:
+                    lines.append(f"")
+                    lines.append(f"✅ No alerts were skipped today.")
+                
+                answer = "\n".join(lines)
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+            except Exception as e:
+                logger.error(f"Budget status error: {e}", exc_info=True)
+                answer = f"❌ Failed to get budget status: {str(e)}"
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+        
+        # Handle budget_reset - reset the alert budget
+        if action == 'budget_reset':
+            logger.info(f"[Stage 1] Resetting budget")
+            try:
+                from app.services.proactive_monitor import proactive_monitor
+                
+                # Reset by creating a new day state
+                proactive_monitor.budget._state = proactive_monitor.budget._new_day_state()
+                proactive_monitor.budget._save_state()
+                
+                answer = "✅ Alert budget has been reset. You now have 5 message slots available for today."
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+            except Exception as e:
+                logger.error(f"Budget reset error: {e}", exc_info=True)
+                answer = f"❌ Failed to reset budget: {str(e)}"
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+        
+        # Handle memory_delete - delete/forget a memory
+        if action == 'memory_delete':
+            logger.info(f"[Stage 1] Deleting memory")
+            try:
+                memory_data = intent.get('memory_data', {}) or {}
+                search_term = memory_data.get('content', '')
+                
+                if not search_term:
+                    answer = "❌ Please specify which memory to delete."
+                else:
+                    memory_store = MemoryStore()
+                    memories = memory_store.search_memories(search_term, limit=5)
+                    
+                    if memories:
+                        # Delete the first matching memory
+                        mem_to_delete = memories[0]
+                        memory_store.delete_memory(mem_to_delete['id'])
+                        answer = f"✅ Deleted memory: \"{mem_to_delete['content'][:100]}...\""
+                    else:
+                        answer = f"❌ No memory found matching: '{search_term}'"
+                
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+            except Exception as e:
+                logger.error(f"Memory delete error: {e}", exc_info=True)
+                answer = f"❌ Failed to delete memory: {str(e)}"
+                return {
+                    "session_id": session_id,
+                    "message": message,
+                    "answer": answer,
+                    "used_rag": False,
+                    "used_web": False,
+                    "used_memory": False,
+                    "used_health": False,
+                    "obsidian_chunks": [],
+                    "memory_items": [],
+                    "extracted_memory": None,
+                }
+        
         # If it's a tool query, execute it directly and return
         if tool:
             logger.info(f"[Stage 1] Executing tool: {tool}")
@@ -1356,6 +2349,43 @@ class ChatService:
         # Update conversation history
         self.update_history(session_id, message, answer)
         
+        # Check if user is correcting Friday (based on previous exchange)
+        # We check if the CURRENT message is correcting the PREVIOUS Friday response
+        if history and len(history) >= 2:
+            last_friday_response = None
+            for msg in reversed(history):
+                if msg.get('role') == 'assistant':
+                    last_friday_response = msg.get('content', '')
+                    break
+            
+            if last_friday_response:
+                # Quick check first (cheap), then LLM analysis if needed
+                if correction_detector.quick_check(message):
+                    def check_correction_async():
+                        try:
+                            analysis = correction_detector.analyze(last_friday_response, message)
+                            if analysis.is_correction and analysis.confidence > 0.7:
+                                if analysis.needs_clarification:
+                                    # TODO: Could inject clarification into next response
+                                    logger.info(f"Correction detected but needs clarification: {analysis.clarification_question}")
+                                else:
+                                    # Record the correction
+                                    conversation_memory.add_correction(
+                                        topic=analysis.topic or "general",
+                                        user_message=message,
+                                        friday_response=last_friday_response[:500],
+                                        what_was_wrong=analysis.what_was_wrong or "Unknown",
+                                        correct_answer=analysis.correct_answer or message,
+                                        lesson_learned=f"Remember: {analysis.correct_answer}" if analysis.correct_answer else None,
+                                    )
+                                    logger.info(f"Recorded correction: {analysis.topic}")
+                        except Exception as e:
+                            logger.error(f"Error in correction detection: {e}")
+                    
+                    # Run in background to not slow down response
+                    thread = threading.Thread(target=check_correction_async, daemon=True)
+                    thread.start()
+        
         # Post-chat processing: Extract memories and tasks in background thread
         if save_memory and action == 'general':
             # Run async processing in background thread (don't block response)
@@ -1373,6 +2403,28 @@ class ChatService:
             thread = threading.Thread(target=run_async_processor, daemon=True)
             thread.start()
             logger.info("Started post-chat processing thread (memory & task extraction)")
+        
+        # Track interaction for relationship state
+        try:
+            # Detect mood from message
+            mood = relationship_tracker.detect_mood(message)
+            
+            # Determine sentiment (simple heuristic, could be enhanced)
+            sentiment = "neutral"
+            if mood.value in ["happy", "energetic"]:
+                sentiment = "positive"
+            elif mood.value in ["frustrated", "sad", "stressed"]:
+                sentiment = "negative"
+            
+            # Record the interaction
+            relationship_tracker.record_interaction(
+                message=message,
+                sentiment=sentiment,
+                topic_category=action,
+                user_initiated=True,
+            )
+        except Exception as e:
+            logger.error(f"Error tracking interaction: {e}")
         
         return {
             "session_id": session_id,

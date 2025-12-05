@@ -61,6 +61,191 @@ class ProactiveAlert:
         return f"{priority}{emoji} **{self.title}**\n{self.message}"
 
 
+class ReachOutBudget:
+    """
+    Self-regulation system to prevent Friday from being annoying.
+    
+    Tracks proactive message count and limits reach-outs per day.
+    """
+    
+    def __init__(self, budget_file: Path = None):
+        """Initialize reach-out budget tracker."""
+        self.budget_file = budget_file or Path("/home/artur/friday/data/reach_out_budget.json")
+        self.daily_limit = 5  # Max proactive messages per day
+        self.urgent_exempt = True  # Urgent alerts don't count against budget
+        
+        # Load current state
+        self._state = self._load_state()
+    
+    def _load_state(self) -> Dict[str, Any]:
+        """Load budget state from file."""
+        try:
+            if self.budget_file.exists():
+                import json
+                with open(self.budget_file, 'r') as f:
+                    state = json.load(f)
+                
+                # Reset if it's a new day
+                last_date = state.get("date")
+                today = datetime.now().strftime("%Y-%m-%d")
+                if last_date != today:
+                    return self._new_day_state()
+                return state
+        except Exception as e:
+            logger.error(f"Error loading budget state: {e}")
+        
+        return self._new_day_state()
+    
+    def _new_day_state(self) -> Dict[str, Any]:
+        """Create fresh state for a new day."""
+        return {
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "messages_sent": 0,
+            "messages_by_priority": {
+                "urgent": 0,
+                "high": 0,
+                "medium": 0,
+                "low": 0,
+            },
+            "user_responses": 0,  # Track if user responds to proactive messages
+            "ignored_count": 0,   # Messages that got no response
+            "skipped_alerts": [],  # Alerts skipped due to budget exhaustion
+        }
+    
+    def _save_state(self):
+        """Save budget state to file."""
+        try:
+            import json
+            self.budget_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.budget_file, 'w') as f:
+                json.dump(self._state, f)
+        except Exception as e:
+            logger.error(f"Error saving budget state: {e}")
+    
+    def can_send(self, priority: AlertPriority) -> bool:
+        """
+        Check if we can send a proactive message.
+        
+        Args:
+            priority: Priority of the alert
+            
+        Returns:
+            True if we should send, False if we've hit the budget.
+        """
+        # Always allow urgent messages
+        if self.urgent_exempt and priority == AlertPriority.URGENT:
+            return True
+        
+        # Check if we need to reset for new day
+        today = datetime.now().strftime("%Y-%m-%d")
+        if self._state.get("date") != today:
+            self._state = self._new_day_state()
+            self._save_state()
+        
+        # Count non-urgent messages
+        non_urgent_count = (
+            self._state["messages_by_priority"].get("high", 0) +
+            self._state["messages_by_priority"].get("medium", 0) +
+            self._state["messages_by_priority"].get("low", 0)
+        )
+        
+        # Adaptive budget: if user has been ignoring messages, reduce budget
+        ignored = self._state.get("ignored_count", 0)
+        responses = self._state.get("user_responses", 0)
+        
+        if ignored > 3 and responses == 0:
+            # User is ignoring us, back off significantly
+            effective_limit = 1
+            logger.info(f"User seems busy/ignoring - reducing budget to {effective_limit}")
+        elif ignored > responses and (ignored + responses) > 2:
+            # More ignores than responses, reduce slightly
+            effective_limit = max(2, self.daily_limit - 2)
+        else:
+            effective_limit = self.daily_limit
+        
+        return non_urgent_count < effective_limit
+    
+    def record_sent(self, priority: AlertPriority):
+        """Record that we sent a proactive message."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        if self._state.get("date") != today:
+            self._state = self._new_day_state()
+        
+        self._state["messages_sent"] += 1
+        priority_key = priority.value
+        self._state["messages_by_priority"][priority_key] = (
+            self._state["messages_by_priority"].get(priority_key, 0) + 1
+        )
+        self._save_state()
+        
+        logger.info(f"Budget: sent {priority_key} message, total today: {self._state['messages_sent']}")
+    
+    def record_user_response(self):
+        """Record that user responded to a proactive message."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        if self._state.get("date") != today:
+            self._state = self._new_day_state()
+        
+        self._state["user_responses"] = self._state.get("user_responses", 0) + 1
+        self._save_state()
+    
+    def record_ignored(self):
+        """Record that a proactive message was ignored."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        if self._state.get("date") != today:
+            self._state = self._new_day_state()
+        
+        self._state["ignored_count"] = self._state.get("ignored_count", 0) + 1
+        self._save_state()
+    
+    def get_remaining_budget(self) -> int:
+        """Get remaining proactive message budget for today."""
+        non_urgent_count = (
+            self._state["messages_by_priority"].get("high", 0) +
+            self._state["messages_by_priority"].get("medium", 0) +
+            self._state["messages_by_priority"].get("low", 0)
+        )
+        return max(0, self.daily_limit - non_urgent_count)
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get current budget statistics."""
+        return {
+            "date": self._state.get("date"),
+            "messages_sent": self._state.get("messages_sent", 0),
+            "remaining": self.get_remaining_budget(),
+            "user_responses": self._state.get("user_responses", 0),
+            "ignored": self._state.get("ignored_count", 0),
+            "skipped_count": len(self._state.get("skipped_alerts", [])),
+        }
+    
+    def record_skipped(self, title: str, message: str, priority: str, category: str):
+        """Record an alert that was skipped due to budget exhaustion."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        if self._state.get("date") != today:
+            self._state = self._new_day_state()
+        
+        # Initialize skipped_alerts if not present (for backward compat)
+        if "skipped_alerts" not in self._state:
+            self._state["skipped_alerts"] = []
+        
+        self._state["skipped_alerts"].append({
+            "title": title,
+            "message": message,
+            "priority": priority,
+            "category": category,
+            "skipped_at": datetime.now().isoformat(),
+        })
+        self._save_state()
+    
+    def get_skipped_alerts(self) -> List[Dict[str, Any]]:
+        """Get list of alerts skipped today due to budget exhaustion."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        if self._state.get("date") != today:
+            return []  # New day, no skipped alerts yet
+        
+        return self._state.get("skipped_alerts", [])
+
+
 class ProactiveMonitor:
     """
     Monitors various data sources and generates proactive alerts.
@@ -78,6 +263,9 @@ class ProactiveMonitor:
         self._acked_file = Path("/home/artur/friday/data/alert_acked.json")
         self._last_alerts: Dict[str, datetime] = self._load_cooldowns()
         self._acked_alerts: Dict[str, datetime] = self._load_acked()
+        
+        # Self-regulation: reach-out budget
+        self.budget = ReachOutBudget()
     
     def _load_cooldowns(self) -> Dict[str, datetime]:
         """Load alert cooldowns from file to survive restarts."""
@@ -248,14 +436,55 @@ class ProactiveMonitor:
             logger.info(f"Cleaned up {len(old_keys)} old alert acks")
     
     def check_health_alerts(self) -> List[ProactiveAlert]:
-        """Check health metrics for concerning patterns."""
+        """Check health metrics for concerning patterns using comprehensive health check."""
         alerts = []
         
         if not self.health_coach:
             return alerts
         
         try:
-            # Get current recovery status
+            # Run comprehensive health check
+            health_check = self.health_coach.run_health_check()
+            score = health_check["health_score"]
+            status = health_check["status"]
+            issues = health_check.get("issues", [])
+            recommendations = health_check.get("recommendations", [])
+            
+            logger.info(f"Health check: score={score}, status={status}, issues={len(issues)}")
+            
+            # Alert based on overall health score
+            if score < 40:
+                alert_key = "health_score_critical"
+                if self._should_send_alert(alert_key):
+                    recs = "\n".join(f"• {r}" for r in recommendations[:3])
+                    alerts.append(ProactiveAlert(
+                        category="health",
+                        title=f"Health Alert: Needs Rest ({score}/100)",
+                        message=f"Your health score is low. Issues detected:\n"
+                               f"{chr(10).join('• ' + i for i in issues[:3])}\n\n"
+                               f"**Recommendations:**\n{recs}",
+                        priority=AlertPriority.HIGH,
+                        alert_key=alert_key,
+                        data={"health_score": score, "status": status}
+                    ))
+                    self._mark_alert_sent(alert_key)
+            
+            elif score < 60:
+                alert_key = "health_score_low"
+                if self._should_send_alert(alert_key):
+                    recs = "\n".join(f"• {r}" for r in recommendations[:2])
+                    alerts.append(ProactiveAlert(
+                        category="health",
+                        title=f"Health Check: Needs Attention ({score}/100)",
+                        message=f"Your health could use some attention.\n\n"
+                               f"**Top Recommendation:**\n{recommendations[0] if recommendations else 'Take it easy today.'}",
+                        priority=AlertPriority.MEDIUM,
+                        alert_key=alert_key,
+                        data={"health_score": score, "status": status}
+                    ))
+                    self._mark_alert_sent(alert_key)
+            
+            # Still do individual critical checks for urgent situations
             recovery = self.health_coach.get_recovery_status()
             
             # Body Battery check
@@ -666,6 +895,157 @@ class ProactiveMonitor:
         
         return alerts
     
+    def check_vault_health(self) -> List[ProactiveAlert]:
+        """Check Obsidian vault health and alert if issues found."""
+        alerts = []
+        
+        try:
+            from app.services.obsidian_knowledge import obsidian_knowledge
+            
+            health = obsidian_knowledge.run_health_check()
+            score = health["health_score"]
+            summary = health["summary"]
+            
+            # Alert if health score drops below 50 (needs work)
+            if score < 50:
+                alert_key = f"vault_health_low_{datetime.now().strftime('%Y%m%d')}"
+                if self._should_send_alert(alert_key):
+                    issues = []
+                    if summary["inbox_backlog"] > 0:
+                        issues.append(f"{summary['inbox_backlog']} notes in Inbox need processing")
+                    if summary["stale_notes"] > 5:
+                        issues.append(f"{summary['stale_notes']} notes haven't been touched in 30+ days")
+                    if summary["misplaced_notes"] > 0:
+                        issues.append(f"{summary['misplaced_notes']} notes may be in the wrong folder")
+                    
+                    issue_list = "\n".join([f"• {i}" for i in issues]) if issues else "Your vault needs attention."
+                    
+                    alerts.append(ProactiveAlert(
+                        category="context",
+                        title="Vault Health Check",
+                        message=f"Your Obsidian vault health score is {score}/100.\n\n"
+                               f"**Issues found:**\n{issue_list}\n\n"
+                               f"Say 'vault health' for details.",
+                        priority=AlertPriority.LOW,
+                        alert_key=alert_key,
+                        data={"health_score": score, "summary": summary}
+                    ))
+                    self._mark_alert_sent(alert_key)
+            
+            # Alert specifically about inbox backlog (separate from overall health)
+            if summary["inbox_backlog"] >= 5:
+                alert_key = f"vault_inbox_backlog_{datetime.now().strftime('%Y%m%d')}"
+                if self._should_send_alert(alert_key):
+                    alerts.append(ProactiveAlert(
+                        category="context",
+                        title="Inbox Backlog",
+                        message=f"You have {summary['inbox_backlog']} notes sitting in your Inbox.\n\n"
+                               f"**Recommendation:** Take 10 minutes to process and move them to their proper home.",
+                        priority=AlertPriority.LOW,
+                        alert_key=alert_key,
+                        data={"inbox_count": summary["inbox_backlog"]}
+                    ))
+                    self._mark_alert_sent(alert_key)
+        
+        except Exception as e:
+            logger.error(f"Error checking vault health: {e}", exc_info=True)
+        
+        return alerts
+    
+    def check_commitment_follow_ups(self) -> List[ProactiveAlert]:
+        """Check for commitments Friday made that need follow-up."""
+        alerts = []
+        
+        try:
+            from app.services.conversation_memory import conversation_memory
+            
+            # Get pending follow-ups
+            pending = conversation_memory.get_pending_follow_ups()
+            
+            now = datetime.now(settings.user_timezone)
+            
+            for item in pending:
+                # Check if follow-up date has passed
+                if item.follow_up_date:
+                    follow_up_dt = datetime.fromisoformat(str(item.follow_up_date))
+                    if follow_up_dt.tzinfo is None:
+                        follow_up_dt = follow_up_dt.replace(tzinfo=settings.user_timezone)
+                    
+                    if follow_up_dt <= now:
+                        alert_key = f"commitment_followup_{item.id}"
+                        if self._should_send_alert(alert_key):
+                            alerts.append(ProactiveAlert(
+                                category="context",
+                                title="Follow-up Reminder",
+                                message=f"I committed to follow up on: **{item.topic}**\n\n"
+                                       f"Context: {item.context or 'No additional context'}",
+                                priority=AlertPriority.MEDIUM,
+                                alert_key=alert_key,
+                                data={"commitment_id": item.id, "topic": item.topic}
+                            ))
+                            self._mark_alert_sent(alert_key)
+        
+        except Exception as e:
+            logger.error(f"Error checking commitment follow-ups: {e}", exc_info=True)
+        
+        return alerts
+    
+    def check_conversation_staleness(self) -> List[ProactiveAlert]:
+        """Check if user hasn't talked to Friday in a while and reach out."""
+        alerts = []
+        
+        try:
+            # Check last interaction time from conversation memory or other sources
+            from app.services.conversation_memory import conversation_memory
+            
+            stats = conversation_memory.get_stats()
+            
+            # Get the most recent interaction timestamp
+            # We'll check the conversation memory files for modification time
+            conv_path = Path("/home/artur/friday/brain/5. Friday/5.5 Conversations")
+            
+            if conv_path.exists():
+                # Get the most recent file modification in conversations folder
+                latest_mod = None
+                for f in conv_path.glob("*.json"):
+                    mod_time = datetime.fromtimestamp(f.stat().st_mtime)
+                    if latest_mod is None or mod_time > latest_mod:
+                        latest_mod = mod_time
+                
+                if latest_mod:
+                    now = datetime.now()
+                    hours_since = (now - latest_mod).total_seconds() / 3600
+                    
+                    # If more than 48 hours since last meaningful interaction
+                    # and it's a reasonable time (9am-9pm)
+                    current_hour = datetime.now(settings.user_timezone).hour
+                    if hours_since > 48 and 9 <= current_hour <= 21:
+                        alert_key = f"conversation_stale_{now.strftime('%Y%m%d')}"
+                        if self._should_send_alert(alert_key):
+                            # Choose a friendly check-in message
+                            messages = [
+                                "Hey! Just checking in. Anything on your mind today?",
+                                "Hi there! It's been a couple days. How are things going?",
+                                "Hey! Noticed we haven't chatted in a bit. Everything alright?",
+                            ]
+                            import random
+                            msg = random.choice(messages)
+                            
+                            alerts.append(ProactiveAlert(
+                                category="context",
+                                title="Check-in",
+                                message=msg,
+                                priority=AlertPriority.LOW,
+                                alert_key=alert_key,
+                                data={"hours_since_last": hours_since}
+                            ))
+                            self._mark_alert_sent(alert_key)
+        
+        except Exception as e:
+            logger.error(f"Error checking conversation staleness: {e}", exc_info=True)
+        
+        return alerts
+    
     def check_dynamic_alerts(self) -> List[ProactiveAlert]:
         """Check user-created dynamic alerts from conversations."""
         alerts = []
@@ -736,6 +1116,15 @@ class ProactiveMonitor:
         # Dynamic alerts from conversations (Friday's self-learning)
         all_alerts.extend(self.check_dynamic_alerts())
         
+        # Vault health checks
+        all_alerts.extend(self.check_vault_health())
+        
+        # Commitment follow-ups (things Friday promised to do)
+        all_alerts.extend(self.check_commitment_follow_ups())
+        
+        # Conversation staleness (check-in if user hasn't talked in a while)
+        all_alerts.extend(self.check_conversation_staleness())
+        
         # Sort by priority
         priority_order = {
             AlertPriority.URGENT: 0,
@@ -750,7 +1139,7 @@ class ProactiveMonitor:
         return all_alerts
     
     def send_alerts(self, alerts: List[ProactiveAlert]):
-        """Send alerts via Telegram with Ack button."""
+        """Send alerts via Telegram with Ack button, respecting reach-out budget."""
         if not alerts:
             return
         
@@ -758,8 +1147,24 @@ class ProactiveMonitor:
             logger.error("Cannot send alerts: notifier not available")
             return
         
+        sent_count = 0
+        skipped_count = 0
+        
         for alert in alerts:
             try:
+                # Check reach-out budget before sending
+                if not self.budget.can_send(alert.priority):
+                    logger.info(f"Skipping alert '{alert.title}' - reach-out budget exhausted")
+                    # Record the skipped alert for later viewing
+                    self.budget.record_skipped(
+                        title=alert.title,
+                        message=alert.message,
+                        priority=alert.priority.value if hasattr(alert.priority, 'value') else str(alert.priority),
+                        category=alert.category
+                    )
+                    skipped_count += 1
+                    continue
+                
                 # Use send_proactive_alert which includes the Ack button
                 self.notifier.send_proactive_alert(
                     title=alert.title,
@@ -767,6 +1172,11 @@ class ProactiveMonitor:
                     alert_key=alert.alert_key,
                     category=alert.category
                 )
+                
+                # Record in budget
+                self.budget.record_sent(alert.priority)
+                sent_count += 1
+                
                 logger.info(f"Sent proactive alert: {alert.title} (key: {alert.alert_key})")
             except Exception as e:
                 logger.error(f"Failed to send alert '{alert.title}': {e}")
@@ -775,6 +1185,25 @@ class ProactiveMonitor:
         """Run all checks and send any alerts."""
         alerts = self.run_all_checks()
         self.send_alerts(alerts)
+    
+    def record_user_engagement(self, responded: bool = True):
+        """
+        Record user engagement with proactive messages.
+        
+        Call this from telegram_bot when user responds to Friday.
+        """
+        if responded:
+            self.budget.record_user_response()
+        else:
+            self.budget.record_ignored()
+    
+    def get_budget_stats(self) -> Dict[str, Any]:
+        """Get current reach-out budget statistics."""
+        return self.budget.get_stats()
+    
+    def get_skipped_alerts(self) -> List[Dict[str, Any]]:
+        """Get list of alerts skipped today due to budget exhaustion."""
+        return self.budget.get_skipped_alerts()
 
 
 # Singleton instance
