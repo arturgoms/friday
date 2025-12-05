@@ -64,3 +64,120 @@ auth:
 ```
 
 This approach will result in a cleaner, more maintainable, and easily configurable application.
+
+## 5. Testing Strategy
+
+Configuration is foundational—errors here can break everything. Testing must be thorough.
+
+### 5.1. Unit Tests
+
+Create new test files in `tests/unit/`:
+
+-   **`test_config.py`**: Test the configuration loading system.
+    -   Test default values are applied correctly.
+    -   Test YAML file loading and parsing.
+    -   Test environment variable overrides.
+    -   Test precedence order (defaults < YAML < env vars).
+    -   Test handling of missing `config.yml` file.
+    -   Test validation of required fields.
+    -   Test handling of invalid YAML syntax.
+
+### 5.2. Test Fixtures
+
+Create fixtures for different configuration scenarios:
+
+```python
+@pytest.fixture
+def minimal_config_yaml(tmp_path):
+    config = tmp_path / "config.yml"
+    config.write_text("""
+paths:
+  brain: /test/brain
+llm:
+  model_name: "test-model"
+""")
+    return config
+
+@pytest.fixture
+def full_config_yaml(tmp_path):
+    # Complete config with all options
+    ...
+```
+
+### 5.3. Integration Tests
+
+-   **`test_config_integration.py`**: Test that all services correctly use the centralized config.
+    -   Test that services start with different configurations.
+    -   Test that path references are resolved correctly.
+
+## 6. CLI (`friday` script) Updates
+
+The `friday` CLI will be extended to provide configuration inspection and validation tools.
+
+### 6.1. New Commands
+
+```bash
+# Show current configuration (with secrets masked)
+friday config show
+# Output:
+#   paths:
+#     brain: /home/artur/friday/brain
+#     data: /home/artur/friday/data
+#   llm:
+#     base_url: http://localhost:8000/v1
+#     model_name: Qwen/Qwen2.5-14B-Instruct
+#   auth:
+#     api_key: ****...****
+
+# Validate configuration file
+friday config validate
+# Output:
+#   ✅ config.yml is valid
+#   ✅ All required paths exist
+#   ✅ LLM service reachable
+
+# Show where a specific config value comes from
+friday config source llm.model_name
+# Output:
+#   llm.model_name = "Qwen/Qwen2.5-14B-Instruct"
+#   Source: config.yml (line 12)
+
+# Generate a config.yml from current settings
+friday config generate
+# Output: Creates config.yml with current effective settings
+
+# Show differences between config.yml and defaults
+friday config diff
+# Output: Lists all non-default values
+```
+
+### 6.2. Implementation
+
+Add a new `config)` case to the `friday` script:
+
+```bash
+config)
+    ACTION="${2:-show}"
+    case "$ACTION" in
+        show)
+            # Display current config with masked secrets
+            ;;
+        validate)
+            # Validate config file and dependencies
+            ;;
+        source)
+            KEY="$3"
+            # Show source of a specific config value
+            ;;
+        generate)
+            # Generate config.yml from current settings
+            ;;
+        diff)
+            # Show non-default values
+            ;;
+        *)
+            echo "Usage: friday config [show|validate|source|generate|diff]"
+            ;;
+    esac
+    ;;
+```

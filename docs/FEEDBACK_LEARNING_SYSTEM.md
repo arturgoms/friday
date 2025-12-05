@@ -162,3 +162,169 @@ This adjustment is automatically applied to Friday's system prompt, improving fu
 -   The user can manually add learnings (e.g., "I prefer formal language").
 
 This system will make Friday a truly adaptive assistant that gets better with every interaction.
+
+## 7. Testing Strategy
+
+The learning system is sensitive—bad learnings could degrade Friday's performance. Testing must ensure the system learns correctly and safely.
+
+### 7.1. Unit Tests
+
+Create new test files in `tests/unit/`:
+
+-   **`test_feedback_store.py`**: Test the feedback and corrections storage.
+    -   Test adding feedback records.
+    -   Test adding corrections linked to feedback.
+    -   Test retrieval of unprocessed corrections.
+    -   Test marking corrections as processed.
+-   **`test_learning_service.py`**: Test the learning synthesis system.
+    -   Test pattern detection from corrections.
+    -   Test learning statement generation.
+    -   Test confidence scoring.
+    -   Test prompt adjustment generation.
+-   **`test_dynamic_prompts.py`**: Test dynamic system prompt generation.
+    -   Test that learnings are correctly injected into prompts.
+    -   Test filtering by confidence threshold.
+    -   Test handling of empty learnings store.
+
+### 7.2. Integration Tests
+
+Create/update test files in `tests/integration/`:
+
+-   **`test_feedback_integration.py`**: End-to-end tests for the feedback flow.
+    -   Test full correction flow (👎 -> prompt -> correction -> storage).
+    -   Test learning synthesis with real LLM.
+    -   Test that applied learnings affect future responses.
+
+### 7.3. Safety Tests
+
+Special tests to ensure the learning system doesn't cause harm:
+
+```python
+@pytest.mark.safety
+def test_learning_does_not_override_core_behavior():
+    """Ensure learnings can't override critical system instructions."""
+    ...
+
+@pytest.mark.safety
+def test_low_confidence_learnings_not_applied():
+    """Ensure learnings below threshold are not used."""
+    ...
+
+@pytest.mark.safety
+def test_conflicting_learnings_handled():
+    """Ensure conflicting learnings are detected and resolved."""
+    ...
+```
+
+## 8. CLI (`friday` script) Updates
+
+The `friday` CLI will be extended to provide full control over the feedback and learning system.
+
+### 8.1. New Commands
+
+```bash
+# Show feedback statistics
+friday feedback stats
+# Output:
+#   Last 30 days:
+#   - Total responses rated: 150
+#   - Thumbs up: 120 (80%)
+#   - Thumbs down: 30 (20%)
+#   
+#   By Intent:
+#   - calendar_query: 95% approval
+#   - memory_save: 85% approval
+#   - health_query: 70% approval
+
+# List recent negative feedback
+friday feedback negative
+# Output: Lists recent thumbs-down with user messages and AI responses
+
+# List pending corrections (not yet processed)
+friday feedback corrections
+# Output: Lists corrections awaiting synthesis
+
+# Run learning synthesis manually
+friday learn synthesize
+# Output:
+#   Analyzing 15 unprocessed corrections...
+#   Generated 3 new learnings:
+#   - [0.85] User prefers concise answers
+#   - [0.72] Always include event times
+#   - [0.68] Mention source of health data (below threshold, not applied)
+
+# List all active learnings
+friday learn list
+# Output:
+#   ID          Confidence  Pattern
+#   learn_001   0.85        User prefers concise answers
+#   learn_002   0.72        Always include event times
+
+# Show details of a specific learning
+friday learn show <learning_id>
+
+# Manually add a learning
+friday learn add "Always respond in Portuguese when I write in Portuguese"
+
+# Remove a learning
+friday learn remove <learning_id>
+
+# Temporarily disable all learnings (for debugging)
+friday learn disable
+friday learn enable
+```
+
+### 8.2. Implementation
+
+Add new cases to the `friday` script:
+
+```bash
+feedback)
+    ACTION="${2:-stats}"
+    case "$ACTION" in
+        stats)
+            # Show feedback statistics
+            ;;
+        negative)
+            # List recent negative feedback
+            ;;
+        corrections)
+            # List pending corrections
+            ;;
+        *)
+            echo "Usage: friday feedback [stats|negative|corrections]"
+            ;;
+    esac
+    ;;
+
+learn)
+    ACTION="${2:-list}"
+    case "$ACTION" in
+        synthesize)
+            # Run learning synthesis
+            ;;
+        list)
+            # List active learnings
+            ;;
+        show)
+            LEARNING_ID="$3"
+            # Show learning details
+            ;;
+        add)
+            shift 2
+            LEARNING="$*"
+            # Add manual learning
+            ;;
+        remove)
+            LEARNING_ID="$3"
+            # Remove learning
+            ;;
+        disable|enable)
+            # Toggle learnings
+            ;;
+        *)
+            echo "Usage: friday learn [synthesize|list|show|add|remove|disable|enable]"
+            ;;
+    esac
+    ;;
+```

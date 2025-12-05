@@ -91,3 +91,93 @@ class MemorySaveHandler(IntentHandler):
 ```
 
 This structured approach will ensure a smooth and effective refactoring process.
+
+## 5. Testing Strategy
+
+All new components must have comprehensive test coverage before the refactoring is considered complete.
+
+### 5.1. Unit Tests
+
+Create new test files in `tests/unit/`:
+
+-   **`test_intent_handlers.py`**: Test each handler in isolation.
+    -   Mock dependencies (e.g., `MemoryStore`, `CalendarService`).
+    -   Test success cases, error handling, and edge cases for each handler.
+-   **`test_chat_orchestrator.py`**: Test the orchestrator's dispatch logic.
+    -   Test single-intent dispatch.
+    -   Test multi-intent dispatch and result aggregation.
+    -   Test handling of unknown intents.
+
+### 5.2. Integration Tests
+
+Create/update test files in `tests/integration/`:
+
+-   **`test_chat_integration.py`**: End-to-end tests for the chat flow.
+    -   Test a full request from user message to final response.
+    -   Test multi-intent requests (e.g., "Set a reminder and check my calendar").
+
+### 5.3. Test Markers
+
+Use pytest markers for organization:
+
+```python
+@pytest.mark.unit
+def test_memory_save_handler_success():
+    ...
+
+@pytest.mark.integration
+def test_chat_multi_intent_flow():
+    ...
+```
+
+## 6. CLI (`friday` script) Updates
+
+The `friday` CLI script will be updated to expose new debugging and inspection capabilities for the chat system.
+
+### 6.1. New Commands
+
+```bash
+# Test the intent router with a message
+friday chat intent "Set a reminder for tomorrow and check my calendar"
+# Output: Detected intents: [reminder_create, calendar_query]
+
+# List all registered intent handlers
+friday chat handlers
+# Output:
+#   - memory_save: MemorySaveHandler
+#   - reminder_create: ReminderCreateHandler
+#   - calendar_query: CalendarQueryHandler
+#   ...
+
+# Send a test message to the chat service (useful for debugging)
+friday chat test "What's on my calendar?"
+# Output: [Full response from ChatOrchestrator]
+```
+
+### 6.2. Implementation
+
+Add a new `chat)` case to the `friday` script:
+
+```bash
+chat)
+    ACTION="${2:-help}"
+    case "$ACTION" in
+        intent)
+            shift 2
+            MESSAGE="$*"
+            # Call intent router and display results
+            ;;
+        handlers)
+            # List registered handlers
+            ;;
+        test)
+            shift 2
+            MESSAGE="$*"
+            # Send message to chat service
+            ;;
+        *)
+            echo "Usage: friday chat [intent|handlers|test]"
+            ;;
+    esac
+    ;;
+```

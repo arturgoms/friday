@@ -104,3 +104,133 @@ The engine must not only be aware of the present but also anticipate future need
 
 This new architecture will transform Friday from a system that simply reports data to one that truly understands and anticipates the user's needs.
 
+## 5. Testing Strategy
+
+The Awareness Engine is a critical component that requires thorough testing to ensure reliability and prevent false alerts.
+
+### 5.1. Unit Tests
+
+Create new test files in `tests/unit/`:
+
+-   **`test_awareness_engine.py`**: Test each check method in isolation.
+    -   Mock data sources (InfluxDB, Calendar, Obsidian).
+    -   Test alert generation logic for each check type.
+    -   Test edge cases (missing data, API failures).
+-   **`test_reach_out_budget.py`**: Test the self-regulation system.
+    -   Test budget calculation and limits.
+    -   Test adaptive behavior based on user engagement.
+-   **`test_pattern_recognition.py`**: Test behavioral pattern detection.
+    -   Test sleep consistency tracking.
+    -   Test workout frequency detection.
+
+### 5.2. Integration Tests
+
+Create/update test files in `tests/integration/`:
+
+-   **`test_awareness_integration.py`**: End-to-end tests for the awareness system.
+    -   Test fusion checks with real (or realistic mock) data.
+    -   Test alert delivery via Telegram.
+    -   Test the full check-and-notify cycle.
+
+### 5.3. Test Fixtures
+
+Create fixtures for common test scenarios:
+
+```python
+@pytest.fixture
+def mock_health_data():
+    return {
+        "body_battery": 25,
+        "training_readiness": 40,
+        "sleep_score": 55
+    }
+
+@pytest.fixture
+def mock_calendar_events():
+    return [
+        {"summary": "Leg Day", "start": datetime.now() + timedelta(hours=2)},
+        {"summary": "Team Meeting", "start": datetime.now() + timedelta(hours=5)}
+    ]
+```
+
+## 6. CLI (`friday` script) Updates
+
+The `friday` CLI will be extended to provide full control over the Awareness Engine.
+
+### 6.1. New Commands
+
+```bash
+# Run all awareness checks manually (dry run - no alerts sent)
+friday awareness check
+# Output: Lists all alerts that would be generated
+
+# Run checks and send alerts
+friday awareness run
+
+# Show current reach-out budget status
+friday awareness budget
+# Output:
+#   Date: 2025-12-05
+#   Messages sent: 3/5
+#   User responses: 2
+#   Ignored: 1
+#   Skipped alerts: 0
+
+# List alerts that were skipped due to budget
+friday awareness skipped
+
+# Show detected patterns
+friday awareness patterns
+# Output:
+#   Sleep: Average bedtime 23:15, wake 07:30
+#   Workouts: 3x per week (Mon, Wed, Fri typical)
+
+# Acknowledge an alert from CLI
+friday awareness ack <alert_key>
+
+# Show infrastructure status
+friday awareness infra
+# Output:
+#   Server CPU: 45°C
+#   Disk /: 65% used (predicted full in 45 days)
+#   NAS: Healthy
+#   Services: All running
+```
+
+### 6.2. Implementation
+
+Add a new `awareness)` case to the `friday` script:
+
+```bash
+awareness)
+    ACTION="${2:-check}"
+    case "$ACTION" in
+        check)
+            # Dry-run all checks
+            ;;
+        run)
+            # Run checks and send alerts
+            ;;
+        budget)
+            # Show budget status
+            ;;
+        skipped)
+            # List skipped alerts
+            ;;
+        patterns)
+            # Show detected patterns
+            ;;
+        ack)
+            ALERT_KEY="$3"
+            # Acknowledge alert
+            ;;
+        infra)
+            # Show infrastructure status
+            ;;
+        *)
+            echo "Usage: friday awareness [check|run|budget|skipped|patterns|ack|infra]"
+            ;;
+    esac
+    ;;
+```
+
