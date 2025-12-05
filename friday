@@ -359,6 +359,310 @@ print(f'💾 ChromaDB entries: {stats[\"memory_entries\"]}')
         echo "✅ Services uninstalled!"
         ;;
     
+    chat)
+        ACTION="${2:-help}"
+        cd "$FRIDAY_DIR"
+        
+        case "$ACTION" in
+            intent)
+                shift 2
+                MESSAGE="$*"
+                if [ -z "$MESSAGE" ]; then
+                    echo "Usage: friday chat intent \"<message>\""
+                    echo ""
+                    echo "Example:"
+                    echo "  friday chat intent \"Set a reminder for tomorrow and check my calendar\""
+                    exit 1
+                fi
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.intent.router import intent_router
+import json
+
+message = '''$MESSAGE'''
+intent = intent_router.route(message)
+
+print('Message:', message[:80] + '...' if len(message) > 80 else message)
+print('')
+print('Detected intent:')
+print(json.dumps(intent, indent=2, default=str))
+"
+                ;;
+            handlers)
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.chat import handler_registry
+
+handlers = handler_registry.list_handlers()
+print(f'Registered handlers: {len(handlers)}')
+print('')
+for action, handler in sorted(handlers.items()):
+    print(f'  {action}: {handler}')
+"
+                ;;
+            test)
+                shift 2
+                MESSAGE="$*"
+                if [ -z "$MESSAGE" ]; then
+                    echo "Usage: friday chat test \"<message>\""
+                    echo ""
+                    echo "Example:"
+                    echo "  friday chat test \"What's on my calendar?\""
+                    exit 1
+                fi
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.chat import chat_service
+import json
+
+message = '''$MESSAGE'''
+result = chat_service.chat(message)
+
+print('Message:', message)
+print('')
+print('Response:')
+print(result.get('answer', '(no answer)'))
+print('')
+print('Metadata:')
+print(f'  session_id: {result.get(\"session_id\", \"N/A\")}')
+print(f'  used_rag: {result.get(\"used_rag\", False)}')
+print(f'  used_web: {result.get(\"used_web\", False)}')
+print(f'  used_memory: {result.get(\"used_memory\", False)}')
+print(f'  used_health: {result.get(\"used_health\", False)}')
+"
+                ;;
+            *)
+                echo "Usage: friday chat [intent|handlers|test]"
+                echo ""
+                echo "  intent \"<msg>\"    Test the intent router with a message"
+                echo "  handlers          List all registered intent handlers"
+                echo "  test \"<msg>\"      Send a test message to the chat service"
+                echo ""
+                echo "Examples:"
+                echo "  friday chat intent \"remind me to call mom in 30 minutes\""
+                echo "  friday chat handlers"
+                echo "  friday chat test \"What's on my calendar today?\""
+                ;;
+        esac
+        ;;
+    
+    config)
+        ACTION="${2:-show}"
+        cd "$FRIDAY_DIR"
+        
+        case "$ACTION" in
+            show)
+                echo "📋 Friday Configuration"
+                echo "======================="
+                echo ""
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.core.config import settings, YAML_CONFIG, PROJECT_ROOT
+import os
+
+def mask_secret(value):
+    if value and len(str(value)) > 8:
+        s = str(value)
+        return s[:4] + '****' + s[-4:]
+    return '****' if value else '(not set)'
+
+print('📁 Paths:')
+print(f'   root:   {settings.paths.root}')
+print(f'   brain:  {settings.paths.brain}')
+print(f'   data:   {settings.paths.data}')
+print(f'   logs:   {settings.paths.logs}')
+print(f'   config: {settings.paths.config}')
+print('')
+print('👤 User:')
+print(f'   name:     {settings.user.name}')
+print(f'   timezone: UTC{settings.user.timezone_offset_hours:+d}')
+print('')
+print('🤖 LLM:')
+print(f'   base_url:    {settings.llm.base_url}')
+print(f'   model:       {settings.llm.model_name}')
+print(f'   temperature: {settings.llm.temperature}')
+print('')
+print('🔗 Services:')
+print(f'   friday_api: {settings.services.friday_api_url}')
+print(f'   searxng:    {settings.services.searxng_url}')
+print(f'   whisper:    {settings.services.whisper_url or \"(not set)\"}')
+print('')
+print('🔐 Auth (masked):')
+print(f'   api_key:       {mask_secret(settings.auth.api_key)}')
+print(f'   telegram_token: {mask_secret(settings.telegram.bot_token)}')
+print(f'   weather_key:   {mask_secret(settings.weather.api_key)}')
+print('')
+print('🎛️  Features:')
+print(f'   web_search:        {settings.features.web_search}')
+print(f'   health_monitoring: {settings.features.health_monitoring}')
+print(f'   calendar:          {settings.features.calendar_integration}')
+print(f'   proactive_alerts:  {settings.features.proactive_alerts}')
+print(f'   learning_system:   {settings.features.learning_system}')
+print('')
+print('📄 Config sources:')
+config_yml = PROJECT_ROOT / 'config.yml'
+print(f'   config.yml: {\"✅ loaded\" if config_yml.exists() else \"❌ not found\"}')
+print(f'   .env:       {\"✅ loaded\" if (PROJECT_ROOT / \".env\").exists() else \"⚪ not found\"}')
+"
+                ;;
+            validate)
+                echo "🔍 Validating Configuration..."
+                echo ""
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.core.config import settings, PROJECT_ROOT
+import requests
+
+errors = []
+warnings = []
+
+# Check paths exist
+print('📁 Checking paths...')
+paths_to_check = [
+    ('root', settings.paths.root),
+    ('brain', settings.paths.brain),
+    ('data', settings.paths.data),
+    ('logs', settings.paths.logs),
+    ('config', settings.paths.config),
+    ('vault', settings.vault_path),
+]
+for name, path in paths_to_check:
+    if path.exists():
+        print(f'   ✅ {name}: {path}')
+    else:
+        print(f'   ❌ {name}: {path} (MISSING)')
+        errors.append(f'Path {name} does not exist: {path}')
+
+print('')
+print('🔗 Checking services...')
+
+# Check LLM
+try:
+    r = requests.get(f'{settings.llm.base_url}/models', timeout=5)
+    if r.status_code == 200:
+        models = r.json().get('data', [])
+        model_ids = [m['id'] for m in models]
+        if settings.llm.model_name in model_ids:
+            print(f'   ✅ LLM: {settings.llm.model_name}')
+        else:
+            print(f'   ⚠️  LLM: configured model \"{settings.llm.model_name}\" not in available models: {model_ids}')
+            warnings.append(f'LLM model mismatch')
+    else:
+        print(f'   ❌ LLM: not responding (status {r.status_code})')
+        errors.append('LLM service not responding')
+except Exception as e:
+    print(f'   ❌ LLM: connection failed ({e})')
+    errors.append(f'LLM connection failed: {e}')
+
+# Check Friday API
+try:
+    r = requests.get(f'{settings.services.friday_api_url}/health', timeout=5)
+    if r.status_code == 200:
+        print(f'   ✅ Friday API: {settings.services.friday_api_url}')
+    else:
+        print(f'   ⚠️  Friday API: status {r.status_code}')
+        warnings.append('Friday API returned non-200')
+except Exception as e:
+    print(f'   ❌ Friday API: connection failed')
+    errors.append(f'Friday API not reachable')
+
+# Check SearXNG
+try:
+    r = requests.get(f'{settings.services.searxng_url}', timeout=5)
+    if r.status_code == 200:
+        print(f'   ✅ SearXNG: {settings.services.searxng_url}')
+    else:
+        print(f'   ⚠️  SearXNG: status {r.status_code}')
+        warnings.append('SearXNG returned non-200')
+except Exception as e:
+    print(f'   ⚠️  SearXNG: not reachable (optional)')
+    warnings.append('SearXNG not reachable')
+
+print('')
+print('🔐 Checking credentials...')
+if settings.auth.api_key:
+    print('   ✅ API key: configured')
+else:
+    print('   ⚠️  API key: not set')
+    warnings.append('API key not configured')
+
+if settings.telegram.bot_token:
+    print('   ✅ Telegram token: configured')
+else:
+    print('   ⚠️  Telegram token: not set')
+    warnings.append('Telegram bot token not configured')
+
+print('')
+if errors:
+    print(f'❌ Validation failed with {len(errors)} error(s)')
+    for e in errors:
+        print(f'   • {e}')
+elif warnings:
+    print(f'⚠️  Validation passed with {len(warnings)} warning(s)')
+else:
+    print('✅ All checks passed!')
+"
+                ;;
+            source)
+                KEY="$3"
+                if [ -z "$KEY" ]; then
+                    echo "Usage: friday config source <key>"
+                    echo ""
+                    echo "Examples:"
+                    echo "  friday config source llm.model_name"
+                    echo "  friday config source user.name"
+                    echo "  friday config source paths.brain"
+                    exit 1
+                fi
+                pipenv run python3 -c "
+import sys
+import os
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.core.config import settings, YAML_CONFIG, _get_nested, get_config_source
+
+key = '$KEY'
+parts = key.split('.')
+
+# Get the value from settings
+obj = settings
+for part in parts:
+    if hasattr(obj, part):
+        obj = getattr(obj, part)
+    else:
+        print(f'❌ Key not found: {key}')
+        sys.exit(1)
+
+source = get_config_source(key)
+source_label = {
+    'env': '🌍 Environment variable',
+    'yaml': '📄 config.yml',
+    'default': '⚙️  Default value'
+}.get(source, source)
+
+print(f'{key} = {obj}')
+print(f'Source: {source_label}')
+"
+                ;;
+            *)
+                echo "Usage: friday config [show|validate|source]"
+                echo ""
+                echo "  show              Show current configuration (secrets masked)"
+                echo "  validate          Validate config and check service connectivity"
+                echo "  source <key>      Show where a config value comes from"
+                echo ""
+                echo "Examples:"
+                echo "  friday config show"
+                echo "  friday config validate"
+                echo "  friday config source llm.model_name"
+                ;;
+        esac
+        ;;
+    
     *)
         cat << 'HELP'
 Friday AI - CLI Tool
@@ -366,19 +670,21 @@ Friday AI - CLI Tool
 Usage: friday <command> [options]
 
 Commands:
-  status                  Show status of all services
-  logs [service]          Tail logs (friday|vllm|telegram_bot|homelab_monitor)
-  notify "msg" [sev]      Send notification (severity: info|warning|error|success|critical)
-  report                  Send system status report via Telegram
-  test [type]             Run tests (all|unit|integration|bash)
-  index [action]          Manage RAG index (status|rebuild)
-  reminders [action]      Manage reminders (list|cancel <id>)
-  memory [action]         Manage memories (add|list|delete|clear|drop-all)
-  monitor                 Show system monitor
-  sync                    Sync Nextcloud and reindex
-  restart [service]       Restart service(s) (all|friday,telegram-bot|service1,service2)
-  install-services        Install and enable all systemd services
-  uninstall-services      Stop, disable, and remove all services
+   status                  Show status of all services
+   logs [service]          Tail logs (friday|vllm|telegram_bot|homelab_monitor)
+   notify "msg" [sev]      Send notification (severity: info|warning|error|success|critical)
+   report                  Send system status report via Telegram
+   test [type]             Run tests (all|unit|integration|bash)
+   chat [action]           Chat debugging (intent|handlers|test)
+   config [action]         Manage configuration (show|validate|source)
+   index [action]          Manage RAG index (status|rebuild)
+   reminders [action]      Manage reminders (list|cancel <id>)
+   memory [action]         Manage memories (add|list|delete|clear|drop-all)
+   monitor                 Show system monitor
+   sync                    Sync Nextcloud and reindex
+   restart [service]       Restart service(s) (all|friday,telegram-bot|service1,service2)
+   install-services        Install and enable all systemd services
+   uninstall-services      Stop, disable, and remove all services
 
 Examples:
   friday status
@@ -399,6 +705,12 @@ Examples:
   friday memory drop-all
   friday restart friday,telegram-bot
   friday install-services
+  friday config show           # Show current configuration
+  friday config validate       # Validate config and services
+  friday config source llm.model_name  # Check config source
+  friday chat intent "remind me to buy milk"  # Test intent router
+  friday chat handlers         # List all intent handlers
+  friday chat test "What time is it?"  # Test the chat service
 
 HELP
         ;;

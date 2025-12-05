@@ -118,7 +118,7 @@ class RelationshipTracker:
     
     def __init__(self):
         """Initialize relationship tracker."""
-        self.data_path = Path("/home/artur/friday/brain/5. Friday/5.5 Conversations")
+        self.data_path = settings.conversations_path
         self.state_file = self.data_path / "relationship_state.json"
         self.interactions_file = self.data_path / "interactions_log.json"
         
@@ -514,7 +514,7 @@ class OpinionStore:
     
     def __init__(self):
         """Initialize opinion store."""
-        self.data_path = Path("/home/artur/friday/brain/5. Friday/5.5 Conversations")
+        self.data_path = settings.conversations_path
         self.opinions_file = self.data_path / "opinions.json"
         
         self.opinions: Dict[str, Any] = self._load_opinions()

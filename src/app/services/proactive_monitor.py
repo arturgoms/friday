@@ -70,9 +70,9 @@ class ReachOutBudget:
     
     def __init__(self, budget_file: Path = None):
         """Initialize reach-out budget tracker."""
-        self.budget_file = budget_file or Path("/home/artur/friday/data/reach_out_budget.json")
-        self.daily_limit = 5  # Max proactive messages per day
-        self.urgent_exempt = True  # Urgent alerts don't count against budget
+        self.budget_file = budget_file or (settings.paths.data / "reach_out_budget.json")
+        self.daily_limit = settings.awareness.daily_message_limit
+        self.urgent_exempt = settings.awareness.urgent_exempt
         
         # Load current state
         self._state = self._load_state()
@@ -258,9 +258,9 @@ class ProactiveMonitor:
         self._health_coach = None
         self._calendar_service = None
         self._notifier = None
-        self._alert_cooldown_minutes = 30  # Resend unacked alerts after this time
-        self._cooldown_file = Path("/home/artur/friday/data/alert_cooldowns.json")
-        self._acked_file = Path("/home/artur/friday/data/alert_acked.json")
+        self._alert_cooldown_minutes = settings.awareness.alert_cooldown_minutes
+        self._cooldown_file = settings.paths.data / "alert_cooldowns.json"
+        self._acked_file = settings.paths.data / "alert_acked.json"
         self._last_alerts: Dict[str, datetime] = self._load_cooldowns()
         self._acked_alerts: Dict[str, datetime] = self._load_acked()
         
@@ -358,7 +358,7 @@ class ProactiveMonitor:
         if self._notifier is None:
             try:
                 import sys
-                sys.path.insert(0, '/home/artur/friday/src')
+                sys.path.insert(0, str(settings.paths.root / "src"))
                 from notify import FridayNotifier
                 self._notifier = FridayNotifier()
             except Exception as e:
@@ -1002,7 +1002,7 @@ class ProactiveMonitor:
             
             # Get the most recent interaction timestamp
             # We'll check the conversation memory files for modification time
-            conv_path = Path("/home/artur/friday/brain/5. Friday/5.5 Conversations")
+            conv_path = settings.conversations_path
             
             if conv_path.exists():
                 # Get the most recent file modification in conversations folder

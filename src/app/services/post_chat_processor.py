@@ -178,7 +178,7 @@ class PostChatProcessor:
             note_data = self.memory_extractor.format_as_obsidian_note(extraction)
             
             # Create the file
-            memory_path = Path("/home/artur/friday/data/memory")
+            memory_path = settings.paths.data / "memory"
             memory_path.mkdir(parents=True, exist_ok=True)
             
             # Generate filename

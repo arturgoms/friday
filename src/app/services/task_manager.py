@@ -125,8 +125,8 @@ class Task:
 class TaskManager:
     """Context-aware task management system."""
     
-    def __init__(self, db_path: str = "/home/artur/friday/data/tasks.db"):
-        self.db_path = Path(db_path)
+    def __init__(self, db_path: str = None):
+        self.db_path = Path(db_path) if db_path else (settings.paths.data / "tasks.db")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_database()
     

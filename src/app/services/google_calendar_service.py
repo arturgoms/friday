@@ -11,6 +11,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from app.core.config import settings
 from app.core.logging import logger
 from app.services.calendar_service import CalendarEvent
 
@@ -23,8 +24,8 @@ class GoogleCalendarService:
     """Service for interacting with Google Calendar."""
     
     def __init__(self):
-        self.credentials_path = Path("/home/artur/friday/data/google_credentials.json")
-        self.token_path = Path("/home/artur/friday/data/google_token.pickle")
+        self.credentials_path = settings.paths.data / settings.google_calendar.credentials_file
+        self.token_path = settings.paths.data / settings.google_calendar.token_file
         self.service = None
         self.calendar_id = os.getenv("GOOGLE_CALENDAR_ID", "primary")  # Default to primary calendar
         

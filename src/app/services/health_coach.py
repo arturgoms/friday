@@ -3,6 +3,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Dict, Any
 from influxdb import InfluxDBClient
+from app.core.config import settings
 from app.core.logging import logger
 
 
@@ -627,7 +628,8 @@ def get_health_coach():
     """Get health coach instance."""
     global _health_coach
     if _health_coach is None:
-        with open("/home/artur/friday/config/influxdb_mcp.json") as f:
+        config_file = settings.paths.config / settings.services.influxdb_config_file
+        with open(config_file) as f:
             config = json.load(f)
         _health_coach = HealthCoachService(config)
     return _health_coach
