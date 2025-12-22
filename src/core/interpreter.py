@@ -42,9 +42,21 @@ DANGEROUS_PATTERNS = [
     r"\bpathlib\.Path.*\.unlink\s*\(",
     r"\bpathlib\.Path.*\.rmdir\s*\(",
     
-    # Subprocess/shell execution
-    r"\bsubprocess\.",
-    r"\bos\.system\s*\(",
+    # Subprocess/shell execution with destructive commands
+    r"\bsubprocess\..*\brm\s",
+    r"\bsubprocess\..*\brmdir\b",
+    r"\bsubprocess\..*\bmkfs\b",
+    r"\bsubprocess\..*\bdd\s",
+    r"\bsubprocess\..*\bsudo\b",
+    r"\bsubprocess\..*\bshutdown\b",
+    r"\bsubprocess\..*\breboot\b",
+    r"\bsubprocess\..*\bsystemctl\s+(stop|disable|mask)",
+    
+    # os.system with destructive commands
+    r"\bos\.system\s*\([^)]*\brm\s",
+    r"\bos\.system\s*\([^)]*\bsudo\b",
+    
+    # os.popen/exec/spawn are always dangerous
     r"\bos\.popen\s*\(",
     r"\bos\.exec",
     r"\bos\.spawn",
@@ -61,6 +73,50 @@ DANGEROUS_PATTERNS = [
     r"\bos\.chown\s*\(",
 ]
 
+# Safe subprocess patterns - these are allowed without confirmation
+# Patterns match both: subprocess.run(["cat", ...]) and subprocess.run("cat ...")
+SAFE_SUBPROCESS_PATTERNS = [
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]cat['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]ls['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]head['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]tail['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]grep['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]find['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]ps['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]top['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]df['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]du['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]free['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]uptime['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]who['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]whoami['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]date['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]uname['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]hostname['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]echo['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]pwd['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]env['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]printenv['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]which['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]wc['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]stat['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]file['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]sort['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]uniq['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]awk['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]sed['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]ip['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]netstat['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]ss['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]lsof['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]lsblk['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]blkid['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]mount['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]systemctl['\",\]].*status",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]journalctl['\",\]]",
+    r"\bsubprocess\.[^(]*\([^)]*['\"\[]dmesg['\",\]]",
+]
+
 # Absolutely forbidden patterns (will be blocked, not just confirmed)
 FORBIDDEN_PATTERNS = [
     r"rm\s+-rf\s+/\s*$",
@@ -73,6 +129,24 @@ FORBIDDEN_PATTERNS = [
 # Compiled patterns for efficiency
 _dangerous_re = [re.compile(p, re.IGNORECASE) for p in DANGEROUS_PATTERNS]
 _forbidden_re = [re.compile(p, re.IGNORECASE) for p in FORBIDDEN_PATTERNS]
+_safe_subprocess_re = [re.compile(p, re.IGNORECASE) for p in SAFE_SUBPROCESS_PATTERNS]
+
+
+def _is_safe_subprocess_use(code: str) -> bool:
+    """Check if subprocess usage in code is safe (read-only commands).
+    
+    Returns True if the code uses subprocess but only for safe, read-only commands.
+    """
+    # Check if code contains subprocess
+    if "subprocess" not in code.lower():
+        return True
+    
+    # Check if any safe pattern matches
+    for pattern in _safe_subprocess_re:
+        if pattern.search(code):
+            return True
+    
+    return False
 
 
 # =============================================================================
@@ -300,6 +374,9 @@ class CodeInterpreter:
                 result.exception = f"Forbidden operation detected: {pattern.pattern}"
                 return result
         
+        # Check if this is a safe subprocess use (read-only commands)
+        is_safe_subprocess = _is_safe_subprocess_use(code)
+        
         # Check for dangerous patterns (require confirmation)
         dangerous_ops = []
         for i, pattern in enumerate(_dangerous_re):
@@ -310,6 +387,14 @@ class CodeInterpreter:
         for pattern_str in self.require_confirmation:
             if pattern_str.lower() in code.lower():
                 dangerous_ops.append(pattern_str)
+        
+        # If subprocess is used safely, don't require confirmation for it
+        if dangerous_ops and is_safe_subprocess:
+            # Filter out subprocess-related patterns if they're safe
+            dangerous_ops = [
+                op for op in dangerous_ops 
+                if "subprocess" not in op.lower()
+            ]
         
         if dangerous_ops:
             result.requires_confirmation = True

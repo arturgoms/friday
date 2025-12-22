@@ -12,7 +12,9 @@ Endpoints:
 
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Security
@@ -29,7 +31,30 @@ from src.core.llm import close_llm_client, get_llm_client
 from src.core.registry import get_all_tool_schemas, get_sensor_registry, get_tool_registry
 from src.core.vector_store import BrainIndexer, get_vector_store
 
-logger = logging.getLogger(__name__)
+# Configure logging with timezone-aware timestamps (UTC-3 / America/Sao_Paulo)
+class BRTFormatter(logging.Formatter):
+    """Custom formatter that uses Brazil timezone (UTC-3)."""
+    def __init__(self, fmt=None, datefmt=None):
+        super().__init__(fmt, datefmt)
+        self.tz = timezone(timedelta(hours=-3))
+    
+    def formatTime(self, record, datefmt=None):
+        dt = datetime.fromtimestamp(record.created, tz=self.tz)
+        if datefmt:
+            return dt.strftime(datefmt)
+        return dt.strftime('%Y-%m-%d %H:%M:%S')
+
+# Configure logging
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(BRTFormatter(
+    fmt='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+))
+logging.root.handlers = []
+logging.root.addHandler(handler)
+logging.root.setLevel(logging.INFO)
+
+logger = logging.getLogger("friday")
 
 
 # =============================================================================
@@ -37,6 +62,53 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 API_KEY = os.getenv("FRIDAY_API_KEY", "")
+
+# =============================================================================
+# Telegram Notifications
+# =============================================================================
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_USER_ID = os.getenv("TELEGRAM_USER_ID", "")
+
+
+async def send_telegram_notification(message: str, level: str = "info") -> bool:
+    """Send a notification to Telegram.
+    
+    Args:
+        message: Message to send
+        level: Alert level (info/warning/critical) for emoji prefix
+        
+    Returns:
+        True if sent successfully
+    """
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_USER_ID:
+        logger.warning("Telegram not configured, skipping notification")
+        return False
+    
+    # Add emoji prefix based on level
+    emoji = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨"}.get(level, "📢")
+    formatted_message = f"{emoji} Friday Alert\n\n{message}"
+    
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                json={
+                    "chat_id": TELEGRAM_USER_ID,
+                    "text": formatted_message,
+                    # No parse_mode - plain text is safer for dynamic content
+                }
+            )
+            if response.status_code == 200:
+                logger.info(f"Telegram notification sent: {level}")
+                return True
+            else:
+                logger.error(f"Telegram API error: {response.status_code} - {response.text}")
+                return False
+    except Exception as e:
+        logger.error(f"Failed to send Telegram notification: {e}")
+        return False
 api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
 
 
@@ -86,8 +158,10 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Friday 3.0 Core...")
     
     # Load extensions (tools and sensors)
-    extensions = load_extensions()
-    logger.info(f"Loaded {len(extensions['tools'])} tools, {len(extensions['sensors'])} sensors")
+    load_extensions()
+    tool_count = len(get_tool_registry())
+    sensor_count = len(get_sensor_registry())
+    logger.info(f"Loaded {tool_count} tools, {sensor_count} sensors")
     
     # Initialize vector store and index brain if needed
     config = get_config()
@@ -227,6 +301,9 @@ async def chat(request: ChatRequest, authorized: bool = Depends(verify_api_key))
     between tools, code execution, and chat based on the request.
     """
     try:
+        # Log incoming request
+        logger.info(f"[CHAT] Request from user={request.user_id}: {request.text[:100]}{'...' if len(request.text) > 100 else ''}")
+        
         agent = get_agent()
         
         if request.stream:
@@ -248,6 +325,22 @@ async def chat(request: ChatRequest, authorized: bool = Depends(verify_api_key))
             session_id=request.session_id
         )
         
+        # Log response details
+        logger.info(f"[CHAT] Response mode={response.mode}, iterations={response.iterations}")
+        if response.tool_results:
+            for tr in response.tool_results:
+                tool_name = tr.get('tool', 'unknown')
+                success = tr.get('success', False)
+                result_preview = str(tr.get('result', ''))[:100]
+                logger.info(f"[TOOL] {tool_name}: success={success}, result={result_preview}...")
+        if response.code_results:
+            for i, cr in enumerate(response.code_results):
+                logger.info(f"[CODE] Block {i+1}: success={cr.success}, stdout={cr.stdout[:100] if cr.stdout else '(none)'}...")
+        
+        # Log response text preview
+        response_preview = response.text[:150] if response.text else '(empty)'
+        logger.info(f"[CHAT] Response text: {response_preview}{'...' if len(response.text or '') > 150 else ''}")
+        
         return ChatResponse(
             text=response.text,
             mode=response.mode,
@@ -257,7 +350,7 @@ async def chat(request: ChatRequest, authorized: bool = Depends(verify_api_key))
         )
         
     except Exception as e:
-        logger.error(f"Chat error: {e}")
+        logger.error(f"[CHAT] Error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -267,16 +360,33 @@ async def receive_alert(request: AlertRequest, authorized: bool = Depends(verify
     
     The awareness daemon sends alerts here when sensors detect
     conditions that require attention.
+    
+    Warning and critical alerts are forwarded to Telegram.
     """
     try:
         logger.info(f"Alert received: {request.sensor} - {request.level}: {request.message}")
         
-        # For now, just acknowledge the alert
-        # TODO: Route to appropriate action based on alert type
+        action_taken = None
+        
+        # Forward warning and critical alerts to Telegram
+        if request.level in ("warning", "critical"):
+            # Format message with sensor data (plain text, no markdown)
+            alert_message = f"[{request.level.upper()}] {request.sensor}\n\n{request.message}"
+            
+            # Add relevant data if present
+            if request.data:
+                data_lines = [f"- {k}: {v}" for k, v in request.data.items() if k != "sensor"]
+                if data_lines:
+                    alert_message += "\n\n" + "\n".join(data_lines)
+            
+            # Send to Telegram
+            sent = await send_telegram_notification(alert_message, request.level)
+            if sent:
+                action_taken = "telegram_notification_sent"
         
         return AlertResponse(
             acknowledged=True,
-            action_taken=None
+            action_taken=action_taken
         )
         
     except Exception as e:

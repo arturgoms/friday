@@ -194,11 +194,27 @@ class ThresholdEvaluator:
         Args:
             config: Configuration dict with threshold values
         """
+        # Hardware thresholds
         self.thresholds = {
             "disk_percent": config.get("disk_threshold_percent", 90),
             "memory_percent": config.get("memory_threshold_percent", 90),
             "cpu_load": config.get("cpu_load_threshold", 8.0),
             "gpu_temp": config.get("gpu_temp_threshold", 80),
+        }
+        
+        # Health thresholds
+        self.health_thresholds = {
+            "sleep_score_warning": 65,      # Alert if sleep score below this
+            "sleep_score_critical": 50,     # Critical if below this
+            "sleep_hours_min": 6.0,         # Alert if less than 6 hours
+            "body_battery_warning": 40,     # Alert if body battery below this
+            "body_battery_critical": 25,    # Critical if below this
+            "training_readiness_warning": 50,  # Alert if readiness below this
+            "recovery_status_alert": ["poor"],  # Alert on these statuses
+            "hrv_deviation_warning": -20,   # Alert if HRV drops more than 20%
+            "stress_avg_warning": 50,       # Alert if average stress above this
+            "stress_avg_critical": 65,      # Critical if above this
+            "stress_high_minutes_warning": 120,  # Alert if >2 hours high stress
         }
     
     def evaluate(self, sensor_name: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -212,10 +228,17 @@ class ThresholdEvaluator:
             Alert dict with level and message, or None if OK
         """
         if "error" in data:
+            # Don't alert on health sensor errors (might just be no data yet)
+            if sensor_name in ("sleep_quality", "training_readiness", "body_battery", "recovery_status"):
+                return None
             return {
                 "level": "warning",
                 "message": f"Sensor error: {data['error']}"
             }
+        
+        # =====================================================================
+        # Hardware Sensors
+        # =====================================================================
         
         # Disk usage
         if sensor_name == "disk_usage":
@@ -255,6 +278,106 @@ class ThresholdEvaluator:
                 return {
                     "level": "critical" if temp >= 90 else "warning",
                     "message": f"GPU temperature at {temp}C (threshold: {threshold}C)"
+                }
+        
+        # =====================================================================
+        # Health Sensors
+        # =====================================================================
+        
+        # Sleep quality
+        elif sensor_name == "sleep_quality":
+            score = data.get("sleep_score", 0)
+            hours = data.get("total_hours", 0)
+            
+            # Check sleep score
+            if score > 0 and score < self.health_thresholds["sleep_score_critical"]:
+                return {
+                    "level": "critical",
+                    "message": f"Poor sleep quality! Score: {score}/100, Duration: {hours}h"
+                }
+            elif score > 0 and score < self.health_thresholds["sleep_score_warning"]:
+                return {
+                    "level": "warning",
+                    "message": f"Below average sleep. Score: {score}/100, Duration: {hours}h"
+                }
+            
+            # Check sleep duration
+            if hours > 0 and hours < self.health_thresholds["sleep_hours_min"]:
+                return {
+                    "level": "warning",
+                    "message": f"Short sleep duration: {hours}h (recommended: 7-9h)"
+                }
+        
+        # Body battery
+        elif sensor_name == "body_battery":
+            battery = data.get("body_battery", 0)
+            
+            if battery > 0 and battery < self.health_thresholds["body_battery_critical"]:
+                return {
+                    "level": "critical",
+                    "message": f"Very low energy! Body battery: {battery}/100. Consider rest."
+                }
+            elif battery > 0 and battery < self.health_thresholds["body_battery_warning"]:
+                return {
+                    "level": "warning",
+                    "message": f"Low energy. Body battery: {battery}/100"
+                }
+        
+        # Training readiness
+        elif sensor_name == "training_readiness":
+            score = data.get("score", 0)
+            level = data.get("level", "")
+            recovery_hours = data.get("recovery_hours", 0)
+            
+            if score > 0 and score < self.health_thresholds["training_readiness_warning"]:
+                return {
+                    "level": "warning",
+                    "message": f"Low training readiness: {score}/100 ({level}). Recovery needed: {recovery_hours}h"
+                }
+        
+        # Recovery status (composite)
+        elif sensor_name == "recovery_status":
+            status = data.get("status", "")
+            hrv_deviation = data.get("hrv_deviation_percent", 0)
+            
+            if status in self.health_thresholds["recovery_status_alert"]:
+                hrv = data.get("hrv", 0)
+                rhr = data.get("resting_hr", 0)
+                return {
+                    "level": "warning",
+                    "message": f"Poor recovery detected! HRV: {hrv}ms ({hrv_deviation:+.0f}% from baseline), RHR: {rhr}bpm"
+                }
+            
+            # Also alert on significant HRV drop even if overall status is OK
+            if hrv_deviation < self.health_thresholds["hrv_deviation_warning"]:
+                return {
+                    "level": "warning", 
+                    "message": f"Significant HRV drop: {hrv_deviation:.0f}% below your baseline. Consider taking it easy."
+                }
+        
+        # Stress level
+        elif sensor_name == "stress_level":
+            current = data.get("current_stress", 0)
+            stress_avg = data.get("stress_avg", 0)
+            high_stress_min = data.get("high_stress_minutes", 0)
+            
+            # Check current stress level first (more immediate)
+            if current >= self.health_thresholds["stress_avg_critical"]:
+                return {
+                    "level": "critical",
+                    "message": f"Very high stress right now! Current: {current}/100. Take a break!"
+                }
+            elif current >= self.health_thresholds["stress_avg_warning"]:
+                return {
+                    "level": "warning",
+                    "message": f"Elevated stress detected. Current: {current}/100, Daily avg: {stress_avg}"
+                }
+            
+            # Alert on prolonged high stress regardless of current level
+            if high_stress_min >= self.health_thresholds["stress_high_minutes_warning"]:
+                return {
+                    "level": "warning",
+                    "message": f"Prolonged high stress today: {high_stress_min} minutes. Consider relaxation."
                 }
         
         return None

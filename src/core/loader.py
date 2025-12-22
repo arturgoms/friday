@@ -153,14 +153,19 @@ def load_extensions(base_path: Path | None = None) -> dict:
     """
     logger.info("Loading Friday extensions...")
     
-    tools = load_tools(base_path)
-    sensors = load_sensors(base_path)
+    tool_modules = load_tools(base_path)
+    sensor_modules = load_sensors(base_path)
     
-    logger.info(f"Loaded {len(tools)} tool modules and {len(sensors)} sensor modules")
+    # Get actual counts from registries
+    from .registry import get_tool_registry, get_sensor_registry
+    tool_count = len(get_tool_registry())
+    sensor_count = len(get_sensor_registry())
+    
+    logger.info(f"Loaded {tool_count} tools from {len(tool_modules)} modules, {sensor_count} sensors from {len(sensor_modules)} modules")
     
     return {
-        "tools": tools,
-        "sensors": sensors
+        "tools": tool_modules,
+        "sensors": sensor_modules
     }
 
 

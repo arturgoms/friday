@@ -14,6 +14,7 @@ Usage:
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
 from .config import get_config
@@ -23,42 +24,30 @@ from .registry import execute_tool, get_all_tool_schemas, get_tool_schemas_text
 
 logger = logging.getLogger(__name__)
 
+# Brazil timezone (UTC-3)
+BRT = timezone(timedelta(hours=-3))
+
 
 # =============================================================================
 # System Prompts
 # =============================================================================
 
-SYSTEM_PROMPT_TEMPLATE = """You are Friday, an autonomous AI assistant running on an Ubuntu server.
+SYSTEM_PROMPT_TEMPLATE = """You are Friday, an AI assistant on an Ubuntu server.
 
 {user_context}
 
-## Capabilities
-
-### MODE 1: DETERMINISTIC TOOLS
-You have access to the following functions:
+## Tools (USE THESE FIRST)
 {tool_schemas}
 
-If the user request matches a tool exactly, output a JSON object:
-{{"tool": "tool_name", "args": {{"arg1": "value1"}}}}
+To call a tool, output ONLY: {{"tool": "name", "args": {{...}}}}
 
-DO NOT hallucinate tools that don't exist.
+Examples:
+{{"tool": "get_friday_logs", "args": {{"service": "friday-core", "lines": 20}}}}
+{{"tool": "get_friday_status", "args": {{}}}}
+{{"tool": "get_memory_usage", "args": {{}}}}
 
-### MODE 2: CODE INTERPRETER
-You are running on an Ubuntu server with full Python and shell access.
-If the request requires data analysis, system administration, or complex operations:
-- Write Python code wrapped in ```python ... ``` blocks
-- You can import: os, sys, json, datetime, pathlib, subprocess, shutil, requests
-- Your code runs in a persistent session - variables persist across executions
-- Print results to stdout for me to see them
-
-### MODE 3: CHAT
-If no action is required, just reply conversationally.
-
-## Guidelines
-- Be concise and direct
-- For system tasks, prefer code over chat
-- Always verify before destructive operations
-- If unsure, ask for clarification
+## Code (ONLY if no tool exists)
+Write Python in ```python blocks.
 
 Current time: {current_time}
 """
@@ -162,8 +151,6 @@ class HybridAgent:
     
     def _build_system_prompt(self, user_id: str, user_input: str) -> str:
         """Build the system prompt with context and tool schemas."""
-        import datetime
-        
         # Get user context if available
         user_context = ""
         if self.context_builder:
@@ -178,7 +165,7 @@ class HybridAgent:
         return SYSTEM_PROMPT_TEMPLATE.format(
             user_context=user_context,
             tool_schemas=tool_schemas,
-            current_time=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            current_time=datetime.now(BRT).strftime("%Y-%m-%d %H:%M:%S")
         )
     
     def _build_messages(
@@ -287,28 +274,44 @@ class HybridAgent:
                 if response.has_tool_call():
                     mode = "tool"
                     for tc in response.tool_calls:
+                        logger.info(f"[AGENT] Calling tool: {tc.name} with args: {tc.arguments}")
                         result = await self._execute_tool_call(tc.name, tc.arguments)
                         tool_results.append(result)
-                        
-                        # Add tool result to messages
+                        logger.info(f"[AGENT] Tool {tc.name} returned: success={result.get('success')}")
+                    
+                    # For simple informational tools, just return the result directly
+                    # Don't let the LLM try to process it further
+                    if all(r.get("success", False) for r in tool_results):
+                        # Combine tool results into final text
+                        result_parts = []
+                        for r in tool_results:
+                            result_parts.append(r.get("result", ""))
+                        final_text = "\n".join(result_parts)
+                        logger.info(f"[AGENT] All tools succeeded, returning results directly")
+                        break
+                    else:
+                        # If there were errors, let LLM know
+                        logger.warning(f"[AGENT] Some tools failed, letting LLM retry")
                         messages.append({
                             "role": "assistant",
                             "content": response.text or f"Calling tool: {tc.name}"
                         })
                         messages.append({
                             "role": "user",
-                            "content": f"Tool result: {json.dumps(result)}"
+                            "content": f"Tool result: {json.dumps(tool_results)}"
                         })
-                    
-                    continue  # Continue loop to let LLM process results
+                        continue
                 
                 # Check for code blocks
                 elif response.has_code():
                     mode = "code"
                     for block in response.code_blocks:
                         if block.language.lower() in ("python", "py", ""):
+                            code_preview = block.code[:100].replace('\n', ' ')
+                            logger.info(f"[AGENT] Executing code: {code_preview}...")
                             result = await self._execute_code(block.code, session_id)
                             code_results.append(result)
+                            logger.info(f"[AGENT] Code execution: success={result.success}")
                             
                             # Add code result to messages
                             messages.append({
@@ -320,22 +323,32 @@ class HybridAgent:
                                 "content": f"Code execution result:\n{result.to_llm_context()}"
                             })
                     
-                    # Check if all code executed successfully
-                    if all(r.success for r in code_results):
-                        # Continue to let LLM synthesize final response
-                        continue
-                    else:
-                        # If there were errors, let LLM try to fix
-                        continue
+                    # If this is the last iteration, synthesize a response from results
+                    if iterations >= self.max_iterations - 1:
+                        # Build final response from code results
+                        output_parts = []
+                        for r in code_results:
+                            if r.stdout:
+                                output_parts.append(r.stdout)
+                            elif r.return_value is not None:
+                                output_parts.append(str(r.return_value))
+                            elif r.exception:
+                                output_parts.append(f"Error: {r.exception}")
+                        final_text = "\n".join(output_parts) if output_parts else "Code executed successfully."
+                        break
+                    
+                    # Continue to let LLM process results (success or error)
+                    continue
                 
                 # Pure chat response
                 else:
                     mode = "chat" if not tool_results and not code_results else mode
                     final_text = response.text
+                    logger.info(f"[AGENT] Chat response, ending loop")
                     break
                     
             except Exception as e:
-                logger.error(f"Agent error in iteration {iterations}: {e}")
+                logger.error(f"[AGENT] Error in iteration {iterations}: {e}", exc_info=True)
                 return AgentResponse(
                     text=f"I encountered an error: {str(e)}",
                     mode="error",

@@ -5,9 +5,16 @@ Example tools for system administration.
 """
 
 import shutil
-from datetime import datetime
+import subprocess
+from datetime import datetime, timezone, timedelta
 
 from src.core.registry import friday_tool
+
+# Friday service names
+FRIDAY_SERVICES = ["friday-vllm", "friday-core", "friday-awareness", "friday-telegram"]
+
+# Brazil timezone (UTC-3)
+BRT = timezone(timedelta(hours=-3))
 
 
 @friday_tool(name="get_disk_usage")
@@ -41,7 +48,7 @@ def get_disk_usage(path: str = "/") -> str:
 
 @friday_tool(name="get_current_time")
 def get_current_time(format: str = "%Y-%m-%d %H:%M:%S") -> str:
-    """Get the current date and time.
+    """Get the current date and time in local timezone (UTC-3).
     
     Args:
         format: strftime format string
@@ -49,7 +56,7 @@ def get_current_time(format: str = "%Y-%m-%d %H:%M:%S") -> str:
     Returns:
         Formatted current time string
     """
-    return datetime.now().strftime(format)
+    return datetime.now(BRT).strftime(format)
 
 
 @friday_tool(name="get_system_info")
@@ -135,3 +142,98 @@ def get_memory_usage() -> str:
         )
     except Exception as e:
         return f"Error getting memory usage: {e}"
+
+
+@friday_tool(name="get_friday_logs")
+def get_friday_logs(service: str = "all", lines: int = 50) -> str:
+    """Get Friday service logs from journalctl.
+    
+    Args:
+        service: Service name (friday-core, friday-vllm, friday-awareness, friday-telegram, or 'all')
+        lines: Number of log lines to return (default: 50, max: 200)
+    
+    Returns:
+        Recent log entries from the specified service(s)
+    """
+    try:
+        # Cap lines at 200 to avoid huge outputs
+        lines = min(lines, 200)
+        
+        # Build journalctl command
+        cmd = ["journalctl", "--user", "-n", str(lines), "--no-pager"]
+        
+        if service == "all":
+            # Add all Friday services
+            for svc in FRIDAY_SERVICES:
+                cmd.extend(["-u", svc])
+        elif service in FRIDAY_SERVICES:
+            cmd.extend(["-u", service])
+        else:
+            return f"Unknown service: {service}. Valid options: {', '.join(FRIDAY_SERVICES)} or 'all'"
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        
+        if result.returncode != 0:
+            return f"Error getting logs: {result.stderr}"
+        
+        return result.stdout if result.stdout else "No logs found."
+        
+    except subprocess.TimeoutExpired:
+        return "Error: Log retrieval timed out"
+    except Exception as e:
+        return f"Error getting logs: {e}"
+
+
+@friday_tool(name="get_friday_status")
+def get_friday_status() -> str:
+    """Get status of all Friday services.
+    
+    Returns:
+        Status information for all Friday services including state, PID, and memory usage
+    """
+    try:
+        status_lines = ["Friday Service Status:", "=" * 50]
+        
+        for service in FRIDAY_SERVICES:
+            result = subprocess.run(
+                ["systemctl", "--user", "show", service, 
+                 "--property=ActiveState,SubState,MainPID,MemoryCurrent"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            
+            status = {}
+            for line in result.stdout.strip().split("\n"):
+                if "=" in line:
+                    key, value = line.split("=", 1)
+                    status[key] = value
+            
+            state = status.get("ActiveState", "unknown")
+            substate = status.get("SubState", "unknown")
+            pid = status.get("MainPID", "0")
+            memory = status.get("MemoryCurrent", "0")
+            
+            # Format memory
+            try:
+                mem_bytes = int(memory)
+                if mem_bytes > 1024 * 1024 * 1024:
+                    mem_str = f"{mem_bytes / (1024**3):.1f} GB"
+                elif mem_bytes > 1024 * 1024:
+                    mem_str = f"{mem_bytes / (1024**2):.1f} MB"
+                else:
+                    mem_str = f"{mem_bytes / 1024:.1f} KB"
+            except (ValueError, TypeError):
+                mem_str = "N/A"
+            
+            pid_str = pid if pid != "0" else "N/A"
+            
+            status_lines.append(f"\n{service}:")
+            status_lines.append(f"  State: {state} ({substate})")
+            status_lines.append(f"  PID: {pid_str}")
+            status_lines.append(f"  Memory: {mem_str}")
+        
+        return "\n".join(status_lines)
+        
+    except Exception as e:
+        return f"Error getting status: {e}"
