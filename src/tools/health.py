@@ -491,7 +491,8 @@ def get_stress_levels(days: int = 7) -> str:
     Returns:
         Stress level analysis
     """
-    query = f"SELECT stressAvg, stressHigh, stressMedium, stressLow, restStress FROM DailyStats ORDER BY time DESC LIMIT {days}"
+    # Get daily stress durations
+    query = f"SELECT highStressDuration, mediumStressDuration, lowStressDuration, restStressDuration FROM DailyStats ORDER BY time DESC LIMIT {days}"
     points = _query(query)
     
     if not points:
@@ -499,23 +500,44 @@ def get_stress_levels(days: int = 7) -> str:
     
     lines = [f"Stress Analysis (Last {days} Days):", "=" * 40]
     
-    stress_values = []
+    stress_avgs = []
     for p in points:
         date = p.get("time", "").split("T")[0]
-        avg = int(p.get("stressAvg", 0) or 0)
-        stress_values.append(avg)
         
-        high_min = int((p.get("stressHigh", 0) or 0) / 60)
-        rest_min = int((p.get("restStress", 0) or 0) / 60)
+        # Get durations in seconds
+        high_sec = p.get("highStressDuration", 0) or 0
+        med_sec = p.get("mediumStressDuration", 0) or 0
+        low_sec = p.get("lowStressDuration", 0) or 0
+        rest_sec = p.get("restStressDuration", 0) or 0
+        
+        # Convert to minutes
+        high_min = int(high_sec / 60)
+        rest_min = int(rest_sec / 60)
+        
+        # Calculate weighted average stress
+        total_sec = high_sec + med_sec + low_sec + rest_sec
+        if total_sec > 0:
+            # Approximate stress values: high=70, med=45, low=25, rest=10
+            avg = round((high_sec * 70 + med_sec * 45 + low_sec * 25 + rest_sec * 10) / total_sec)
+        else:
+            avg = 0
+        stress_avgs.append(avg)
         
         lines.append(f"\n{date}: Avg {avg}")
         lines.append(f"  High stress: {high_min}m | Rest: {rest_min}m")
     
-    if stress_values:
-        overall = sum(stress_values) / len(stress_values)
-        level = "low 😊" if overall < 30 else "moderate 😐" if overall < 50 else "high 😰"
+    if stress_avgs:
+        overall = sum(stress_avgs) / len(stress_avgs)
+        level = "low" if overall < 30 else "moderate" if overall < 50 else "high"
         lines.append(f"\n{'=' * 40}")
         lines.append(f"Overall: {level} (avg: {round(overall, 0)})")
+    
+    # Get current stress from intraday
+    current_query = "SELECT stressLevel FROM StressIntraday ORDER BY time DESC LIMIT 1"
+    current_points = _query(current_query)
+    if current_points:
+        current = current_points[0].get("stressLevel", 0)
+        lines.append(f"Current stress: {current}/100")
     
     return "\n".join(lines)
 
