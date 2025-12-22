@@ -23,7 +23,7 @@ import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -37,6 +37,10 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# Brazil timezone (UTC-3)
+from datetime import timezone
+BRT = timezone(timedelta(hours=-3))
 
 
 # =============================================================================
@@ -239,6 +243,158 @@ class CooldownManager:
             self._cooldowns.clear()
             self._last_values.clear()
         self._save_cooldowns()
+
+
+# =============================================================================
+# Schedule Runner
+# =============================================================================
+
+class ScheduleRunner:
+    """Runs tools at scheduled times (e.g., morning/evening reports).
+    
+    Reads schedules from config/schedules.json and executes tools at specified times.
+    """
+    
+    def __init__(self, schedules_file: Optional[Path] = None, state_file: Optional[Path] = None):
+        """Initialize schedule runner.
+        
+        Args:
+            schedules_file: Path to schedules.json config
+            state_file: Path to persist last run times
+        """
+        self.schedules_file = schedules_file or Path(__file__).parent.parent / "config" / "schedules.json"
+        self.state_file = state_file or Path(__file__).parent.parent / "data" / "schedule_state.json"
+        self._schedules = []
+        self._last_runs: Dict[str, str] = {}  # {schedule_name: "YYYY-MM-DD"}
+        self._load_schedules()
+        self._load_state()
+    
+    def _load_schedules(self):
+        """Load schedules from config file."""
+        if self.schedules_file.exists():
+            try:
+                data = json.loads(self.schedules_file.read_text())
+                self._schedules = data.get("schedules", [])
+                logger.info(f"Loaded {len(self._schedules)} schedules")
+            except Exception as e:
+                logger.error(f"Failed to load schedules: {e}")
+    
+    def _load_state(self):
+        """Load last run state from file."""
+        if self.state_file.exists():
+            try:
+                self._last_runs = json.loads(self.state_file.read_text())
+            except Exception as e:
+                logger.warning(f"Failed to load schedule state: {e}")
+    
+    def _save_state(self):
+        """Save last run state to file."""
+        try:
+            self.state_file.write_text(json.dumps(self._last_runs, indent=2))
+        except Exception as e:
+            logger.warning(f"Failed to save schedule state: {e}")
+    
+    def _parse_time(self, time_str: str) -> tuple:
+        """Parse time string (HH:MM) to (hour, minute)."""
+        parts = time_str.split(":")
+        return int(parts[0]), int(parts[1])
+    
+    def _should_run(self, schedule: dict) -> bool:
+        """Check if a schedule should run now.
+        
+        Returns True if:
+        - Schedule is enabled
+        - Current time has passed the scheduled time
+        - Haven't run today yet
+        """
+        if not schedule.get("enabled", True):
+            return False
+        
+        name = schedule.get("name", "")
+        time_str = schedule.get("time", "")
+        
+        if not time_str:
+            return False
+        
+        now = datetime.now(BRT)
+        today_str = now.strftime("%Y-%m-%d")
+        
+        # Check if already ran today
+        last_run_date = self._last_runs.get(name, "")
+        if last_run_date == today_str:
+            return False
+        
+        # Check if we've passed the scheduled time
+        sched_hour, sched_min = self._parse_time(time_str)
+        
+        # If current time is past scheduled time, run it
+        if now.hour > sched_hour or (now.hour == sched_hour and now.minute >= sched_min):
+            return True
+        
+        return False
+    
+    async def run_schedule(self, schedule: dict) -> Optional[str]:
+        """Execute a scheduled task.
+        
+        Args:
+            schedule: Schedule config dict
+            
+        Returns:
+            Tool output if successful, None otherwise
+        """
+        name = schedule.get("name", "unknown")
+        tool_name = schedule.get("tool", "")
+        
+        if not tool_name:
+            logger.error(f"Schedule {name} has no tool defined")
+            return None
+        
+        logger.info(f"Running scheduled task: {name} (tool: {tool_name})")
+        
+        try:
+            # Import and get the tool from registry
+            from src.core.registry import get_tool_registry
+            from src.core.loader import load_extensions
+            
+            # Ensure extensions are loaded
+            load_extensions()
+            
+            registry = get_tool_registry()
+            tool_entry = registry.get(tool_name)
+            
+            if not tool_entry:
+                logger.error(f"Tool not found: {tool_name}")
+                return None
+            
+            # Execute the tool
+            result = tool_entry.func()
+            
+            # Mark as run
+            today_str = datetime.now(BRT).strftime("%Y-%m-%d")
+            self._last_runs[name] = today_str
+            self._save_state()
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error running scheduled task {name}: {e}")
+            return None
+    
+    async def check_and_run(self) -> List[tuple]:
+        """Check all schedules and run any that are due.
+        
+        Returns:
+            List of (schedule_name, result) tuples for schedules that ran
+        """
+        results = []
+        
+        for schedule in self._schedules:
+            if self._should_run(schedule):
+                result = await self.run_schedule(schedule)
+                if result:
+                    results.append((schedule.get("name", ""), result))
+        
+        return results
 
 
 # =============================================================================
@@ -822,6 +978,9 @@ class AwarenessDaemon:
         
         self.runner = SensorRunner(self.cooldown_manager, self.evaluator)
         
+        # Initialize schedule runner
+        self.scheduler = ScheduleRunner()
+        
         # Setup signal handlers
         self._setup_signals()
     
@@ -848,11 +1007,45 @@ class AwarenessDaemon:
             logger.warning(f"Could not connect to friday-core: {e}")
             logger.warning("Continuing anyway - alerts may fail to send")
         
-        # Start sensor loop
+        # Start combined loop (sensors + schedules)
         check_interval = self.config.sensors.check_interval_default / 10  # Check more frequently than min interval
         check_interval = max(5.0, min(check_interval, 30.0))  # Clamp between 5-30 seconds
         
-        await self.runner.loop(interval=check_interval)
+        await self._main_loop(interval=check_interval)
+    
+    async def _main_loop(self, interval: float = 10.0):
+        """Main loop that runs sensors and checks schedules.
+        
+        Args:
+            interval: How often to check sensors (seconds)
+        """
+        self.runner._running = True
+        logger.info("Awareness daemon started (sensors + schedules)")
+        
+        while self.runner._running:
+            try:
+                # Run sensors
+                await self.runner.run_all()
+                
+                # Check and run schedules
+                scheduled_results = await self.scheduler.check_and_run()
+                
+                for schedule_name, result in scheduled_results:
+                    # Send scheduled report via alert endpoint
+                    await send_alert(
+                        sensor=f"scheduled_{schedule_name}",
+                        message=result,
+                        level="info",
+                        data={"schedule": schedule_name}
+                    )
+                    logger.info(f"Sent scheduled report: {schedule_name}")
+                    
+            except Exception as e:
+                logger.error(f"Error in main loop: {e}")
+            
+            await asyncio.sleep(interval)
+        
+        logger.info("Awareness daemon stopped")
 
 
 def main():
