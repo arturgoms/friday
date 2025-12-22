@@ -326,7 +326,8 @@ def run(query: str = typer.Argument(..., help="Query to send to Friday")):
         query = f"{query}\n\nContext:\n{piped_data}"
     
     try:
-        response = asyncio.run(api_request("POST", "/chat", {"text": query}))
+        # Use fresh=True to clear conversation history for single queries
+        response = asyncio.run(api_request("POST", "/chat", {"text": query, "fresh": True}))
         print(response.get("text", ""))
     except httpx.ConnectError:
         console.print("[red]Error: Cannot connect to Friday. Is the service running?[/red]")

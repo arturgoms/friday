@@ -59,7 +59,24 @@ API_CONFIG = get_api_config()
 # =============================================================================
 
 class CooldownManager:
-    """Manages alert cooldowns to prevent spam."""
+    """Manages alert cooldowns to prevent spam.
+    
+    Features:
+    - Basic cooldown: Don't repeat the same alert within X minutes
+    - Escalating cooldown: For persistent conditions, increase cooldown each time
+    - Daily limits: Max alerts per sensor per day
+    - State tracking: Only re-alert if condition changes (gets worse)
+    """
+    
+    # Default cooldowns by alert level
+    DEFAULT_COOLDOWNS = {
+        "info": 60,       # 1 hour
+        "warning": 120,   # 2 hours (was 30 min - too spammy)
+        "critical": 30,   # 30 minutes (critical can repeat more often)
+    }
+    
+    # Max alerts per sensor per day
+    DAILY_LIMIT = 3
     
     def __init__(self, cooldown_file: Optional[Path] = None):
         """Initialize cooldown manager.
@@ -69,6 +86,8 @@ class CooldownManager:
         """
         self.cooldown_file = cooldown_file
         self._cooldowns: Dict[str, datetime] = {}
+        self._alert_counts: Dict[str, Dict[str, int]] = {}  # {date: {sensor: count}}
+        self._last_values: Dict[str, Any] = {}  # Track last alert values
         self._load_cooldowns()
     
     def _load_cooldowns(self):
@@ -78,8 +97,11 @@ class CooldownManager:
                 data = json.loads(self.cooldown_file.read_text())
                 self._cooldowns = {
                     k: datetime.fromisoformat(v) 
-                    for k, v in data.items()
+                    for k, v in data.get("cooldowns", data).items()  # Backward compat
+                    if isinstance(v, str)
                 }
+                self._alert_counts = data.get("daily_counts", {})
+                self._last_values = data.get("last_values", {})
             except Exception as e:
                 logger.warning(f"Failed to load cooldowns: {e}")
     
@@ -87,38 +109,121 @@ class CooldownManager:
         """Save cooldowns to file."""
         if self.cooldown_file:
             try:
-                data = {k: v.isoformat() for k, v in self._cooldowns.items()}
+                data = {
+                    "cooldowns": {k: v.isoformat() for k, v in self._cooldowns.items()},
+                    "daily_counts": self._alert_counts,
+                    "last_values": self._last_values,
+                }
                 self.cooldown_file.write_text(json.dumps(data, indent=2))
             except Exception as e:
                 logger.warning(f"Failed to save cooldowns: {e}")
     
-    def can_alert(self, key: str, cooldown_minutes: int = 30) -> bool:
-        """Check if an alert can be sent (not in cooldown).
+    def _get_today(self) -> str:
+        """Get today's date as string."""
+        return datetime.now().strftime("%Y-%m-%d")
+    
+    def _get_daily_count(self, sensor: str) -> int:
+        """Get today's alert count for a sensor."""
+        today = self._get_today()
+        if today not in self._alert_counts:
+            self._alert_counts[today] = {}
+            # Clean up old dates
+            old_dates = [d for d in self._alert_counts if d < today]
+            for d in old_dates:
+                del self._alert_counts[d]
+        return self._alert_counts.get(today, {}).get(sensor, 0)
+    
+    def _increment_daily_count(self, sensor: str):
+        """Increment today's alert count for a sensor."""
+        today = self._get_today()
+        if today not in self._alert_counts:
+            self._alert_counts[today] = {}
+        self._alert_counts[today][sensor] = self._alert_counts[today].get(sensor, 0) + 1
+    
+    def can_alert(self, key: str, cooldown_minutes: int = 30, sensor: str = None, level: str = "warning") -> bool:
+        """Check if an alert can be sent (not in cooldown, under daily limit).
         
         Args:
             key: Unique key for this alert type (e.g., "disk_usage_critical")
-            cooldown_minutes: Minimum minutes between alerts
+            cooldown_minutes: Minimum minutes between alerts (overridden by defaults)
+            sensor: Sensor name for daily limit tracking
+            level: Alert level for default cooldown lookup
             
         Returns:
-            True if alert can be sent, False if in cooldown
+            True if alert can be sent, False if blocked
         """
         now = datetime.now()
         
+        # Check cooldown
         if key in self._cooldowns:
             cooldown_until = self._cooldowns[key]
             if now < cooldown_until:
                 return False
         
+        # Check daily limit
+        if sensor:
+            daily_count = self._get_daily_count(sensor)
+            if daily_count >= self.DAILY_LIMIT:
+                logger.debug(f"Daily limit reached for {sensor} ({daily_count}/{self.DAILY_LIMIT})")
+                return False
+        
         return True
     
-    def mark_alerted(self, key: str, cooldown_minutes: int = 30):
+    def should_alert_on_change(self, sensor: str, current_value: Any, threshold_key: str = None) -> bool:
+        """Check if we should alert based on value change.
+        
+        Only alerts if:
+        - First time seeing this sensor
+        - Value has gotten worse (higher stress, lower battery, etc.)
+        
+        Args:
+            sensor: Sensor name
+            current_value: Current metric value
+            threshold_key: Optional key for the specific threshold being checked
+            
+        Returns:
+            True if alert should fire based on change
+        """
+        key = f"{sensor}_{threshold_key}" if threshold_key else sensor
+        last_value = self._last_values.get(key)
+        
+        if last_value is None:
+            return True  # First time, allow alert
+        
+        # For numeric values, check if it got worse
+        if isinstance(current_value, (int, float)) and isinstance(last_value, (int, float)):
+            # Define "worse" direction per sensor type
+            worse_is_higher = sensor in ("stress_level", "disk_usage", "memory_usage", "cpu_load", "gpu_temperature")
+            
+            if worse_is_higher:
+                return current_value > last_value  # Alert if higher
+            else:
+                return current_value < last_value  # Alert if lower (battery, sleep score, etc.)
+        
+        return True  # Non-numeric, allow
+    
+    def mark_alerted(self, key: str, cooldown_minutes: int = None, sensor: str = None, level: str = "warning", value: Any = None):
         """Mark that an alert was sent.
         
         Args:
             key: Unique key for this alert type
-            cooldown_minutes: Minutes until next alert allowed
+            cooldown_minutes: Minutes until next alert allowed (None = use default)
+            sensor: Sensor name for daily limit tracking
+            level: Alert level for default cooldown
+            value: The value that triggered this alert (for change tracking)
         """
+        # Use default cooldown based on level if not specified
+        if cooldown_minutes is None:
+            cooldown_minutes = self.DEFAULT_COOLDOWNS.get(level, 120)
+        
         self._cooldowns[key] = datetime.now() + timedelta(minutes=cooldown_minutes)
+        
+        if sensor:
+            self._increment_daily_count(sensor)
+        
+        if value is not None:
+            self._last_values[key] = value
+        
         self._save_cooldowns()
     
     def clear(self, key: Optional[str] = None):
@@ -129,8 +234,10 @@ class CooldownManager:
         """
         if key:
             self._cooldowns.pop(key, None)
+            self._last_values.pop(key, None)
         else:
             self._cooldowns.clear()
+            self._last_values.clear()
         self._save_cooldowns()
 
 
@@ -380,6 +487,25 @@ class ThresholdEvaluator:
                     "message": f"Prolonged high stress today: {high_stress_min} minutes. Consider relaxation."
                 }
         
+        # =====================================================================
+        # Weather Sensors
+        # =====================================================================
+        
+        elif sensor_name == "weather_forecast":
+            rain_expected = data.get("rain_expected", False)
+            rain_prob = data.get("rain_probability", 0)
+            rain_time = data.get("rain_time", "")
+            rain_desc = data.get("rain_description", "rain")
+            city = data.get("city", "your area")
+            
+            # Alert if rain is expected with >20% probability
+            if rain_expected and rain_prob > 0.2:
+                prob_pct = int(rain_prob * 100)
+                return {
+                    "level": "warning",  # Use warning so it gets sent to Telegram
+                    "message": f"🌧️ Rain expected in {city} around {rain_time} ({prob_pct}% chance - {rain_desc}). Consider taking an umbrella!"
+                }
+        
         return None
 
 
@@ -438,27 +564,66 @@ class SensorRunner:
             alert = self.evaluator.evaluate(sensor.name, data)
             
             if alert:
-                # Check cooldown
-                cooldown_key = f"{sensor.name}_{alert['level']}"
-                cooldown_minutes = 30 if alert["level"] == "warning" else 15
+                level = alert["level"]
+                cooldown_key = f"{sensor.name}_{level}"
                 
-                if self.cooldown_manager.can_alert(cooldown_key, cooldown_minutes):
+                # Get the primary metric value for change tracking
+                alert_value = self._get_primary_value(sensor.name, data)
+                
+                # Check if we should alert (cooldown + daily limit + value change)
+                can_alert = self.cooldown_manager.can_alert(
+                    cooldown_key, 
+                    sensor=sensor.name, 
+                    level=level
+                )
+                
+                # For persistent conditions (like stress), also check if value changed
+                is_persistent_sensor = sensor.name in ("stress_level", "body_battery", "recovery_status")
+                if can_alert and is_persistent_sensor:
+                    can_alert = self.cooldown_manager.should_alert_on_change(
+                        sensor.name, alert_value, level
+                    )
+                    if not can_alert:
+                        logger.debug(f"Alert {cooldown_key} skipped - condition unchanged")
+                
+                if can_alert:
                     # Send alert
                     await send_alert(
                         sensor=sensor.name,
                         message=alert["message"],
-                        level=alert["level"],
+                        level=level,
                         data=data
                     )
-                    self.cooldown_manager.mark_alerted(cooldown_key, cooldown_minutes)
+                    self.cooldown_manager.mark_alerted(
+                        cooldown_key, 
+                        sensor=sensor.name, 
+                        level=level,
+                        value=alert_value
+                    )
                 else:
-                    logger.debug(f"Alert {cooldown_key} in cooldown, skipping")
+                    logger.debug(f"Alert {cooldown_key} blocked by cooldown/limit")
             
             return data
             
         except Exception as e:
             logger.error(f"Error running sensor {sensor.name}: {e}")
             return {"error": str(e)}
+    
+    def _get_primary_value(self, sensor_name: str, data: Dict[str, Any]) -> Any:
+        """Extract the primary metric value from sensor data for change tracking."""
+        value_keys = {
+            "stress_level": "current_stress",
+            "body_battery": "body_battery",
+            "sleep_quality": "sleep_score",
+            "training_readiness": "score",
+            "recovery_status": "hrv_deviation_percent",
+            "disk_usage": "percent_used",
+            "memory_usage": "percent_used",
+            "cpu_load": "load_5min",
+            "gpu_temperature": "temperature_celsius",
+        }
+        key = value_keys.get(sensor_name)
+        return data.get(key) if key else None
     
     async def run_all(self):
         """Run all enabled sensors that are due."""

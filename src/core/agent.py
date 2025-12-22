@@ -36,18 +36,31 @@ SYSTEM_PROMPT_TEMPLATE = """You are Friday, an AI assistant on an Ubuntu server.
 
 {user_context}
 
-## Tools (USE THESE FIRST)
+## YOUR TOOLS
 {tool_schemas}
 
-To call a tool, output ONLY: {{"tool": "name", "args": {{...}}}}
+## HOW TO USE TOOLS
+When you need to perform an action (create/read/write/rename/delete notes, check system status, etc.), you MUST output ONLY this JSON format:
+{{"tool": "tool_name", "args": {{"param": "value"}}}}
 
-Examples:
-{{"tool": "get_friday_logs", "args": {{"service": "friday-core", "lines": 20}}}}
-{{"tool": "get_friday_status", "args": {{}}}}
-{{"tool": "get_memory_usage", "args": {{}}}}
+IMPORTANT: Output ONLY the JSON. No other text before or after. No markdown. No explanation.
 
-## Code (ONLY if no tool exists)
-Write Python in ```python blocks.
+## EXAMPLES
+To create a note:
+{{"tool": "vault_write_note", "args": {{"path": "2. Time/2.3 Meetings/Meeting Name.md", "content": "# Title\\n\\nContent here", "frontmatter": {{"tags": ["time/meeting", "area/work"], "date": "2025-12-22"}}}}}}
+
+To search for a note:
+{{"tool": "vault_search_notes", "args": {{"query": "meeting"}}}}
+
+To read a note:
+{{"tool": "vault_read_note", "args": {{"path": "folder/note.md"}}}}
+
+## CRITICAL RULES
+1. When user asks you to CREATE, SAVE, WRITE, or MAKE something - you MUST call a tool. Do NOT just describe what you would do.
+2. NEVER say "I have created" or "The note has been created" unless you actually output a tool call JSON and it succeeded.
+3. If you're having a conversation and building up content, when the user says to save/create it, OUTPUT THE TOOL CALL.
+4. For vault operations, search first to find exact paths. Never guess paths.
+5. If missing required info, ask the user.
 
 Current time: {current_time}
 """
@@ -263,44 +276,52 @@ class HybridAgent:
             iterations += 1
             
             try:
-                # Get LLM response
+                # Get LLM response (always include tools for multi-step workflows)
                 response = await self.llm.generate(
                     prompt="",  # Not used when messages provided
                     messages=messages,
-                    tools=get_all_tool_schemas() if iterations == 1 else None
+                    tools=get_all_tool_schemas()
                 )
                 
                 # Check for tool calls
                 if response.has_tool_call():
                     mode = "tool"
+                    current_results = []
+                    tool_names = []
                     for tc in response.tool_calls:
                         logger.info(f"[AGENT] Calling tool: {tc.name} with args: {tc.arguments}")
                         result = await self._execute_tool_call(tc.name, tc.arguments)
+                        current_results.append(result)
                         tool_results.append(result)
+                        tool_names.append(tc.name)
                         logger.info(f"[AGENT] Tool {tc.name} returned: success={result.get('success')}")
                     
-                    # For simple informational tools, just return the result directly
-                    # Don't let the LLM try to process it further
-                    if all(r.get("success", False) for r in tool_results):
-                        # Combine tool results into final text
-                        result_parts = []
-                        for r in tool_results:
-                            result_parts.append(r.get("result", ""))
-                        final_text = "\n".join(result_parts)
-                        logger.info(f"[AGENT] All tools succeeded, returning results directly")
+                    result_text = "\n".join(r.get("result", "") for r in current_results)
+                    
+                    # Check if user wants raw content (read/show/display requests with read tools)
+                    user_wants_raw = any(word in user_input.lower() for word in 
+                        ["show", "display", "content", "read", "raw", "full text", "entire"])
+                    last_tool_is_read = any(name in ["vault_read_note", "get_friday_logs"] 
+                        for name in tool_names)
+                    
+                    # If user wants raw content and we just read something, return directly
+                    if user_wants_raw and last_tool_is_read and all(r.get("success") for r in current_results):
+                        logger.info(f"[AGENT] User wants raw content, returning tool output directly")
+                        final_text = result_text
                         break
-                    else:
-                        # If there were errors, let LLM know
-                        logger.warning(f"[AGENT] Some tools failed, letting LLM retry")
-                        messages.append({
-                            "role": "assistant",
-                            "content": response.text or f"Calling tool: {tc.name}"
-                        })
-                        messages.append({
-                            "role": "user",
-                            "content": f"Tool result: {json.dumps(tool_results)}"
-                        })
-                        continue
+                    
+                    # Otherwise, feed results back to LLM for processing
+                    messages.append({
+                        "role": "assistant",
+                        "content": response.text or f"Called tool: {', '.join(tool_names)}"
+                    })
+                    messages.append({
+                        "role": "user", 
+                        "content": f"Tool result:\n{result_text}\n\nBased on this result, either call another tool if needed, or provide your final response to the user."
+                    })
+                    
+                    logger.info(f"[AGENT] Tool results fed back to LLM (iteration {iterations})")
+                    continue
                 
                 # Check for code blocks
                 elif response.has_code():

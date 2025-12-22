@@ -4,6 +4,10 @@ Friday 3.0 Telegram Bot
 A lightweight Telegram interface for Friday. This bot is intentionally "dumb" -
 it has no AI logic, just forwards messages to the friday-core API and renders responses.
 
+Supports:
+- Text messages
+- Voice messages (transcribed via Whisper service)
+
 Usage:
     python -m src.telegram_bot
 
@@ -11,6 +15,7 @@ Environment Variables:
     TELEGRAM_BOT_TOKEN: Telegram bot token from @BotFather
     TELEGRAM_ALLOWED_USERS: Comma-separated list of allowed user IDs (optional)
     FRIDAY_API_URL: URL of friday-core API (default: http://localhost:8080)
+    WHISPER_SERVICE_URL: URL of Whisper transcription service (optional)
 """
 
 import asyncio
@@ -66,6 +71,7 @@ def get_config():
         "api_url": os.getenv("FRIDAY_API_URL", "http://localhost:8080"),
         "api_key": os.getenv("FRIDAY_API_KEY", ""),
         "allowed_users": allowed_users,
+        "whisper_url": os.getenv("WHISPER_SERVICE_URL", ""),
     }
 
 
@@ -149,9 +155,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("Sorry, you're not authorized to use this bot.")
         return
     
+    voice_info = ""
+    if CONFIG["whisper_url"]:
+        voice_info = "You can also send voice messages!\n\n"
+    
     await update.message.reply_text(
         f"Hello {user.first_name}! I'm Friday, your AI assistant.\n\n"
-        "Just send me a message and I'll help you out.\n\n"
+        f"Just send me a message and I'll help you out. {voice_info}"
         "Commands:\n"
         "/start - Show this message\n"
         "/status - Check system status\n"
@@ -214,7 +224,57 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 # =============================================================================
-# Message Handler
+# Voice Transcription
+# =============================================================================
+
+async def transcribe_voice(audio_bytes: bytes) -> Optional[str]:
+    """Transcribe audio using Whisper service.
+    
+    Args:
+        audio_bytes: Audio file bytes (OGG format from Telegram)
+        
+    Returns:
+        Transcribed text or None if failed
+    """
+    if not CONFIG["whisper_url"]:
+        logger.warning("Whisper service URL not configured")
+        return None
+    
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            # Send audio to Whisper service
+            # Most Whisper services accept multipart form data
+            files = {"file": ("voice.ogg", audio_bytes, "audio/ogg")}
+            
+            response = await client.post(
+                f"{CONFIG['whisper_url']}/transcribe",
+                files=files
+            )
+            response.raise_for_status()
+            
+            result = response.json()
+            
+            # Handle different response formats
+            if isinstance(result, dict):
+                text = result.get("text") or result.get("transcription") or result.get("result", "")
+            else:
+                text = str(result)
+            
+            return text.strip() if text else None
+            
+    except httpx.ConnectError:
+        logger.error(f"Cannot connect to Whisper service at {CONFIG['whisper_url']}")
+        return None
+    except httpx.TimeoutException:
+        logger.error("Whisper service timeout")
+        return None
+    except Exception as e:
+        logger.error(f"Whisper transcription error: {e}")
+        return None
+
+
+# =============================================================================
+# Message Handlers
 # =============================================================================
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -232,6 +292,87 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     logger.info(f"Message from {user.id} ({user.username}): {text[:50]}...")
     
+    await process_user_input(message, context, text, user)
+
+
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle incoming voice messages and audio files."""
+    user = update.effective_user
+    message = update.message
+    
+    if not is_authorized(user.id):
+        await message.reply_text("Sorry, you're not authorized to use this bot.")
+        return
+    
+    # Handle both voice messages and audio files
+    voice = message.voice
+    audio = message.audio
+    
+    if not voice and not audio:
+        return
+    
+    # Get file info
+    if voice:
+        file_id = voice.file_id
+        duration = voice.duration
+        audio_type = "voice"
+    else:
+        file_id = audio.file_id
+        duration = audio.duration or 0
+        audio_type = "audio"
+    
+    logger.info(f"{audio_type.title()} message from {user.id} ({user.username}), duration: {duration}s")
+    
+    # Check if Whisper is configured
+    if not CONFIG["whisper_url"]:
+        await message.reply_text(
+            "Voice messages are not supported - Whisper service not configured."
+        )
+        return
+    
+    # Show typing indicator while processing
+    await context.bot.send_chat_action(chat_id=message.chat_id, action="typing")
+    
+    try:
+        # Download the audio file from Telegram
+        audio_file = await context.bot.get_file(file_id)
+        audio_bytes = await audio_file.download_as_bytearray()
+        
+        logger.info(f"Downloaded {audio_type} file: {len(audio_bytes)} bytes")
+        
+        # Transcribe the audio
+        transcribed_text = await transcribe_voice(bytes(audio_bytes))
+        
+        if not transcribed_text:
+            await message.reply_text(
+                "Sorry, I couldn't understand the audio. Please try again or send a text message."
+            )
+            return
+        
+        logger.info(f"Transcribed: {transcribed_text[:100]}...")
+        
+        # Show what was heard (helps user verify transcription)
+        await message.reply_text(f"🎤 I heard: \"{transcribed_text}\"")
+        
+        # Process the transcribed text as a regular message
+        await process_user_input(message, context, transcribed_text, user)
+        
+    except Exception as e:
+        logger.error(f"Error processing {audio_type} message: {e}")
+        await message.reply_text(
+            "Sorry, I had trouble processing your voice message. Please try again."
+        )
+
+
+async def process_user_input(message, context, text: str, user) -> None:
+    """Process user input (from text or transcribed voice) and send response.
+    
+    Args:
+        message: Telegram message object
+        context: Telegram context
+        text: User's input text
+        user: Telegram user object
+    """
     # Show typing indicator
     await context.bot.send_chat_action(chat_id=message.chat_id, action="typing")
     
@@ -300,6 +441,11 @@ def main():
     else:
         logger.info("No user restrictions configured")
     
+    if CONFIG["whisper_url"]:
+        logger.info(f"Whisper service: {CONFIG['whisper_url']}")
+    else:
+        logger.info("Voice messages disabled (no Whisper service configured)")
+    
     # Create application
     application = Application.builder().token(CONFIG["token"]).build()
     
@@ -308,6 +454,7 @@ def main():
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("clear", clear_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
     
     # Add error handler
     application.add_error_handler(error_handler)

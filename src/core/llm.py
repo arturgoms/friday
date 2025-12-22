@@ -123,37 +123,53 @@ class LLMClient:
             List of extracted tool calls
         """
         tool_calls = []
+        text = text.strip()
         
-        # Pattern 1: {"tool": "name", "args": {...}}
-        pattern = r'\{[^{}]*"tool"\s*:\s*"([^"]+)"[^{}]*"args"\s*:\s*(\{[^{}]*\})[^{}]*\}'
-        
-        for match in re.finditer(pattern, text, re.DOTALL):
+        # Method 1: Try parsing the entire text as JSON first (most reliable for clean output)
+        if text.startswith("{") and text.endswith("}"):
             try:
-                tool_name = match.group(1)
-                args_str = match.group(2)
-                args = json.loads(args_str)
-                tool_calls.append(ToolCall(
-                    name=tool_name,
-                    arguments=args,
-                    raw_json=match.group(0)
-                ))
+                obj = json.loads(text)
+                if "tool" in obj and "args" in obj:
+                    tool_calls.append(ToolCall(
+                        name=obj["tool"],
+                        arguments=obj.get("args", {}),
+                        raw_json=text
+                    ))
+                    return tool_calls
             except json.JSONDecodeError:
-                continue
+                pass
         
-        # Pattern 2: Full JSON object
-        if not tool_calls:
-            json_pattern = r'\{[^{}]*"tool"[^{}]+\}'
-            for match in re.finditer(json_pattern, text, re.DOTALL):
-                try:
-                    obj = json.loads(match.group(0))
-                    if "tool" in obj and "args" in obj:
-                        tool_calls.append(ToolCall(
-                            name=obj["tool"],
-                            arguments=obj.get("args", {}),
-                            raw_json=match.group(0)
-                        ))
-                except json.JSONDecodeError:
-                    continue
+        # Method 2: Find JSON objects that look like tool calls using balanced brace matching
+        i = 0
+        while i < len(text):
+            if text[i] == '{':
+                # Find matching closing brace
+                depth = 1
+                j = i + 1
+                while j < len(text) and depth > 0:
+                    if text[j] == '{':
+                        depth += 1
+                    elif text[j] == '}':
+                        depth -= 1
+                    j += 1
+                
+                if depth == 0:
+                    json_str = text[i:j]
+                    try:
+                        obj = json.loads(json_str)
+                        if isinstance(obj, dict) and "tool" in obj and "args" in obj:
+                            tool_calls.append(ToolCall(
+                                name=obj["tool"],
+                                arguments=obj.get("args", {}),
+                                raw_json=json_str
+                            ))
+                    except json.JSONDecodeError:
+                        pass
+                    i = j
+                else:
+                    i += 1
+            else:
+                i += 1
         
         return tool_calls
     

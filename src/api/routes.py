@@ -236,6 +236,7 @@ class ChatRequest(BaseModel):
     user_id: str = Field(default="default", description="User identifier")
     session_id: Optional[str] = Field(default=None, description="Session identifier")
     stream: bool = Field(default=False, description="Enable streaming response")
+    fresh: bool = Field(default=False, description="Clear conversation history before this message")
 
 
 class ChatResponse(BaseModel):
@@ -305,6 +306,12 @@ async def chat(request: ChatRequest, authorized: bool = Depends(verify_api_key))
         logger.info(f"[CHAT] Request from user={request.user_id}: {request.text[:100]}{'...' if len(request.text) > 100 else ''}")
         
         agent = get_agent()
+        
+        # Clear conversation if fresh=True (for single queries from CLI)
+        if request.fresh:
+            session = request.session_id or request.user_id
+            agent.clear_conversation(session)
+            logger.info(f"[CHAT] Cleared conversation for session={session}")
         
         if request.stream:
             # Streaming response
