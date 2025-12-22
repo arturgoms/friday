@@ -232,7 +232,7 @@ last_triggered: {f'"{alert.last_triggered.isoformat()}"' if alert.last_triggered
         priority: str = "medium",
         source_context: Optional[str] = None,
         tags: Optional[List[str]] = None,
-    ) -> DynamicAlert:
+    ) -> Optional[DynamicAlert]:
         """
         Create a new dynamic alert.
         
@@ -248,8 +248,14 @@ last_triggered: {f'"{alert.last_triggered.isoformat()}"' if alert.last_triggered
             tags: Additional tags
             
         Returns:
-            Created DynamicAlert
+            Created DynamicAlert, or None if duplicate
         """
+        # Check for duplicates - same title and type within active alerts
+        existing = self.find_similar_alert(title, alert_type)
+        if existing:
+            logger.info(f"Skipping duplicate alert: {title} (existing: {existing.alert_id})")
+            return None
+        
         alert_id = self._generate_id()
         
         alert = DynamicAlert(
@@ -275,6 +281,36 @@ last_triggered: {f'"{alert.last_triggered.isoformat()}"' if alert.last_triggered
         logger.info(f"Created dynamic alert: {alert_id} - {title}")
         
         return alert
+    
+    def find_similar_alert(self, title: str, alert_type: AlertType) -> Optional[DynamicAlert]:
+        """
+        Find an existing active alert with similar title and same type.
+        
+        Used for deduplication to prevent creating duplicate alerts.
+        """
+        # Normalize title for comparison
+        title_lower = title.lower().strip()
+        title_words = set(title_lower.split())
+        
+        for alert in self.get_active_alerts():
+            if alert.alert_type != alert_type:
+                continue
+            
+            existing_lower = alert.title.lower().strip()
+            existing_words = set(existing_lower.split())
+            
+            # Check for exact match
+            if title_lower == existing_lower:
+                return alert
+            
+            # Check for high word overlap (>70% of words match)
+            if title_words and existing_words:
+                overlap = len(title_words & existing_words)
+                max_len = max(len(title_words), len(existing_words))
+                if overlap / max_len > 0.7:
+                    return alert
+        
+        return None
     
     def get_alert(self, alert_id: str) -> Optional[DynamicAlert]:
         """Get an alert by ID."""

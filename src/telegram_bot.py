@@ -7,6 +7,7 @@ import sys
 import logging
 import requests
 import tempfile
+from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from dotenv import load_dotenv
@@ -274,6 +275,52 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
     user_id = update.effective_user.id
     
+    # Check if we're awaiting a correction
+    correction_state = context.user_data.get("awaiting_correction")
+    if correction_state:
+        # Check if correction request has expired (5 minutes)
+        correction_time = datetime.fromisoformat(correction_state["timestamp"])
+        if datetime.now() - correction_time < timedelta(minutes=5):
+            # This message might be a correction - check if it looks like feedback
+            # Short messages or messages that start with "you should" etc. are likely corrections
+            is_correction = (
+                len(user_message) < 500 and  # Not a new conversation
+                not should_use_web_search(user_message) and  # Not a search query
+                any(phrase in user_message.lower() for phrase in [
+                    "you should", "should have", "instead", "wrong", "correct", 
+                    "actually", "meant", "wanted", "expected", "better if",
+                    "next time", "don't", "do not", "please"
+                ]) or len(user_message) < 200  # Short messages are likely corrections
+            )
+            
+            if is_correction:
+                # Store the correction
+                try:
+                    from app.services.feedback_store import get_feedback_store
+                    feedback_store = get_feedback_store()
+                    
+                    feedback_store.add_correction(
+                        feedback_id=correction_state["feedback_id"],
+                        correction_text=user_message
+                    )
+                    
+                    # Clear the correction state
+                    del context.user_data["awaiting_correction"]
+                    
+                    await update.message.reply_text(
+                        "Got it! I'll learn from this feedback. Thanks for helping me improve!"
+                    )
+                    logger.info(f"Correction recorded for feedback {correction_state['feedback_id']}")
+                    return
+                    
+                except Exception as e:
+                    logger.error(f"Error storing correction: {e}")
+                    # Continue with normal message handling
+        
+        # Clear expired correction state
+        if "awaiting_correction" in context.user_data:
+            del context.user_data["awaiting_correction"]
+    
     # Detect if web search should be used
     use_web = should_use_web_search(user_message)
     
@@ -511,7 +558,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle all button callbacks (feedback and ack)."""
+    """Handle all button callbacks (feedback, ack, alert_feedback)."""
     query = update.callback_query
     await query.answer()
     
@@ -520,13 +567,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     callback_data = query.data
     
-    # Handle feedback callbacks
+    # Handle chat response feedback callbacks
     if callback_data.startswith("feedback:"):
         await handle_feedback_callback(query, context)
     
     # Handle alert acknowledgment callbacks
     elif callback_data.startswith("ack:"):
         await handle_ack_callback(query, context)
+    
+    # Handle proactive alert feedback callbacks
+    elif callback_data.startswith("alert_feedback:"):
+        await handle_alert_feedback_callback(query, context)
 
 
 async def handle_feedback_callback(query, context):
@@ -537,7 +588,20 @@ async def handle_feedback_callback(query, context):
     if feedback_type == "done":
         return  # Already processed
     
+    if feedback_type == "skip_correction":
+        # User declined to provide correction
+        await query.edit_message_reply_markup(
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👎 Thanks for feedback!", callback_data="feedback:done")]
+            ])
+        )
+        # Clear correction state
+        if "awaiting_correction" in context.user_data:
+            del context.user_data["awaiting_correction"]
+        return
+    
     message_id = query.message.message_id
+    chat_id = query.message.chat_id
     
     # Get stored context for this message
     msg_key = f"msg_{message_id}"
@@ -548,7 +612,7 @@ async def handle_feedback_callback(query, context):
         from app.services.feedback_store import get_feedback_store
         feedback_store = get_feedback_store()
         
-        feedback_store.add_feedback(
+        feedback_id = feedback_store.add_feedback(
             user_message=msg_context.get("user_message", "Unknown"),
             ai_response=msg_context.get("ai_response", "Unknown"),
             feedback=feedback_type,
@@ -557,13 +621,34 @@ async def handle_feedback_callback(query, context):
             intent_action=msg_context.get("intent_action")
         )
         
-        # Update message to show feedback received
-        emoji = "👍" if feedback_type == "up" else "👎"
-        await query.edit_message_reply_markup(
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(f"{emoji} Thanks for feedback!", callback_data="feedback:done")]
-            ])
-        )
+        if feedback_type == "up":
+            # Thumbs up - just thank them
+            await query.edit_message_reply_markup(
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("👍 Thanks for feedback!", callback_data="feedback:done")]
+                ])
+            )
+        else:
+            # Thumbs down - ask for correction
+            await query.edit_message_reply_markup(
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("👎 Feedback received", callback_data="feedback:done")]
+                ])
+            )
+            
+            # Store state for correction flow
+            context.user_data["awaiting_correction"] = {
+                "feedback_id": feedback_id,
+                "message_id": message_id,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            # Ask for correction
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Thanks for the feedback. What should I have done differently? (Reply to help me learn, or just send your next message to skip)",
+                reply_to_message_id=message_id
+            )
         
         logger.info(f"Feedback recorded: {feedback_type} for message {message_id}")
         
@@ -582,9 +667,9 @@ async def handle_ack_callback(query, context):
     alert_key = callback_data.split(":", 1)[1]  # Get everything after "ack:"
     
     try:
-        # Import the proactive monitor to acknowledge the alert
-        from app.services.proactive_monitor import proactive_monitor
-        proactive_monitor.acknowledge_alert(alert_key)
+        # Import the awareness engine to acknowledge the alert
+        from app.services.awareness_engine import awareness_engine
+        awareness_engine.acknowledge_alert(alert_key)
         
         # Update the message to show it's been acknowledged
         await query.edit_message_reply_markup(
@@ -602,6 +687,79 @@ async def handle_ack_callback(query, context):
             await query.edit_message_reply_markup(reply_markup=None)
         except:
             pass
+
+
+async def handle_alert_feedback_callback(query, context):
+    """Handle feedback button clicks on proactive alerts."""
+    callback_data = query.data
+    # Format: alert_feedback:up:alert_key or alert_feedback:down:alert_key
+    parts = callback_data.split(":", 2)
+    
+    if len(parts) < 3:
+        return
+    
+    feedback_type = parts[1]  # 'up' or 'down'
+    alert_key = parts[2]
+    
+    if feedback_type == "done":
+        return  # Already processed
+    
+    try:
+        # Record alert feedback
+        from app.services.awareness_engine import awareness_engine
+        
+        # Track alert feedback in the budget system
+        awareness_engine.record_alert_feedback(alert_key, feedback_type)
+        
+        # Get the alert message for context
+        message_text = query.message.text if query.message else "Unknown alert"
+        
+        # Also store in feedback store for analysis
+        from app.services.feedback_store import get_feedback_store
+        feedback_store = get_feedback_store()
+        
+        feedback_id = feedback_store.add_feedback(
+            user_message=f"[PROACTIVE ALERT] {alert_key}",
+            ai_response=message_text[:1000] if message_text else "Unknown",
+            feedback=feedback_type,
+            message_id=str(query.message.message_id) if query.message else None,
+            context_type="proactive_alert",
+            intent_action=f"alert_{alert_key.split('_')[0]}" if '_' in alert_key else "alert"
+        )
+        
+        # Store context for potential correction
+        if feedback_type == "down":
+            context.user_data["awaiting_correction"] = {
+                "feedback_id": feedback_id,
+                "message_id": query.message.message_id if query.message else None,
+                "timestamp": datetime.now().isoformat(),
+                "is_alert": True,
+                "alert_key": alert_key
+            }
+        
+        # Update the message to show feedback received
+        emoji = "👍" if feedback_type == "up" else "👎"
+        
+        # Keep the Ack button but update the feedback row
+        await query.edit_message_reply_markup(
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✓ Got it", callback_data=f"ack:{alert_key}")],
+                [InlineKeyboardButton(f"{emoji} Feedback recorded", callback_data="alert_feedback:done:")]
+            ])
+        )
+        
+        logger.info(f"Alert feedback recorded: {feedback_type} for alert {alert_key}")
+        
+        # If thumbs down, prompt for correction
+        if feedback_type == "down" and query.message:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text="Thanks for the feedback on this alert. What made it unhelpful? (Reply to help me improve, or just send your next message to skip)",
+                reply_to_message_id=query.message.message_id
+            )
+        
+    except Exception as e:
+        logger.error(f"Error storing alert feedback: {e}")
 
 
 async def feedback_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -655,7 +813,7 @@ def main():
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("reminders", reminders_command))
     application.add_handler(CommandHandler("feedback", feedback_stats_command))
-    application.add_handler(CallbackQueryHandler(handle_callback, pattern="^(feedback:|ack:)"))
+    application.add_handler(CallbackQueryHandler(handle_callback, pattern="^(feedback:|ack:|alert_feedback:)"))
     application.add_handler(MessageHandler(filters.VOICE, handle_voice))  # Voice messages
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)

@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Start vLLM server with Qwen model
+# Start vLLM server with Dolphin model
 
-MODEL="Qwen/Qwen2.5-7B-Instruct"
+MODEL="dphn/Dolphin3.0-Llama3.1-8B"
 PORT=8000
 GPU_MEMORY_UTILIZATION=0.85
 

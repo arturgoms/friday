@@ -83,6 +83,9 @@ class ChatResponse:
     # Memory that was extracted/saved
     extracted_memory: Optional[str] = None
     
+    # Intent information for feedback tracking
+    intent: Optional[Dict[str, Any]] = None
+    
     # Whether to skip LLM response generation (handler already produced final answer)
     is_final: bool = True
     
@@ -96,6 +99,7 @@ class ChatResponse:
             "session_id": self.session_id,
             "message": self.message,
             "answer": self.answer,
+            "intent": self.intent,
             "used_rag": self.used_rag,
             "used_web": self.used_web,
             "used_memory": self.used_memory,

@@ -486,10 +486,10 @@ def get_skipped_alerts(x_api_key: Optional[str] = Header(None)):
     verify_auth(x_api_key)
     
     try:
-        from app.services.proactive_monitor import proactive_monitor
+        from app.services.awareness_engine import awareness_engine
         
-        skipped = proactive_monitor.get_skipped_alerts()
-        stats = proactive_monitor.get_budget_stats()
+        skipped = awareness_engine.get_skipped_alerts()
+        stats = awareness_engine.get_budget_stats()
         
         return {
             "status": "ok",

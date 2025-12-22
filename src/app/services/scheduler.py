@@ -154,8 +154,8 @@ class TaskScheduler:
     def run_proactive_checks(self):
         """Run proactive monitoring checks and send alerts."""
         try:
-            from app.services.proactive_monitor import proactive_monitor
-            proactive_monitor.check_and_notify()
+            from app.services.awareness_engine import awareness_engine
+            awareness_engine.check_and_notify()
         except Exception as e:
             logger.error(f"Error running proactive checks: {e}")
     

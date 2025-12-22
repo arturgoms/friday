@@ -214,11 +214,15 @@ class GeneralHandler(IntentHandler):
         # Add opinions context - Friday's learned views and patterns
         opinions_context = opinion_store.get_context_for_llm(message)
         
+        # Add learnings from feedback system
+        learnings_context = self._get_learnings_context()
+        
         return (
             f"{base}\n\n"
             f"{corrections_note}"
             f"{relationship_context}\n\n"
             f"{opinions_context}\n\n"
+            f"{learnings_context}\n\n"
             f"{obsidian_context}\n\n"
             "Rules:\n"
             "- For GREETINGS and SMALL TALK (hey, what's up, how are you): respond naturally and briefly like a friend would. Don't dump information or context.\n"
@@ -250,6 +254,19 @@ class GeneralHandler(IntentHandler):
                 return ""
         except Exception as e:
             logger.error(f"Failed to load personality: {e}")
+            return ""
+    
+    def _get_learnings_context(self) -> str:
+        """Get learned preferences from the feedback system.
+        
+        Returns prompt adjustments based on user feedback patterns.
+        """
+        try:
+            from app.services.learning_service import get_learning_service
+            learning_service = get_learning_service()
+            return learning_service.get_prompt_adjustments(min_confidence=0.7)
+        except Exception as e:
+            logger.debug(f"Could not load learnings: {e}")
             return ""
     
     def _background_processing(self, context: ChatContext, answer: str) -> None:

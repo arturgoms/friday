@@ -216,10 +216,10 @@ class BudgetStatusHandler(IntentHandler):
     def handle(self, context: ChatContext) -> ChatResponse:
         """Get alert budget status."""
         try:
-            from app.services.proactive_monitor import proactive_monitor
+            from app.services.awareness_engine import awareness_engine
             
-            stats = proactive_monitor.get_budget_stats()
-            skipped = proactive_monitor.get_skipped_alerts()
+            stats = awareness_engine.get_budget_stats()
+            skipped = awareness_engine.get_skipped_alerts()
             
             # Build response
             lines = [
@@ -268,11 +268,11 @@ class BudgetResetHandler(IntentHandler):
     def handle(self, context: ChatContext) -> ChatResponse:
         """Reset the alert budget."""
         try:
-            from app.services.proactive_monitor import proactive_monitor
+            from app.services.awareness_engine import awareness_engine
             
             # Reset by creating a new day state
-            proactive_monitor.budget._state = proactive_monitor.budget._new_day_state()
-            proactive_monitor.budget._save_state()
+            awareness_engine.budget._state = awareness_engine.budget._new_day_state()
+            awareness_engine.budget._save_state()
             
             answer = (
                 "Alert budget has been reset. "

@@ -60,7 +60,7 @@ class FridayNotifier:
         return self.send_message(formatted_message)
     
     def send_proactive_alert(self, title: str, message: str, alert_key: str | None = None, category: str = "info"):
-        """Send a proactive alert with an Ack button."""
+        """Send a proactive alert with Ack and feedback buttons."""
         emoji_map = {
             "health": "🏥",
             "calendar": "📅",
@@ -83,12 +83,18 @@ class FridayNotifier:
                 "disable_web_page_preview": True
             }
             
-            # Add Ack button if we have an alert_key
+            # Build inline keyboard with Ack button and feedback buttons
             if alert_key:
                 payload["reply_markup"] = {
-                    "inline_keyboard": [[
-                        {"text": "✓ Got it", "callback_data": f"ack:{alert_key}"}
-                    ]]
+                    "inline_keyboard": [
+                        # Row 1: Ack button
+                        [{"text": "✓ Got it", "callback_data": f"ack:{alert_key}"}],
+                        # Row 2: Feedback buttons
+                        [
+                            {"text": "👍", "callback_data": f"alert_feedback:up:{alert_key}"},
+                            {"text": "👎", "callback_data": f"alert_feedback:down:{alert_key}"}
+                        ]
+                    ]
                 }
             
             response = requests.post(

@@ -316,6 +316,8 @@ class ChatOrchestrator:
                 if response.is_final:
                     # Update history with the response
                     self.update_history(session_id, message, response.answer)
+                    # Ensure intent is included in response
+                    response.intent = intent
                     return response.to_dict()
                 
                 # Handler needs LLM to generate final response
@@ -334,6 +336,7 @@ class ChatOrchestrator:
                     "session_id": session_id,
                     "message": message,
                     "answer": answer,
+                    "intent": intent,
                     "used_rag": response.used_rag,
                     "used_web": response.used_web,
                     "used_memory": response.used_memory,
@@ -350,6 +353,7 @@ class ChatOrchestrator:
                     "session_id": session_id,
                     "message": message,
                     "answer": f"Something went wrong: {str(e)}",
+                    "intent": intent,
                     "used_rag": False,
                     "used_web": False,
                     "used_memory": False,
@@ -365,6 +369,7 @@ class ChatOrchestrator:
             "session_id": session_id,
             "message": message,
             "answer": f"I don't know how to handle that request (action: {action})",
+            "intent": intent,
             "used_rag": False,
             "used_web": False,
             "used_memory": False,

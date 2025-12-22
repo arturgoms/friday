@@ -1,0 +1,19 @@
+{
+  "avg_bedtime_hour": 23.0,
+  "avg_bedtime_minute": 0.0,
+  "avg_wake_hour": 7.0,
+  "avg_wake_minute": 0.0,
+  "sleep_consistency_score": 78.88225429470586,
+  "avg_workouts_per_week": 1.5,
+  "typical_workout_days": [
+    0,
+    1,
+    2,
+    4
+  ],
+  "days_since_last_workout": 4,
+  "last_workout_date": "2025-12-01",
+  "avg_daily_steps": 0,
+  "avg_active_minutes": 0,
+  "last_updated": "2025-12-05T16:43:04.570858"
+}

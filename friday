@@ -359,6 +359,200 @@ print(f'💾 ChromaDB entries: {stats[\"memory_entries\"]}')
         echo "✅ Services uninstalled!"
         ;;
     
+    awareness)
+        ACTION="${2:-check}"
+        cd "$FRIDAY_DIR"
+        
+        case "$ACTION" in
+            check)
+                echo "🧠 Running Awareness Engine checks (dry run)..."
+                echo ""
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.awareness_engine import awareness_engine
+
+alerts = awareness_engine.run_all_checks()
+
+if not alerts:
+    print('✅ No alerts generated')
+else:
+    print(f'📢 {len(alerts)} alert(s) would be generated:')
+    print('')
+    for i, alert in enumerate(alerts, 1):
+        priority_emoji = {'urgent': '🚨', 'high': '⚠️', 'medium': '📢', 'low': '💡'}.get(alert.priority.value, '📢')
+        print(f'{i}. {priority_emoji} [{alert.priority.value.upper()}] {alert.title}')
+        print(f'   Category: {alert.category}')
+        print(f'   {alert.message[:100]}...' if len(alert.message) > 100 else f'   {alert.message}')
+        print('')
+"
+                ;;
+            run)
+                echo "🧠 Running Awareness Engine checks and sending alerts..."
+                echo ""
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.awareness_engine import awareness_engine
+
+awareness_engine.check_and_notify()
+print('✅ Done')
+"
+                ;;
+            budget)
+                echo "📊 Reach-Out Budget Status"
+                echo "=========================="
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.awareness_engine import awareness_engine
+
+stats = awareness_engine.get_budget_stats()
+print(f'Date: {stats.get(\"date\", \"N/A\")}')
+print(f'Messages sent: {stats.get(\"messages_sent\", 0)}/5')
+print(f'Remaining budget: {stats.get(\"remaining\", 0)}')
+print(f'User responses: {stats.get(\"user_responses\", 0)}')
+print(f'Ignored: {stats.get(\"ignored\", 0)}')
+print(f'Skipped alerts: {stats.get(\"skipped_count\", 0)}')
+"
+                ;;
+            skipped)
+                echo "⏭️  Skipped Alerts (due to budget)"
+                echo "==================================="
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.awareness_engine import awareness_engine
+
+skipped = awareness_engine.get_skipped_alerts()
+if not skipped:
+    print('No alerts were skipped today.')
+else:
+    for i, alert in enumerate(skipped, 1):
+        print(f'{i}. [{alert.get(\"priority\", \"?\")}] {alert.get(\"title\", \"Untitled\")}')
+        print(f'   {alert.get(\"message\", \"\")[:80]}...')
+        print(f'   Skipped at: {alert.get(\"skipped_at\", \"?\")[:16]}')
+        print('')
+"
+                ;;
+            patterns)
+                echo "📈 Detected Behavioral Patterns"
+                echo "==============================="
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.awareness_engine import awareness_engine
+
+patterns = awareness_engine.get_patterns()
+
+print('🛏️  Sleep:')
+print(f'   Consistency score: {patterns[\"sleep\"][\"consistency_score\"]:.0f}/100')
+print('')
+print('🏃 Workouts:')
+print(f'   Average per week: {patterns[\"workouts\"][\"avg_per_week\"]:.1f}')
+print(f'   Typical days: {patterns[\"workouts\"][\"typical_days\"] or \"Not enough data\"}')
+print(f'   Days since last: {patterns[\"workouts\"][\"days_since_last\"]}')
+print(f'   Last workout: {patterns[\"workouts\"][\"last_workout_date\"] or \"Unknown\"}')
+print('')
+print(f'Last updated: {patterns[\"last_updated\"] or \"Never\"}')
+"
+                ;;
+            update-patterns)
+                echo "🔄 Updating behavioral patterns..."
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.awareness_engine import awareness_engine
+
+awareness_engine.update_patterns()
+print('✅ Patterns updated')
+"
+                ;;
+            ack)
+                ALERT_KEY="$3"
+                if [ -z "$ALERT_KEY" ]; then
+                    echo "Usage: friday awareness ack <alert_key>"
+                    exit 1
+                fi
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.awareness_engine import awareness_engine
+
+awareness_engine.acknowledge_alert('$ALERT_KEY')
+print('✅ Alert acknowledged: $ALERT_KEY')
+"
+                ;;
+            infra)
+                echo "🖥️  Infrastructure Status"
+                echo "========================="
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.awareness_engine import awareness_engine
+
+status = awareness_engine.get_infrastructure_status()
+
+print(f'Checked at: {status[\"checked_at\"][:19]}')
+print('')
+
+# Disk
+disk = status.get('disk', {})
+if 'error' not in disk:
+    bar_len = 20
+    used_pct = disk.get('percent_used', 0)
+    filled = int(bar_len * used_pct / 100)
+    bar = '█' * filled + '░' * (bar_len - filled)
+    print(f'💾 Disk /:')
+    print(f'   [{bar}] {used_pct:.1f}%')
+    print(f'   {disk.get(\"used_gb\", 0):.1f} GB used / {disk.get(\"total_gb\", 0):.1f} GB total')
+    print(f'   {disk.get(\"free_gb\", 0):.1f} GB free')
+else:
+    print(f'💾 Disk: Error - {disk[\"error\"]}')
+print('')
+
+# CPU Temp
+temp = status.get('cpu_temp')
+if temp:
+    if temp > 75:
+        emoji = '🔴'
+    elif temp > 60:
+        emoji = '🟡'
+    else:
+        emoji = '🟢'
+    print(f'🌡️  CPU Temperature: {emoji} {temp:.1f}°C')
+else:
+    print('🌡️  CPU Temperature: N/A')
+print('')
+
+# Services
+print('🔧 Services:')
+services = status.get('services', {})
+for svc, svc_status in services.items():
+    emoji = '✅' if svc_status == 'active' else '❌'
+    print(f'   {emoji} {svc}: {svc_status}')
+"
+                ;;
+            *)
+                echo "Usage: friday awareness [check|run|budget|skipped|patterns|update-patterns|ack|infra]"
+                echo ""
+                echo "  check              Run all checks (dry run - no alerts sent)"
+                echo "  run                Run checks and send alerts"
+                echo "  budget             Show reach-out budget status"
+                echo "  skipped            List alerts skipped due to budget"
+                echo "  patterns           Show detected behavioral patterns"
+                echo "  update-patterns    Update pattern data from recent activity"
+                echo "  ack <key>          Acknowledge an alert"
+                echo "  infra              Show infrastructure status"
+                echo ""
+                echo "Examples:"
+                echo "  friday awareness check     # See what alerts would be generated"
+                echo "  friday awareness infra     # Check disk, CPU, services"
+                echo "  friday awareness patterns  # See sleep/workout patterns"
+                ;;
+        esac
+        ;;
+    
     chat)
         ACTION="${2:-help}"
         cd "$FRIDAY_DIR"
@@ -663,6 +857,332 @@ print(f'Source: {source_label}')
         esac
         ;;
     
+    feedback)
+        ACTION="${2:-stats}"
+        cd "$FRIDAY_DIR"
+        
+        case "$ACTION" in
+            stats)
+                echo "📊 Feedback Statistics"
+                echo "======================"
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.feedback_store import get_feedback_store
+
+store = get_feedback_store()
+stats = store.get_feedback_stats(days=30)
+
+overall = stats['overall']
+print(f'Last 30 days:')
+print(f'  Total responses rated: {overall[\"total\"]}')
+print(f'  👍 Thumbs up: {overall[\"thumbs_up\"]}')
+print(f'  👎 Thumbs down: {overall[\"thumbs_down\"]}')
+print(f'  Approval rate: {overall[\"approval_rate\"]}%')
+print('')
+
+if stats['by_intent']:
+    print('By Intent:')
+    for item in stats['by_intent'][:10]:
+        print(f'  {item[\"intent\"]}: {item[\"approval_rate\"]}% ({item[\"total\"]} ratings)')
+"
+                ;;
+            negative)
+                LIMIT="${3:-10}"
+                echo "👎 Recent Negative Feedback"
+                echo "==========================="
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.feedback_store import get_feedback_store
+
+store = get_feedback_store()
+negative = store.get_recent_negative_with_corrections(limit=$LIMIT)
+
+if not negative:
+    print('No negative feedback found')
+else:
+    for item in negative:
+        print(f'[{item[\"id\"]}] {item[\"timestamp\"][:16]}')
+        print(f'  User: {item[\"user_message\"][:80]}...' if len(item['user_message'] or '') > 80 else f'  User: {item[\"user_message\"]}')
+        print(f'  Intent: {item.get(\"intent_action\", \"unknown\")}')
+        if item.get('correction'):
+            print(f'  ✏️  Correction: {item[\"correction\"]}')
+        print('')
+"
+                ;;
+            corrections)
+                echo "📝 Pending Corrections"
+                echo "======================"
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.feedback_store import get_feedback_store
+
+store = get_feedback_store()
+corrections = store.get_unprocessed_corrections(limit=50)
+
+if not corrections:
+    print('No pending corrections to process')
+else:
+    print(f'{len(corrections)} correction(s) awaiting synthesis:')
+    print('')
+    for c in corrections:
+        print(f'[{c[\"correction_id\"]}] {c[\"correction_time\"][:16]}')
+        print(f'  Original: {c[\"user_message\"][:60]}...' if len(c['user_message']) > 60 else f'  Original: {c[\"user_message\"]}')
+        print(f'  Correction: {c[\"correction_text\"]}')
+        print(f'  Intent: {c.get(\"intent_action\", \"unknown\")}')
+        print('')
+"
+                ;;
+            alert-stats)
+                echo "📢 Alert Feedback Statistics"
+                echo "============================="
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.awareness_engine import awareness_engine
+
+stats = awareness_engine.get_alert_feedback_stats()
+
+print(f'Total feedback received: {stats[\"total_feedback\"]}')
+print(f'  👍 Thumbs up: {stats[\"thumbs_up\"]}')
+print(f'  👎 Thumbs down: {stats[\"thumbs_down\"]}')
+print(f'  Quality score: {stats[\"quality_score\"]*100:.1f}%')
+print('')
+
+if stats['by_category']:
+    print('By Alert Category:')
+    for cat, data in stats['by_category'].items():
+        total = data['up'] + data['down']
+        pct = (data['up'] / total * 100) if total > 0 else 0
+        print(f'  {cat}: {pct:.0f}% approval ({total} ratings)')
+"
+                ;;
+            *)
+                echo "Usage: friday feedback [stats|negative|corrections|alert-stats]"
+                echo ""
+                echo "  stats             Show feedback statistics (last 30 days)"
+                echo "  negative [n]      List recent negative feedback (default: 10)"
+                echo "  corrections       List pending corrections awaiting synthesis"
+                echo "  alert-stats       Show proactive alert feedback stats"
+                echo ""
+                echo "Examples:"
+                echo "  friday feedback stats"
+                echo "  friday feedback negative 20"
+                echo "  friday feedback corrections"
+                ;;
+        esac
+        ;;
+    
+    learn)
+        ACTION="${2:-list}"
+        cd "$FRIDAY_DIR"
+        
+        case "$ACTION" in
+            synthesize)
+                echo "🧠 Running Learning Synthesis..."
+                echo "================================"
+                pipenv run python3 -c "
+import sys
+import asyncio
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.learning_service import get_learning_service
+from app.services.feedback_store import get_feedback_store
+
+store = get_feedback_store()
+corrections = store.get_unprocessed_corrections(limit=50)
+print(f'Found {len(corrections)} unprocessed corrections')
+
+if not corrections:
+    print('No corrections to synthesize')
+    sys.exit(0)
+
+service = get_learning_service()
+new_learnings = asyncio.run(service.synthesize_learnings())
+
+if not new_learnings:
+    print('No new learnings generated (corrections may not show clear patterns)')
+else:
+    print(f'Generated {len(new_learnings)} new learnings:')
+    for learning in new_learnings:
+        print(f'')
+        print(f'  [{learning.confidence:.2f}] {learning.pattern}')
+        print(f'       → {learning.prompt_adjustment}')
+"
+                ;;
+            list)
+                echo "📚 Active Learnings"
+                echo "==================="
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.learning_service import get_learning_service
+
+service = get_learning_service()
+learnings = service.get_all_learnings()
+
+if not learnings:
+    print('No learnings yet. Learnings are generated from user feedback.')
+    print('')
+    print('To generate learnings:')
+    print('  1. Give feedback on responses (👍/👎 in Telegram)')
+    print('  2. Provide corrections when prompted after 👎')
+    print('  3. Run: friday learn synthesize')
+else:
+    print(f'System is {\"ENABLED\" if service.is_enabled() else \"DISABLED\"}')
+    print('')
+    print(f'ID              Conf   Category   Pattern')
+    print(f'─' * 60)
+    for l in learnings:
+        status = '✓' if l.active else '○'
+        print(f'{status} {l.id[:15]:<15} {l.confidence:.2f}   {l.category:<10} {l.pattern[:30]}...' if len(l.pattern) > 30 else f'{status} {l.id[:15]:<15} {l.confidence:.2f}   {l.category:<10} {l.pattern}')
+"
+                ;;
+            show)
+                LEARNING_ID="$3"
+                if [ -z "$LEARNING_ID" ]; then
+                    echo "Usage: friday learn show <learning_id>"
+                    exit 1
+                fi
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.learning_service import get_learning_service
+
+service = get_learning_service()
+learning = service.get_learning('$LEARNING_ID')
+
+if not learning:
+    print(f'Learning not found: $LEARNING_ID')
+    sys.exit(1)
+
+print(f'ID: {learning.id}')
+print(f'Created: {learning.created_at}')
+print(f'Category: {learning.category}')
+print(f'Confidence: {learning.confidence:.2f}')
+print(f'Active: {\"Yes\" if learning.active else \"No\"}')
+print('')
+print(f'Pattern: {learning.pattern}')
+print('')
+print(f'Prompt Adjustment:')
+print(f'  {learning.prompt_adjustment}')
+print('')
+print(f'Source corrections: {learning.source_corrections}')
+"
+                ;;
+            add)
+                shift 2
+                LEARNING_TEXT="$*"
+                if [ -z "$LEARNING_TEXT" ]; then
+                    echo "Usage: friday learn add \"<preference or instruction>\""
+                    echo ""
+                    echo "Examples:"
+                    echo "  friday learn add \"Always respond in Portuguese when I write in Portuguese\""
+                    echo "  friday learn add \"Keep responses under 3 paragraphs\""
+                    exit 1
+                fi
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.learning_service import get_learning_service
+
+service = get_learning_service()
+learning = service.add_manual_learning(
+    pattern='User preference (manually added)',
+    prompt_adjustment='''$LEARNING_TEXT''',
+    confidence=1.0,
+    category='manual'
+)
+
+print(f'✅ Learning added: {learning.id}')
+print(f'   {learning.prompt_adjustment}')
+"
+                ;;
+            remove)
+                LEARNING_ID="$3"
+                if [ -z "$LEARNING_ID" ]; then
+                    echo "Usage: friday learn remove <learning_id>"
+                    exit 1
+                fi
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.learning_service import get_learning_service
+
+service = get_learning_service()
+if service.remove_learning('$LEARNING_ID'):
+    print(f'✅ Removed learning: $LEARNING_ID')
+else:
+    print(f'❌ Learning not found: $LEARNING_ID')
+"
+                ;;
+            disable)
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.learning_service import get_learning_service
+
+service = get_learning_service()
+service.disable_all()
+print('✅ Learning system DISABLED')
+print('   Learnings will not be applied to prompts')
+"
+                ;;
+            enable)
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.learning_service import get_learning_service
+
+service = get_learning_service()
+service.enable_all()
+print('✅ Learning system ENABLED')
+print('   Learnings will be applied to prompts')
+"
+                ;;
+            stats)
+                pipenv run python3 -c "
+import sys
+sys.path.insert(0, '$FRIDAY_DIR/src')
+from app.services.learning_service import get_learning_service
+
+service = get_learning_service()
+stats = service.get_stats()
+
+print(f'Learning System: {\"ENABLED\" if stats[\"enabled\"] else \"DISABLED\"}')
+print(f'Total learnings: {stats[\"total_learnings\"]}')
+print(f'Active learnings: {stats[\"active_learnings\"]}')
+print(f'Average confidence: {stats[\"avg_confidence\"]*100:.1f}%')
+print('')
+if stats['by_category']:
+    print('By category:')
+    for cat, count in stats['by_category'].items():
+        print(f'  {cat}: {count}')
+"
+                ;;
+            *)
+                echo "Usage: friday learn [synthesize|list|show|add|remove|disable|enable|stats]"
+                echo ""
+                echo "  synthesize         Run learning synthesis from pending corrections"
+                echo "  list               List all learnings"
+                echo "  show <id>          Show details of a specific learning"
+                echo "  add \"<text>\"       Manually add a learning/preference"
+                echo "  remove <id>        Remove a learning"
+                echo "  disable            Disable the learning system"
+                echo "  enable             Enable the learning system"
+                echo "  stats              Show learning system statistics"
+                echo ""
+                echo "Examples:"
+                echo "  friday learn list"
+                echo "  friday learn synthesize"
+                echo "  friday learn add \"Always use bullet points for lists\""
+                echo "  friday learn show learn_20251205_001"
+                echo "  friday learn remove learn_20251205_001"
+                ;;
+        esac
+        ;;
+    
     *)
         cat << 'HELP'
 Friday AI - CLI Tool
@@ -676,6 +1196,9 @@ Commands:
    report                  Send system status report via Telegram
    test [type]             Run tests (all|unit|integration|bash)
    chat [action]           Chat debugging (intent|handlers|test)
+   awareness [action]      Awareness engine (check|run|budget|patterns|infra)
+   feedback [action]       Feedback system (stats|negative|corrections|alert-stats)
+   learn [action]          Learning system (synthesize|list|add|remove|enable|disable)
    config [action]         Manage configuration (show|validate|source)
    index [action]          Manage RAG index (status|rebuild)
    reminders [action]      Manage reminders (list|cancel <id>)
@@ -711,6 +1234,11 @@ Examples:
   friday chat intent "remind me to buy milk"  # Test intent router
   friday chat handlers         # List all intent handlers
   friday chat test "What time is it?"  # Test the chat service
+  friday feedback stats        # View feedback statistics
+  friday feedback corrections  # List pending corrections
+  friday learn list            # List active learnings
+  friday learn synthesize      # Generate learnings from corrections
+  friday learn add "Keep responses brief"  # Add a manual learning
 
 HELP
         ;;

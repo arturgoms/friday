@@ -98,6 +98,9 @@ class ReachOutBudget:
     
     def _new_day_state(self) -> Dict[str, Any]:
         """Create fresh state for a new day."""
+        # Preserve suppressed alerts across days
+        old_suppressed = self._state.get("suppressed_alerts", {}) if hasattr(self, '_state') else {}
+        
         return {
             "date": datetime.now().strftime("%Y-%m-%d"),
             "messages_sent": 0,
@@ -110,6 +113,7 @@ class ReachOutBudget:
             "user_responses": 0,  # Track if user responds to proactive messages
             "ignored_count": 0,   # Messages that got no response
             "skipped_alerts": [],  # Alerts skipped due to budget exhaustion
+            "suppressed_alerts": old_suppressed,  # Alerts suppressed by user feedback
         }
     
     def _save_state(self):
@@ -216,7 +220,66 @@ class ReachOutBudget:
             "user_responses": self._state.get("user_responses", 0),
             "ignored": self._state.get("ignored_count", 0),
             "skipped_count": len(self._state.get("skipped_alerts", [])),
+            "suppressed_count": len(self._state.get("suppressed_alerts", {})),
         }
+    
+    def suppress_alert(self, pattern: str, days: int = 30, reason: str = None):
+        """
+        Suppress alerts matching a pattern for N days.
+        
+        Args:
+            pattern: Alert key pattern or title substring to suppress
+            days: Number of days to suppress (default 30)
+            reason: User feedback reason for suppression
+        """
+        if "suppressed_alerts" not in self._state:
+            self._state["suppressed_alerts"] = {}
+        
+        suppress_until = (datetime.now() + timedelta(days=days)).isoformat()
+        self._state["suppressed_alerts"][pattern.lower()] = {
+            "until": suppress_until,
+            "reason": reason,
+            "created": datetime.now().isoformat(),
+        }
+        self._save_state()
+        logger.info(f"Suppressed alert pattern '{pattern}' until {suppress_until}: {reason}")
+    
+    def is_suppressed(self, alert_key: str, title: str = None) -> bool:
+        """
+        Check if an alert is suppressed.
+        
+        Args:
+            alert_key: The alert key to check
+            title: Optional alert title to check
+            
+        Returns:
+            True if alert should be suppressed
+        """
+        suppressed = self._state.get("suppressed_alerts", {})
+        if not suppressed:
+            return False
+        
+        now = datetime.now()
+        key_lower = alert_key.lower()
+        title_lower = (title or "").lower()
+        
+        for pattern, data in list(suppressed.items()):
+            # Check if suppression has expired
+            try:
+                until = datetime.fromisoformat(data["until"])
+                if now > until:
+                    # Clean up expired suppression
+                    del self._state["suppressed_alerts"][pattern]
+                    self._save_state()
+                    continue
+            except:
+                continue
+            
+            # Check if pattern matches alert_key or title
+            if pattern in key_lower or pattern in title_lower:
+                return True
+        
+        return False
     
     def record_skipped(self, title: str, message: str, priority: str, category: str):
         """Record an alert that was skipped due to budget exhaustion."""
@@ -365,15 +428,21 @@ class ProactiveMonitor:
                 logger.error(f"Failed to load notifier: {e}")
         return self._notifier
     
-    def _should_send_alert(self, alert_key: str) -> bool:
+    def _should_send_alert(self, alert_key: str, title: str = None) -> bool:
         """
         Check if we should send this alert.
         
         Logic:
+        - If suppressed by user feedback, don't send
         - If already acknowledged today, don't send
         - If not acknowledged and cooldown passed, send again
         - If never sent, send
         """
+        # Check if alert is suppressed by user feedback
+        if self.budget.is_suppressed(alert_key, title):
+            logger.debug(f"Alert '{alert_key}' is suppressed by user feedback")
+            return False
+        
         # Reload acked alerts from disk (in case user acked via Telegram)
         self._acked_alerts = self._load_acked()
         
