@@ -1,0 +1,441 @@
+"""
+Friday 3.0 Hybrid Agent
+
+The central orchestration agent that implements the Hybrid Router pattern.
+Routes between Tools, Code Interpreter, and Chat based on LLM decisions.
+
+Usage:
+    from src.core.agent import HybridAgent, get_agent
+    
+    agent = get_agent()
+    response = await agent.run("Check disk space", user_id="user123")
+"""
+
+import json
+import logging
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional
+
+from .config import get_config
+from .interpreter import CodeInterpreter, ExecutionResult, get_interpreter
+from .llm import LLMClient, LLMResponse, get_llm_client
+from .registry import execute_tool, get_all_tool_schemas, get_tool_schemas_text
+
+logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# System Prompts
+# =============================================================================
+
+SYSTEM_PROMPT_TEMPLATE = """You are Friday, an autonomous AI assistant running on an Ubuntu server.
+
+{user_context}
+
+## Capabilities
+
+### MODE 1: DETERMINISTIC TOOLS
+You have access to the following functions:
+{tool_schemas}
+
+If the user request matches a tool exactly, output a JSON object:
+{{"tool": "tool_name", "args": {{"arg1": "value1"}}}}
+
+DO NOT hallucinate tools that don't exist.
+
+### MODE 2: CODE INTERPRETER
+You are running on an Ubuntu server with full Python and shell access.
+If the request requires data analysis, system administration, or complex operations:
+- Write Python code wrapped in ```python ... ``` blocks
+- You can import: os, sys, json, datetime, pathlib, subprocess, shutil, requests
+- Your code runs in a persistent session - variables persist across executions
+- Print results to stdout for me to see them
+
+### MODE 3: CHAT
+If no action is required, just reply conversationally.
+
+## Guidelines
+- Be concise and direct
+- For system tasks, prefer code over chat
+- Always verify before destructive operations
+- If unsure, ask for clarification
+
+Current time: {current_time}
+"""
+
+
+# =============================================================================
+# Agent Response
+# =============================================================================
+
+@dataclass
+class AgentResponse:
+    """Response from the agent."""
+    text: str
+    mode: str  # "tool", "code", "chat"
+    tool_results: List[Dict[str, Any]] = field(default_factory=list)
+    code_results: List[ExecutionResult] = field(default_factory=list)
+    iterations: int = 1
+    error: Optional[str] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for API responses."""
+        return {
+            "text": self.text,
+            "mode": self.mode,
+            "tool_results": self.tool_results,
+            "code_results": [
+                {
+                    "success": r.success,
+                    "stdout": r.stdout,
+                    "stderr": r.stderr,
+                    "exception": r.exception
+                }
+                for r in self.code_results
+            ],
+            "iterations": self.iterations,
+            "error": self.error
+        }
+
+
+# =============================================================================
+# Conversation Message
+# =============================================================================
+
+@dataclass
+class Message:
+    """A single message in the conversation."""
+    role: str  # "system", "user", "assistant"
+    content: str
+    
+    def to_dict(self) -> Dict[str, str]:
+        return {"role": self.role, "content": self.content}
+
+
+# =============================================================================
+# Hybrid Agent
+# =============================================================================
+
+class HybridAgent:
+    """The core agent that orchestrates tools, code execution, and chat."""
+    
+    def __init__(
+        self,
+        llm_client: Optional[LLMClient] = None,
+        interpreter: Optional[CodeInterpreter] = None,
+        max_iterations: int = 5,
+        context_builder: Optional[Callable[[str, str], str]] = None
+    ):
+        """Initialize the agent.
+        
+        Args:
+            llm_client: LLM client instance (defaults to global)
+            interpreter: Code interpreter instance (defaults to global)
+            max_iterations: Maximum ReAct loop iterations
+            context_builder: Optional function to build user context
+        """
+        self.llm = llm_client or get_llm_client()
+        self.interpreter = interpreter or get_interpreter()
+        self.max_iterations = max_iterations
+        self.context_builder = context_builder
+        
+        # Conversation history per session
+        self._conversations: Dict[str, List[Message]] = {}
+        
+        # Confirmation callback for code execution
+        self._confirmation_callback: Optional[Callable[[str, List[str]], bool]] = None
+    
+    def set_confirmation_callback(self, callback: Callable[[str, List[str]], bool]):
+        """Set the callback for user confirmation of dangerous operations.
+        
+        Args:
+            callback: Function that takes (code, operations) and returns True to proceed
+        """
+        self._confirmation_callback = callback
+        self.interpreter.set_confirmation_callback(callback)
+    
+    def _get_conversation(self, session_id: str) -> List[Message]:
+        """Get or create conversation history for a session."""
+        if session_id not in self._conversations:
+            self._conversations[session_id] = []
+        return self._conversations[session_id]
+    
+    def _build_system_prompt(self, user_id: str, user_input: str) -> str:
+        """Build the system prompt with context and tool schemas."""
+        import datetime
+        
+        # Get user context if available
+        user_context = ""
+        if self.context_builder:
+            try:
+                user_context = self.context_builder(user_id, user_input)
+            except Exception as e:
+                logger.warning(f"Failed to build user context: {e}")
+        
+        # Get tool schemas
+        tool_schemas = get_tool_schemas_text()
+        
+        return SYSTEM_PROMPT_TEMPLATE.format(
+            user_context=user_context,
+            tool_schemas=tool_schemas,
+            current_time=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        )
+    
+    def _build_messages(
+        self,
+        session_id: str,
+        user_input: str,
+        system_prompt: str
+    ) -> List[Dict[str, str]]:
+        """Build the messages list for the LLM."""
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        # Add conversation history
+        conversation = self._get_conversation(session_id)
+        for msg in conversation[-10:]:  # Keep last 10 messages for context
+            messages.append(msg.to_dict())
+        
+        # Add current user input
+        messages.append({"role": "user", "content": user_input})
+        
+        return messages
+    
+    async def _execute_tool_call(
+        self,
+        tool_name: str,
+        tool_args: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Execute a tool and return the result."""
+        try:
+            result = await execute_tool(tool_name, tool_args)
+            return {
+                "tool": tool_name,
+                "success": True,
+                "result": str(result)
+            }
+        except KeyError as e:
+            return {
+                "tool": tool_name,
+                "success": False,
+                "error": f"Tool not found: {e}"
+            }
+        except Exception as e:
+            return {
+                "tool": tool_name,
+                "success": False,
+                "error": str(e)
+            }
+    
+    async def _execute_code(
+        self,
+        code: str,
+        session_id: str
+    ) -> ExecutionResult:
+        """Execute code in the interpreter."""
+        return await self.interpreter.execute(code, session_id)
+    
+    async def run(
+        self,
+        user_input: str,
+        user_id: str = "default",
+        session_id: Optional[str] = None
+    ) -> AgentResponse:
+        """Run the agent with user input.
+        
+        Implements the ReAct loop:
+        1. Generate LLM response
+        2. Check for tool calls or code blocks
+        3. Execute and feed results back to LLM
+        4. Repeat until done or max iterations
+        
+        Args:
+            user_input: User's message
+            user_id: User identifier for context
+            session_id: Session identifier (defaults to user_id)
+            
+        Returns:
+            AgentResponse with final text and execution results
+        """
+        session_id = session_id or user_id
+        
+        # Build system prompt
+        system_prompt = self._build_system_prompt(user_id, user_input)
+        
+        # Initialize tracking
+        tool_results: List[Dict[str, Any]] = []
+        code_results: List[ExecutionResult] = []
+        mode = "chat"
+        iterations = 0
+        final_text = ""
+        
+        # Build initial messages
+        messages = self._build_messages(session_id, user_input, system_prompt)
+        
+        # ReAct loop
+        while iterations < self.max_iterations:
+            iterations += 1
+            
+            try:
+                # Get LLM response
+                response = await self.llm.generate(
+                    prompt="",  # Not used when messages provided
+                    messages=messages,
+                    tools=get_all_tool_schemas() if iterations == 1 else None
+                )
+                
+                # Check for tool calls
+                if response.has_tool_call():
+                    mode = "tool"
+                    for tc in response.tool_calls:
+                        result = await self._execute_tool_call(tc.name, tc.arguments)
+                        tool_results.append(result)
+                        
+                        # Add tool result to messages
+                        messages.append({
+                            "role": "assistant",
+                            "content": response.text or f"Calling tool: {tc.name}"
+                        })
+                        messages.append({
+                            "role": "user",
+                            "content": f"Tool result: {json.dumps(result)}"
+                        })
+                    
+                    continue  # Continue loop to let LLM process results
+                
+                # Check for code blocks
+                elif response.has_code():
+                    mode = "code"
+                    for block in response.code_blocks:
+                        if block.language.lower() in ("python", "py", ""):
+                            result = await self._execute_code(block.code, session_id)
+                            code_results.append(result)
+                            
+                            # Add code result to messages
+                            messages.append({
+                                "role": "assistant",
+                                "content": response.text
+                            })
+                            messages.append({
+                                "role": "user",
+                                "content": f"Code execution result:\n{result.to_llm_context()}"
+                            })
+                    
+                    # Check if all code executed successfully
+                    if all(r.success for r in code_results):
+                        # Continue to let LLM synthesize final response
+                        continue
+                    else:
+                        # If there were errors, let LLM try to fix
+                        continue
+                
+                # Pure chat response
+                else:
+                    mode = "chat" if not tool_results and not code_results else mode
+                    final_text = response.text
+                    break
+                    
+            except Exception as e:
+                logger.error(f"Agent error in iteration {iterations}: {e}")
+                return AgentResponse(
+                    text=f"I encountered an error: {str(e)}",
+                    mode="error",
+                    error=str(e),
+                    iterations=iterations
+                )
+        
+        # Store conversation
+        conversation = self._get_conversation(session_id)
+        conversation.append(Message(role="user", content=user_input))
+        conversation.append(Message(role="assistant", content=final_text))
+        
+        # Trim conversation if too long
+        if len(conversation) > 50:
+            self._conversations[session_id] = conversation[-40:]
+        
+        return AgentResponse(
+            text=final_text,
+            mode=mode,
+            tool_results=tool_results,
+            code_results=code_results,
+            iterations=iterations
+        )
+    
+    async def run_stream(
+        self,
+        user_input: str,
+        user_id: str = "default",
+        session_id: Optional[str] = None
+    ):
+        """Run the agent with streaming output.
+        
+        Note: Streaming is only for the final chat response.
+        Tool/code execution happens before streaming.
+        
+        Args:
+            user_input: User's message
+            user_id: User identifier
+            session_id: Session identifier
+            
+        Yields:
+            Text chunks as they arrive
+        """
+        session_id = session_id or user_id
+        
+        # For now, just run normally and yield the result
+        # TODO: Implement proper streaming with intermediate results
+        response = await self.run(user_input, user_id, session_id)
+        yield response.text
+    
+    def clear_conversation(self, session_id: str):
+        """Clear conversation history for a session.
+        
+        Args:
+            session_id: Session identifier
+        """
+        if session_id in self._conversations:
+            del self._conversations[session_id]
+    
+    def get_conversation_history(self, session_id: str) -> List[Dict[str, str]]:
+        """Get conversation history for a session.
+        
+        Args:
+            session_id: Session identifier
+            
+        Returns:
+            List of message dictionaries
+        """
+        conversation = self._get_conversation(session_id)
+        return [msg.to_dict() for msg in conversation]
+
+
+# =============================================================================
+# Global Agent Instance
+# =============================================================================
+
+_agent: Optional[HybridAgent] = None
+
+
+def get_agent() -> HybridAgent:
+    """Get the global agent instance.
+    
+    Returns:
+        HybridAgent instance
+    """
+    global _agent
+    
+    if _agent is None:
+        config = get_config()
+        _agent = HybridAgent(
+            max_iterations=config.interpreter.max_iterations
+        )
+    
+    return _agent
+
+
+async def close_agent():
+    """Close the global agent and its resources."""
+    global _agent
+    if _agent:
+        # Close LLM client
+        await _agent.llm.close()
+        _agent = None

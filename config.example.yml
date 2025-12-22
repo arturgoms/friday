@@ -1,202 +1,96 @@
 # ==============================================================================
-# Friday AI Configuration
+# Friday 3.0 Configuration Example
 # ==============================================================================
 # Copy this file to config.yml and customize for your environment.
-# 
-# Configuration precedence (highest to lowest):
-#   1. Environment variables (e.g., FRIDAY_API_KEY)
-#   2. config.yml values
-#   3. Default values defined in code
 #
-# Environment variables use UPPER_SNAKE_CASE and are prefixed appropriately.
-# For nested config, use double underscores: PATHS__BRAIN=/custom/path
+# Environment variable overrides use FRIDAY_ prefix:
+#   FRIDAY_SYSTEM__PORT=9000 -> system.port = 9000
+#   FRIDAY_LLM__MODEL_NAME=... -> llm.model_name = ...
+#
+# Secrets (API keys, tokens) should be stored in .env
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
-# Paths
+# System Settings
 # ------------------------------------------------------------------------------
-# All paths should be absolute. These define where Friday stores and reads data.
-paths:
-  # Root directory for Friday installation
-  root: /home/artur/friday
-  
-  # Brain folder (Syncthing synced, editable in Obsidian)
-  brain: /home/artur/friday/brain
-  
-  # Data directory for databases and runtime files
-  data: /home/artur/friday/data
-  
-  # Log files directory
-  logs: /home/artur/friday/logs
-  
-  # Configuration files directory
-  config: /home/artur/friday/config
-
-# ------------------------------------------------------------------------------
-# Brain Structure
-# ------------------------------------------------------------------------------
-# Paths within the brain folder (relative to paths.brain)
-brain_structure:
-  # RAG Knowledge Base (read-only for Friday)
-  vault: "1. Notes"
-  
-  # Friday's own data (read-write)
-  friday_root: "5. Friday"
-  about: "5. Friday/5.0 About"
-  memories: "5. Friday/5.1 Memories"
-  journal: "5. Friday/5.2 Journal"
-  reports: "5. Friday/5.3 Reports"
-  reminders: "5. Friday/5.4 Reminders"
-  conversations: "5. Friday/5.5 Conversations"
-  learnings: "5. Friday/5.6 Learnings"
-
-# ------------------------------------------------------------------------------
-# User Profile
-# ------------------------------------------------------------------------------
-user:
-  # Name used for personalizing memories and responses
-  name: "Artur"
-  
-  # Profile file in the brain (for "Who am I?" queries)
-  profile_file: "Artur Gomes.md"
-  
-  # Timezone offset from UTC (e.g., -3 for BRT/Brasília)
-  timezone_offset_hours: -3
-  
-  # Authorized username for API access
-  authorized_user: "artur"
+system:
+  host: "0.0.0.0"
+  port: 8080
+  debug: false
+  log_level: "INFO"
 
 # ------------------------------------------------------------------------------
 # LLM Configuration
 # ------------------------------------------------------------------------------
 llm:
-  # Base URL for the LLM API (vLLM, Ollama, or OpenAI-compatible)
+  model_name: "dphn/Dolphin3.0-Llama3.1-8B"
   base_url: "http://localhost:8000/v1"
-  
-  # Model name/identifier
-  model_name: "Qwen/Qwen2.5-14B-Instruct"
-  
-  # Temperature for response generation (0.0 = deterministic, 1.0 = creative)
   temperature: 0.3
+  max_tokens: 4096
 
 # ------------------------------------------------------------------------------
 # Embeddings Configuration
 # ------------------------------------------------------------------------------
 embeddings:
-  # Model for generating embeddings
   model_name: "sentence-transformers/all-MiniLM-L6-v2"
-  
-  # Device for embeddings (cpu recommended to save GPU for LLM)
   device: "cpu"
 
 # ------------------------------------------------------------------------------
-# RAG (Retrieval Augmented Generation) Settings
+# Memory & Session Settings
 # ------------------------------------------------------------------------------
-rag:
-  # Number of chunks to retrieve from Obsidian vault
-  top_k_obsidian: 5
-  
-  # Number of neighboring chunks to include for context
-  neighbor_range: 1
-  
-  # Number of web search results to include
-  top_k_web: 4
-  
-  # Number of memory items to retrieve
-  top_k_memory: 5
-  
-  # Maximum conversation history to include
-  max_conversation_history: 10
-  
-  # Chunking settings
-  chunk_max_chars: 2000
+memory:
+  session_timeout_seconds: 3600
+  chroma_path: "./data/chroma"
+  rag_top_k: 5
+  chunk_size: 1000
   chunk_overlap: 200
 
 # ------------------------------------------------------------------------------
-# External Services
+# Paths
+# ------------------------------------------------------------------------------
+paths:
+  root: /path/to/friday
+  brain: /path/to/friday/brain
+  data: /path/to/friday/data
+  logs: /path/to/friday/logs
+
+# ------------------------------------------------------------------------------
+# User Configuration
+# ------------------------------------------------------------------------------
+user:
+  name: "User"
+  profile_file: "User.md"
+  timezone_offset_hours: 0
+
+# ------------------------------------------------------------------------------
+# Hybrid Router Configuration
+# ------------------------------------------------------------------------------
+router:
+  use_structured_chain: true
+  max_tool_retries: 3
+
+# ------------------------------------------------------------------------------
+# Code Interpreter Settings
+# ------------------------------------------------------------------------------
+interpreter:
+  require_confirmation:
+    - "os.remove"
+    - "shutil.rmtree"
+    - "subprocess"
+  execution_timeout_sec: 30
+  max_iterations: 5
+
+# ------------------------------------------------------------------------------
+# Sensor Settings
+# ------------------------------------------------------------------------------
+sensors:
+  check_interval_default: 300
+  disk_threshold_percent: 90
+  gpu_temp_threshold: 80
+
+# ------------------------------------------------------------------------------
+# Service Ports
 # ------------------------------------------------------------------------------
 services:
-  # Friday API server
-  friday_api:
-    url: "http://localhost:8080"
-  
-  # SearXNG for web search
-  searxng:
-    url: "http://localhost:8888"
-  
-  # Whisper for voice transcription
-  whisper:
-    url: ""  # Set to your Whisper service URL if using voice
-  
-  # InfluxDB for health data (Garmin)
-  influxdb:
-    config_file: "influxdb_mcp.json"  # Relative to paths.config
-
-# ------------------------------------------------------------------------------
-# Google Calendar Integration
-# ------------------------------------------------------------------------------
-google_calendar:
-  credentials_file: "google_credentials.json"  # Relative to paths.data
-  token_file: "google_token.pickle"  # Relative to paths.data
-
-# ------------------------------------------------------------------------------
-# Telegram Bot
-# ------------------------------------------------------------------------------
-telegram:
-  # Bot token (recommend using env var TELEGRAM_BOT_TOKEN instead)
-  bot_token: ""
-  
-  # Authorized user ID (only this user can interact with the bot)
-  user_id: ""
-
-# ------------------------------------------------------------------------------
-# Proactive Monitoring (Awareness Engine)
-# ------------------------------------------------------------------------------
-awareness:
-  # Daily limit for proactive messages (self-regulation)
-  daily_message_limit: 5
-  
-  # Whether urgent alerts bypass the budget
-  urgent_exempt: true
-  
-  # Minutes before resending unacknowledged alerts
-  alert_cooldown_minutes: 30
-
-# ------------------------------------------------------------------------------
-# Weather Integration
-# ------------------------------------------------------------------------------
-weather:
-  # OpenWeatherMap API key
-  api_key: ""
-  
-  # Default city for weather queries
-  city: "São Paulo"
-
-# ------------------------------------------------------------------------------
-# Authentication
-# ------------------------------------------------------------------------------
-auth:
-  # API key for Friday API (recommend using env var FRIDAY_API_KEY instead)
-  api_key: ""
-
-# ------------------------------------------------------------------------------
-# Logging
-# ------------------------------------------------------------------------------
-logging:
-  # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
-  level: "INFO"
-  
-  # Log format
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-
-# ------------------------------------------------------------------------------
-# Feature Flags
-# ------------------------------------------------------------------------------
-features:
-  # Enable/disable specific features
-  web_search: true
-  health_monitoring: true
-  calendar_integration: true
-  proactive_alerts: true
-  voice_transcription: false
-  learning_system: true
+  core_port: 8080
+  vllm_port: 8000

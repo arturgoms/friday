@@ -19,6 +19,9 @@ python-dotenv = "*"
 watchdog = "*"
 apscheduler = "*"
 python-telegram-bot = "*"
+typer = {extras = ["all"], version = "*"}
+httpx = "*"
+pyyaml = "*"
 
 [dev-packages]
 pytest = "*"
