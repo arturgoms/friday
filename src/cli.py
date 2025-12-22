@@ -52,22 +52,29 @@ def get_api_url() -> str:
     return os.getenv("FRIDAY_API_URL", DEFAULT_API_URL)
 
 
+def get_api_headers() -> dict:
+    """Get headers for API requests including auth."""
+    headers = {"Content-Type": "application/json"}
+    api_key = os.getenv("FRIDAY_API_KEY", "")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
+
+
 def get_systemd_status(service: str) -> dict:
     """Get systemd service status."""
     try:
         result = subprocess.run(
-            ["systemctl", "--user", "show", service, 
-             "--property=ActiveState,SubState,MainPID,MemoryCurrent"],
+            ["systemctl", "--user", "show", service, "--property=ActiveState,SubState,MainPID,MemoryCurrent"],
             capture_output=True,
-            text=True
+            text=True,
+            timeout=5
         )
-        
         status = {}
         for line in result.stdout.strip().split("\n"):
             if "=" in line:
                 key, value = line.split("=", 1)
                 status[key] = value
-        
         return status
     except Exception:
         return {"ActiveState": "unknown", "SubState": "unknown"}
@@ -81,12 +88,13 @@ async def api_request(
 ) -> dict:
     """Make an API request to the core service."""
     url = f"{get_api_url()}{endpoint}"
+    headers = get_api_headers()
     
     async with httpx.AsyncClient(timeout=timeout) as client:
         if method.upper() == "GET":
-            response = await client.get(url)
+            response = await client.get(url, headers=headers)
         else:
-            response = await client.post(url, json=data or {})
+            response = await client.post(url, json=data or {}, headers=headers)
         
         response.raise_for_status()
         return response.json()
@@ -214,19 +222,39 @@ def restart(service: str = typer.Argument("all", help="Service to restart (or 'a
 
 @app.command()
 def logs(
-    service: str = typer.Argument("friday-core", help="Service to tail logs for"),
-    lines: int = typer.Option(50, "-n", "--lines", help="Number of lines to show")
+    service: str = typer.Argument("all", help="Service to tail logs for (or 'all')"),
+    lines: int = typer.Option(50, "-n", "--lines", help="Number of lines to show"),
+    follow: bool = typer.Option(True, "-f", "--follow/--no-follow", help="Follow log output")
 ):
     """Tail logs for a Friday service."""
-    console.print(f"[cyan]Tailing logs for {service}...[/cyan]")
-    console.print("[dim]Press Ctrl+C to exit[/dim]\n")
-    
-    try:
-        subprocess.run([
-            "journalctl", "--user", "-u", service, "-f", "-n", str(lines)
-        ])
-    except KeyboardInterrupt:
-        pass
+    if service == "all":
+        # Show combined logs from all services
+        console.print(f"[cyan]Tailing logs for all Friday services...[/cyan]")
+        console.print("[dim]Press Ctrl+C to exit[/dim]\n")
+        
+        cmd = ["journalctl", "--user", "-n", str(lines)]
+        # Add all service units
+        for svc in SERVICES:
+            cmd.extend(["-u", svc])
+        if follow:
+            cmd.append("-f")
+        
+        try:
+            subprocess.run(cmd)
+        except KeyboardInterrupt:
+            pass
+    else:
+        console.print(f"[cyan]Tailing logs for {service}...[/cyan]")
+        console.print("[dim]Press Ctrl+C to exit[/dim]\n")
+        
+        cmd = ["journalctl", "--user", "-u", service, "-n", str(lines)]
+        if follow:
+            cmd.append("-f")
+        
+        try:
+            subprocess.run(cmd)
+        except KeyboardInterrupt:
+            pass
 
 
 # =============================================================================

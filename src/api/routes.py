@@ -11,12 +11,14 @@ Endpoints:
 """
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 
 from src.core.agent import close_agent, get_agent
@@ -28,6 +30,49 @@ from src.core.registry import get_all_tool_schemas, get_sensor_registry, get_too
 from src.core.vector_store import BrainIndexer, get_vector_store
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# API Key Authentication
+# =============================================================================
+
+API_KEY = os.getenv("FRIDAY_API_KEY", "")
+api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
+
+
+async def verify_api_key(authorization: Optional[str] = Security(api_key_header)) -> bool:
+    """Verify API key from Authorization header.
+    
+    Expects: Authorization: Bearer <api_key>
+    
+    If FRIDAY_API_KEY is not set, authentication is disabled.
+    """
+    # If no API key configured, allow all requests
+    if not API_KEY:
+        return True
+    
+    if not authorization:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing Authorization header"
+        )
+    
+    # Parse Bearer token
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Authorization header format. Use: Bearer <api_key>"
+        )
+    
+    token = parts[1]
+    if token != API_KEY:
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid API key"
+        )
+    
+    return True
 
 
 # =============================================================================
@@ -175,7 +220,7 @@ async def health_check():
 
 
 @app.post("/chat", response_model=ChatResponse, tags=["Chat"])
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, authorized: bool = Depends(verify_api_key)):
     """Main chat endpoint.
     
     Processes user messages through the Hybrid Agent which routes
@@ -217,7 +262,7 @@ async def chat(request: ChatRequest):
 
 
 @app.post("/alert", response_model=AlertResponse, tags=["Alerts"])
-async def receive_alert(request: AlertRequest):
+async def receive_alert(request: AlertRequest, authorized: bool = Depends(verify_api_key)):
     """Receive alerts from the awareness service.
     
     The awareness daemon sends alerts here when sensors detect
@@ -240,7 +285,7 @@ async def receive_alert(request: AlertRequest):
 
 
 @app.get("/tools", tags=["System"])
-async def list_tools():
+async def list_tools(authorized: bool = Depends(verify_api_key)):
     """List all registered tools and their schemas."""
     registry = get_tool_registry()
     
@@ -258,7 +303,7 @@ async def list_tools():
 
 
 @app.get("/sensors", tags=["System"])
-async def list_sensors():
+async def list_sensors(authorized: bool = Depends(verify_api_key)):
     """List all registered sensors."""
     registry = get_sensor_registry()
     
@@ -277,7 +322,11 @@ async def list_sensors():
 
 
 @app.post("/conversation/clear", tags=["Chat"])
-async def clear_conversation(user_id: str = "default", session_id: Optional[str] = None):
+async def clear_conversation(
+    user_id: str = "default",
+    session_id: Optional[str] = None,
+    authorized: bool = Depends(verify_api_key)
+):
     """Clear conversation history for a session."""
     agent = get_agent()
     agent.clear_conversation(session_id or user_id)
@@ -285,7 +334,11 @@ async def clear_conversation(user_id: str = "default", session_id: Optional[str]
 
 
 @app.get("/conversation/history", tags=["Chat"])
-async def get_conversation_history(user_id: str = "default", session_id: Optional[str] = None):
+async def get_conversation_history(
+    user_id: str = "default",
+    session_id: Optional[str] = None,
+    authorized: bool = Depends(verify_api_key)
+):
     """Get conversation history for a session."""
     agent = get_agent()
     history = agent.get_conversation_history(session_id or user_id)
