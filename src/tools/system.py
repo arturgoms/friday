@@ -184,6 +184,107 @@ def get_friday_logs(service: str = "all", lines: int = 50) -> str:
         return f"Error getting logs: {e}"
 
 
+@friday_tool(name="get_homelab_status")
+def get_homelab_status() -> str:
+    """Get full monitoring status of all homelab services and servers.
+    
+    Returns:
+        Comprehensive status report including:
+        - All monitored web services (up/down)
+        - All server hardware metrics (CPU, memory, disk)
+        - Garmin sync status
+    """
+    from src.sensors.homelab import check_homelab_services, check_remote_server_hardware
+    from src.sensors.health import check_garmin_sync_status
+    
+    lines = []
+    
+    # ===== Server Hardware =====
+    lines.append("SERVER HARDWARE")
+    lines.append("=" * 50)
+    
+    try:
+        hw_data = check_remote_server_hardware()
+        for srv in hw_data.get("servers", []):
+            name = srv.get("display_name", srv.get("server", "Unknown"))
+            if srv.get("status") != "ok":
+                lines.append(f"  {name}: {srv.get('error', 'Unreachable')}")
+            else:
+                cpu = srv.get("cpu_percent", 0)
+                mem = srv.get("memory_percent", 0)
+                disk = srv.get("disk_percent", 0)
+                load = srv.get("load_5min", 0)
+                cores = srv.get("cpu_cores", 1)
+                
+                # Status indicators
+                mem_icon = "" if mem < 90 else "" if mem < 95 else ""
+                disk_icon = "" if disk < 90 else "" if disk < 95 else ""
+                
+                lines.append(f"  {name}")
+                lines.append(f"    CPU:  {cpu:5.1f}% ({cores} cores, load: {load:.2f})")
+                lines.append(f"    Mem:  {mem:5.1f}% ({srv.get('memory_used_gb', 0):.1f}/{srv.get('memory_total_gb', 0):.1f} GB) {mem_icon}")
+                lines.append(f"    Disk: {disk:5.1f}% ({srv.get('disk_used_gb', 0):.1f}/{srv.get('disk_total_gb', 0):.1f} GB) {disk_icon}")
+    except Exception as e:
+        lines.append(f"  Error fetching hardware data: {e}")
+    
+    lines.append("")
+    
+    # ===== Web Services =====
+    lines.append("WEB SERVICES")
+    lines.append("=" * 50)
+    
+    try:
+        svc_data = check_homelab_services()
+        up = svc_data.get("up", 0)
+        down = svc_data.get("down", 0)
+        total = svc_data.get("total_services", 0)
+        
+        lines.append(f"  Status: {up}/{total} services up")
+        lines.append("")
+        
+        for svc in sorted(svc_data.get("services", []), key=lambda x: x.get("name", "")):
+            name = svc.get("name", "Unknown")
+            status = svc.get("status", "unknown")
+            rt = svc.get("response_time_ms")
+            
+            if status == "up":
+                icon = "UP"
+                rt_str = f"({rt}ms)" if rt else ""
+            elif status == "down":
+                icon = "DOWN"
+                rt_str = f"- {svc.get('error', 'Unknown error')}"
+            else:
+                icon = "WARN"
+                rt_str = f"({svc.get('status_code', '?')})"
+            
+            lines.append(f"  [{icon:4}] {name:20} {rt_str}")
+    except Exception as e:
+        lines.append(f"  Error fetching services: {e}")
+    
+    lines.append("")
+    
+    # ===== Garmin Sync =====
+    lines.append("GARMIN SYNC")
+    lines.append("=" * 50)
+    
+    try:
+        sync_data = check_garmin_sync_status()
+        if "error" in sync_data:
+            lines.append(f"  Error: {sync_data['error']}")
+        else:
+            hours = sync_data.get("hours_since_sync", 0)
+            status = sync_data.get("status", "unknown")
+            last_hr = sync_data.get("last_heart_rate", 0)
+            
+            status_icon = "OK" if hours < 6 else "WARN" if hours < 12 else "STALE"
+            lines.append(f"  Status: {status_icon} - Last sync {hours:.1f} hours ago")
+            lines.append(f"  Last HR: {last_hr} bpm")
+    except Exception as e:
+        lines.append(f"  Error: {e}")
+    
+    return "\n".join(lines)
+
+
 @friday_tool(name="get_friday_status")
 def get_friday_status() -> str:
     """Get status of all Friday services.

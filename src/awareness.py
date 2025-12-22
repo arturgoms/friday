@@ -506,6 +506,145 @@ class ThresholdEvaluator:
                     "message": f"🌧️ Rain expected in {city} around {rain_time} ({prob_pct}% chance - {rain_desc}). Consider taking an umbrella!"
                 }
         
+        # =====================================================================
+        # Calendar - Upcoming Events
+        # =====================================================================
+        
+        elif sensor_name == "upcoming_events":
+            events_soon = data.get("events_soon", [])
+            
+            if events_soon:
+                alerts = []
+                for event in events_soon:
+                    minutes = event.get("minutes_until", 0)
+                    title = event.get("title", "Event")
+                    calendar = event.get("calendar", "")
+                    location = event.get("location", "")
+                    
+                    cal_icon = "🏠" if calendar == "personal" else "💼"
+                    loc_str = f" at {location}" if location else ""
+                    
+                    if minutes <= 5:
+                        alerts.append(f"🔴 {cal_icon} Starting NOW: {title}{loc_str}")
+                    elif minutes <= 15:
+                        alerts.append(f"⏰ {cal_icon} In {minutes} min: {title}{loc_str}")
+                
+                if alerts:
+                    return {
+                        "level": "warning",
+                        "message": "\n".join(alerts)
+                    }
+        
+        # =====================================================================
+        # Garmin Sync Status
+        # =====================================================================
+        
+        elif sensor_name == "garmin_sync_status":
+            status = data.get("status", "")
+            hours = data.get("hours_since_sync", 0)
+            last_sync = data.get("last_sync_time", "")
+            
+            # Alert if sync is stale (>12 hours)
+            if status == "stale" or hours >= 12:
+                # Format the time nicely
+                try:
+                    from datetime import datetime
+                    sync_time = datetime.fromisoformat(last_sync.replace("Z", "+00:00"))
+                    time_str = sync_time.strftime("%Y-%m-%d %H:%M")
+                except:
+                    time_str = last_sync
+                
+                return {
+                    "level": "warning",
+                    "message": f"⚠️ Garmin sync is stale! Last data: {hours:.1f} hours ago ({time_str}). Check if Garmin Connect is syncing to InfluxDB."
+                }
+        
+        # =====================================================================
+        # Homelab Services
+        # =====================================================================
+        
+        elif sensor_name == "homelab_services":
+            down_services = data.get("down_services", [])
+            down_count = data.get("down", 0)
+            total = data.get("total_services", 0)
+            
+            if down_count > 0:
+                # Build message with service details
+                services_list = ", ".join(down_services)
+                
+                # Get error details for down services
+                details = []
+                for svc in data.get("services", []):
+                    if svc.get("status") == "down":
+                        err = svc.get("error", "Unknown error")
+                        details.append(f"  - {svc['name']}: {err}")
+                
+                details_str = "\n".join(details) if details else ""
+                
+                if down_count >= 3:
+                    return {
+                        "level": "critical",
+                        "message": f"🔴 Multiple homelab services DOWN! ({down_count}/{total})\n{details_str}"
+                    }
+                else:
+                    return {
+                        "level": "warning",
+                        "message": f"⚠️ Homelab service(s) DOWN: {services_list}\n{details_str}"
+                    }
+        
+        # =====================================================================
+        # Remote Server Hardware
+        # =====================================================================
+        
+        elif sensor_name == "remote_server_hardware":
+            servers = data.get("servers", [])
+            
+            alerts = []
+            level = "warning"
+            
+            for srv in servers:
+                name = srv.get("display_name", srv.get("server", "Unknown"))
+                
+                # Check if server is unreachable
+                if srv.get("status") != "ok":
+                    alerts.append(f"🔴 {name}: {srv.get('error', 'Unreachable')}")
+                    level = "critical"
+                    continue
+                
+                # Check disk usage (most critical)
+                disk_pct = srv.get("disk_percent", 0)
+                if disk_pct >= 95:
+                    alerts.append(f"🔴 {name}: Disk CRITICAL at {disk_pct}%!")
+                    level = "critical"
+                elif disk_pct >= 90:
+                    alerts.append(f"⚠️ {name}: Disk high at {disk_pct}%")
+                
+                # Check memory usage
+                mem_pct = srv.get("memory_percent", 0)
+                if mem_pct >= 95:
+                    alerts.append(f"🔴 {name}: Memory CRITICAL at {mem_pct}%!")
+                    level = "critical"
+                elif mem_pct >= 90:
+                    alerts.append(f"⚠️ {name}: Memory high at {mem_pct}%")
+                
+                # Check CPU (sustained high load)
+                cpu_pct = srv.get("cpu_percent", 0)
+                load_5min = srv.get("load_5min", 0)
+                cores = srv.get("cpu_cores", 1)
+                
+                # Alert if load average exceeds cores (system overloaded)
+                if load_5min > cores * 2:
+                    alerts.append(f"🔴 {name}: System overloaded! Load: {load_5min:.1f} ({cores} cores)")
+                    level = "critical"
+                elif load_5min > cores:
+                    alerts.append(f"⚠️ {name}: High load: {load_5min:.1f} ({cores} cores)")
+            
+            if alerts:
+                return {
+                    "level": level,
+                    "message": "\n".join(alerts)
+                }
+        
         return None
 
 

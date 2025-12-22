@@ -274,6 +274,72 @@ def check_recovery_status() -> Dict[str, Any]:
         return {"sensor": "recovery_status", "error": str(e)}
 
 
+@friday_sensor(name="garmin_sync_status", interval_seconds=1800)  # Check every 30 min
+def check_garmin_sync_status() -> Dict[str, Any]:
+    """Check if Garmin data is syncing properly.
+    
+    Monitors the last HeartRateIntraday record to detect sync issues.
+    Alert if last sync is older than 12 hours.
+    
+    Returns:
+        Dictionary with sync status
+    """
+    try:
+        client = _get_influx_client()
+        if not client:
+            return {"sensor": "garmin_sync_status", "error": "InfluxDB not available"}
+        
+        # Query the last heart rate intraday record
+        query = 'SELECT last("HeartRate") FROM "HeartRateIntraday"'
+        result = client.query(query)
+        points = list(result.get_points())
+        
+        if not points:
+            return {
+                "sensor": "garmin_sync_status",
+                "status": "no_data",
+                "error": "No HeartRateIntraday data found"
+            }
+        
+        last_point = points[0]
+        last_time_str = last_point.get("time", "")
+        
+        # Parse the timestamp
+        # InfluxDB returns ISO format: 2024-01-15T10:30:00Z
+        try:
+            last_time = datetime.fromisoformat(last_time_str.replace("Z", "+00:00"))
+        except:
+            # Try alternative parsing
+            from dateutil import parser
+            last_time = parser.parse(last_time_str)
+        
+        # Calculate hours since last sync
+        now = datetime.now(timezone.utc)
+        time_diff = now - last_time
+        hours_since_sync = time_diff.total_seconds() / 3600
+        
+        # Determine sync status
+        if hours_since_sync < 2:
+            status = "healthy"
+        elif hours_since_sync < 6:
+            status = "delayed"
+        elif hours_since_sync < 12:
+            status = "warning"
+        else:
+            status = "stale"
+        
+        return {
+            "sensor": "garmin_sync_status",
+            "status": status,
+            "last_sync_time": last_time.isoformat(),
+            "hours_since_sync": round(hours_since_sync, 1),
+            "last_heart_rate": last_point.get("last", 0)
+        }
+        
+    except Exception as e:
+        return {"sensor": "garmin_sync_status", "error": str(e)}
+
+
 @friday_sensor(name="stress_level", interval_seconds=1800)  # Check every 30 min
 def check_stress_level() -> Dict[str, Any]:
     """Check current stress levels from Garmin.

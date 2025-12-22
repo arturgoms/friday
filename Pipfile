@@ -22,6 +22,12 @@ python-telegram-bot = "*"
 typer = {extras = ["all"], version = "*"}
 httpx = "*"
 pyyaml = "*"
+caldav = "*"
+icalendar = "*"
+google-api-python-client = "*"
+google-auth-httplib2 = "*"
+google-auth-oauthlib = "*"
+vobject = "*"
 
 [dev-packages]
 pytest = "*"

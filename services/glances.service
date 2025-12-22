@@ -1,0 +1,12 @@
+[Unit]
+Description=Glances monitoring server (Web API)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/glances -w -B 0.0.0.0 -p 61208 --disable-webui
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
