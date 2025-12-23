@@ -86,6 +86,42 @@ def _format_duration(seconds: float) -> str:
 # Morning Report
 # =============================================================================
 
+def _check_garmin_sync_freshness() -> tuple:
+    """Check if Garmin data is fresh enough for today's report.
+    
+    Returns:
+        (is_fresh, hours_ago, last_sync_time_str)
+    """
+    query = 'SELECT last("HeartRate") FROM "HeartRateIntraday"'
+    points = _query(query)
+    
+    if not points:
+        return False, None, None
+    
+    point = points[0]
+    last_time_str = point.get("time", "")
+    
+    if not last_time_str:
+        return False, None, None
+    
+    try:
+        from datetime import timezone as tz
+        last_time = datetime.fromisoformat(last_time_str.replace("Z", "+00:00"))
+        now_utc = datetime.now(tz.utc)
+        hours_ago = (now_utc - last_time).total_seconds() / 3600
+        
+        # Convert to BRT for display
+        last_time_brt = last_time.astimezone(BRT)
+        time_str = last_time_brt.strftime("%H:%M")
+        
+        # Consider fresh if synced within last 6 hours
+        is_fresh = hours_ago < 6
+        return is_fresh, hours_ago, time_str
+        
+    except Exception:
+        return False, None, None
+
+
 @friday_tool(name="get_morning_report")
 def get_morning_report() -> str:
     """Get morning briefing with sleep, energy, calendar, and weather."""
@@ -100,6 +136,20 @@ def get_morning_report() -> str:
     insights = []
     warnings = []
     
+    # --- Check Garmin sync freshness ---
+    garmin_fresh, hours_ago, last_sync_time = _check_garmin_sync_freshness()
+    
+    if not garmin_fresh:
+        if hours_ago is not None:
+            lines.append(f"⚠️ GARMIN DATA STALE (last sync: {hours_ago:.1f}h ago at {last_sync_time})")
+            lines.append("Health metrics below may be outdated. Sync your watch!")
+            lines.append("")
+            warnings.append("Garmin data is stale - sync your watch.")
+        else:
+            lines.append("⚠️ GARMIN SYNC UNAVAILABLE")
+            lines.append("Could not verify data freshness.")
+            lines.append("")
+    
     # --- Sleep ---
     lines.append("🛏️ LAST NIGHT'S SLEEP")
     
@@ -111,7 +161,9 @@ def get_morning_report() -> str:
     sleep_data = _query(sleep_query)
     
     sleep_score = 0
-    if sleep_data:
+    if not garmin_fresh:
+        lines.append("  Data unavailable (Garmin not synced)")
+    elif sleep_data:
         sleep = sleep_data[0]
         sleep_date = sleep.get("time", "").split("T")[0]
         yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -142,45 +194,53 @@ def get_morning_report() -> str:
             lines.append(f"Duration: {total_hours:.1f}h (Deep: {_format_duration(deep)}, REM: {_format_duration(rem)})")
             lines.append(f"HRV: {hrv}ms | RHR: {rhr}bpm")
         else:
-            lines.append(f"Data outdated ({sleep_date}) - check Garmin sync")
-            warnings.append("Sleep data may be outdated.")
+            lines.append(f"  Data outdated ({sleep_date})")
     else:
-        lines.append("No sleep data available")
+        lines.append("  No sleep data available")
     
     # --- Energy & Recovery ---
     lines.append("")
     lines.append("🔋 ENERGY")
     
-    bb_query = "SELECT bodyBatteryAtWakeTime FROM DailyStats ORDER BY time DESC LIMIT 1"
-    bb_data = _query(bb_query)
-    
-    body_battery = 0
-    if bb_data:
-        body_battery = int(bb_data[0].get("bodyBatteryAtWakeTime", 0) or 0)
+    if not garmin_fresh:
+        lines.append("  Data unavailable (Garmin not synced)")
+    else:
+        bb_query = "SELECT bodyBatteryAtWakeTime, time FROM DailyStats ORDER BY time DESC LIMIT 1"
+        bb_data = _query(bb_query)
         
-        if body_battery >= 80:
-            bb_desc = "Fully charged!"
-            insights.append("High energy - great day for challenging tasks.")
-        elif body_battery >= 60:
-            bb_desc = "Good levels"
-        elif body_battery >= 40:
-            bb_desc = "Moderate"
-        else:
-            bb_desc = "Low - pace yourself"
-            warnings.append("Low energy - avoid overexertion.")
+        body_battery = 0
+        if bb_data:
+            bb_date = bb_data[0].get("time", "").split("T")[0]
+            if bb_date == today_str:
+                body_battery = int(bb_data[0].get("bodyBatteryAtWakeTime", 0) or 0)
+                
+                if body_battery >= 80:
+                    bb_desc = "Fully charged!"
+                    insights.append("High energy - great day for challenging tasks.")
+                elif body_battery >= 60:
+                    bb_desc = "Good levels"
+                elif body_battery >= 40:
+                    bb_desc = "Moderate"
+                else:
+                    bb_desc = "Low - pace yourself"
+                    warnings.append("Low energy - avoid overexertion.")
+                
+                lines.append(f"Body Battery: {body_battery}/100 ({bb_desc})")
+            else:
+                lines.append(f"  Data from {bb_date} (not today)")
         
-        lines.append(f"Body Battery: {body_battery}/100 ({bb_desc})")
-    
-    tr_query = "SELECT score, level FROM TrainingReadiness ORDER BY time DESC LIMIT 1"
-    tr_data = _query(tr_query)
-    
-    if tr_data:
-        tr_score = int(tr_data[0].get("score", 0) or 0)
-        tr_level = tr_data[0].get("level", "")
-        lines.append(f"Training Readiness: {tr_score}/100 ({tr_level})")
+        tr_query = "SELECT score, level, time FROM TrainingReadiness ORDER BY time DESC LIMIT 1"
+        tr_data = _query(tr_query)
         
-        if tr_score < 50:
-            warnings.append("Low training readiness - rest or light activity only.")
+        if tr_data:
+            tr_date = tr_data[0].get("time", "").split("T")[0]
+            if tr_date == today_str:
+                tr_score = int(tr_data[0].get("score", 0) or 0)
+                tr_level = tr_data[0].get("level", "")
+                lines.append(f"Training Readiness: {tr_score}/100 ({tr_level})")
+                
+                if tr_score < 50:
+                    warnings.append("Low training readiness - rest or light activity only.")
     
     # --- Calendar ---
     lines.append("")
@@ -270,6 +330,18 @@ def get_evening_report() -> str:
         "body_battery": 50,
         "high_stress_min": 0,
     }
+    
+    # --- Check Garmin sync freshness ---
+    garmin_fresh, hours_ago, last_sync_time = _check_garmin_sync_freshness()
+    
+    if not garmin_fresh:
+        if hours_ago is not None:
+            lines.append(f"⚠️ GARMIN DATA STALE (last sync: {hours_ago:.1f}h ago at {last_sync_time})")
+            lines.append("Activity metrics below may be incomplete. Sync your watch!")
+            lines.append("")
+        else:
+            lines.append("⚠️ GARMIN SYNC UNAVAILABLE")
+            lines.append("")
     
     # --- Activity ---
     lines.append("🏃 ACTIVITY")

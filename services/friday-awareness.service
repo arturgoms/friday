@@ -1,0 +1,18 @@
+[Unit]
+Description=Friday Awareness Engine
+After=network.target friday-core.service
+Wants=friday-core.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/artur/friday
+Environment="PATH=/home/artur/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONPATH=/home/artur/friday"
+ExecStart=/home/artur/.local/bin/pipenv run python -m src.awareness
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/artur/friday/logs/friday-awareness.log
+StandardError=append:/home/artur/friday/logs/friday-awareness.log
+
+[Install]
+WantedBy=default.target

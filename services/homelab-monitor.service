@@ -7,7 +7,7 @@ Type=simple
 User=artur
 WorkingDirectory=/home/artur/friday
 Environment="PATH=/home/artur/.local/share/virtualenvs/friday/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/home/artur/.local/share/virtualenvs/friday/bin/python src/homelab_monitor.py 300
+ExecStart=/home/artur/.local/share/virtualenvs/friday/bin/python -m src.awareness
 Restart=always
 RestartSec=10
 

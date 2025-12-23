@@ -1,0 +1,17 @@
+[Unit]
+Description=Friday vLLM Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/artur/friday
+Environment="PATH=/home/artur/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="CUDA_VISIBLE_DEVICES=0"
+ExecStart=/home/artur/friday/scripts/vllm/start_vllm.sh
+Restart=always
+RestartSec=30
+StandardOutput=append:/home/artur/friday/logs/friday-vllm.log
+StandardError=append:/home/artur/friday/logs/friday-vllm.log
+
+[Install]
+WantedBy=default.target

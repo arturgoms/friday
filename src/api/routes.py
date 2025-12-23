@@ -375,8 +375,9 @@ async def receive_alert(request: AlertRequest, authorized: bool = Depends(verify
         
         action_taken = None
         
-        # Forward warning and critical alerts to Telegram
-        if request.level in ("warning", "critical"):
+        # Forward warning, critical, and scheduled reports to Telegram
+        is_scheduled_report = request.sensor.startswith("scheduled_")
+        if request.level in ("warning", "critical") or is_scheduled_report:
             # Format message with sensor data (plain text, no markdown)
             alert_message = f"[{request.level.upper()}] {request.sensor}\n\n{request.message}"
             

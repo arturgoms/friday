@@ -636,3 +636,54 @@ def get_activity_summary(days: int = 7) -> str:
             lines.append(f"   {name} ({atype}): {dist}km | {dur} | {cal} cal")
     
     return "\n".join(lines)
+
+
+@friday_tool(name="get_garmin_sync_status")
+def get_garmin_sync_status() -> str:
+    """Check when Garmin data was last synced to InfluxDB.
+    
+    Returns:
+        Last sync time and status
+    """
+    # Query for the most recent heart rate data point
+    query = 'SELECT last("HeartRate") FROM "HeartRateIntraday"'
+    
+    points = _query(query)
+    
+    if not points:
+        return "No Garmin data found in InfluxDB. Sync may not be configured."
+    
+    point = points[0]
+    last_time_str = point.get("time", "")
+    last_hr = point.get("last", 0)
+    
+    if not last_time_str:
+        return "Could not determine last sync time."
+    
+    # Parse the timestamp
+    try:
+        last_time = datetime.fromisoformat(last_time_str.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        hours_ago = (now - last_time).total_seconds() / 3600
+        
+        # Convert to BRT for display
+        last_time_brt = last_time.astimezone(BRT)
+        time_str = last_time_brt.strftime("%Y-%m-%d %H:%M BRT")
+        
+        if hours_ago < 1:
+            status = "Current"
+        elif hours_ago < 6:
+            status = "Recent"
+        elif hours_ago < 12:
+            status = "Getting stale"
+        else:
+            status = "STALE - needs attention"
+        
+        return (
+            f"Garmin Sync Status: {status}\n"
+            f"Last sync: {time_str} ({hours_ago:.1f} hours ago)\n"
+            f"Last heart rate: {last_hr} bpm"
+        )
+        
+    except Exception as e:
+        return f"Error parsing sync time: {e}"
