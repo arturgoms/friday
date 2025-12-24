@@ -1,20 +1,21 @@
 """
 Friday 3.0 System Tools
 
-Example tools for system administration.
+Tools for system administration and monitoring.
 """
 
+import logging
 import shutil
 import subprocess
 from datetime import datetime, timezone, timedelta
 
+from src.core.constants import BRT
 from src.core.registry import friday_tool
+
+logger = logging.getLogger(__name__)
 
 # Friday service names
 FRIDAY_SERVICES = ["friday-vllm", "friday-core", "friday-awareness", "friday-telegram"]
-
-# Brazil timezone (UTC-3)
-BRT = timezone(timedelta(hours=-3))
 
 
 @friday_tool(name="get_disk_usage")

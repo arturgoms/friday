@@ -11,6 +11,7 @@ Usage:
 """
 
 import logging
+import threading
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -321,10 +322,11 @@ def chunk_markdown(
 # =============================================================================
 
 _embeddings: Optional[EmbeddingsModel] = None
+_embeddings_lock = threading.Lock()
 
 
 def get_embeddings() -> EmbeddingsModel:
-    """Get the global embeddings model instance.
+    """Get the global embeddings model instance (thread-safe).
     
     Returns:
         EmbeddingsModel instance
@@ -332,10 +334,14 @@ def get_embeddings() -> EmbeddingsModel:
     global _embeddings
     
     if _embeddings is None:
-        config = get_config()
-        _embeddings = EmbeddingsModel(
-            model_name=config.embeddings.model_name,
-            device=config.embeddings.device
-        )
+        with _embeddings_lock:
+            # Double-check pattern for thread safety
+            if _embeddings is None:
+                config = get_config()
+                _embeddings = EmbeddingsModel(
+                    model_name=config.embeddings.model_name,
+                    device=config.embeddings.device
+                )
+                logger.info(f"EmbeddingsModel initialized: {config.embeddings.model_name} on {config.embeddings.device}")
     
     return _embeddings

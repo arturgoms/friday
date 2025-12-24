@@ -367,15 +367,287 @@ class ReportGenerator:
     
     def _generate_health_trends(self) -> Optional[str]:
         """Generate health trends for weekly report."""
-        # TODO: Implement weekly health analysis from snapshots
-        return None
+        try:
+            # Get health snapshots from past week (168 hours)
+            snapshots = self.store.get_snapshots("health", hours=168, limit=200)
+            if not snapshots:
+                return None
+            
+            # Extract metrics from snapshots
+            sleep_scores = []
+            sleep_hours = []
+            stress_avgs = []
+            body_batteries = []
+            steps_list = []
+            hrv_values = []
+            
+            for snapshot in snapshots:
+                data = snapshot.data
+                
+                # Sleep data
+                sleep = data.get("sleep", {})
+                if sleep.get("score"):
+                    sleep_scores.append(sleep["score"])
+                if sleep.get("total_hours"):
+                    sleep_hours.append(sleep["total_hours"])
+                if sleep.get("hrv"):
+                    hrv_values.append(sleep["hrv"])
+                
+                # Stress data
+                stress = data.get("stress", {})
+                if stress.get("daily_avg"):
+                    stress_avgs.append(stress["daily_avg"])
+                
+                # Body battery
+                bb = data.get("body_battery", {})
+                if bb.get("current"):
+                    body_batteries.append(bb["current"])
+                
+                # Daily stats
+                daily = data.get("daily_stats", {})
+                if daily.get("steps"):
+                    steps_list.append(daily["steps"])
+            
+            lines = ["Health Trends"]
+            
+            # Sleep summary
+            if sleep_scores:
+                avg_score = sum(sleep_scores) / len(sleep_scores)
+                avg_hours = sum(sleep_hours) / len(sleep_hours) if sleep_hours else 0
+                lines.append(f"  Sleep: avg {avg_score:.0f} score, {avg_hours:.1f}h/night")
+                
+                # Trend indicator
+                if len(sleep_scores) >= 3:
+                    recent = sum(sleep_scores[:3]) / 3
+                    older = sum(sleep_scores[-3:]) / 3
+                    if recent > older + 5:
+                        lines[-1] += " (improving)"
+                    elif recent < older - 5:
+                        lines[-1] += " (declining)"
+            
+            # Stress summary
+            if stress_avgs:
+                avg_stress = sum(stress_avgs) / len(stress_avgs)
+                max_stress = max(stress_avgs)
+                lines.append(f"  Stress: avg {avg_stress:.0f}, peak {max_stress}")
+            
+            # HRV summary
+            if hrv_values:
+                avg_hrv = sum(hrv_values) / len(hrv_values)
+                lines.append(f"  HRV: avg {avg_hrv:.0f}ms")
+            
+            # Activity summary
+            if steps_list:
+                avg_steps = sum(steps_list) / len(steps_list)
+                total_steps = sum(steps_list)
+                lines.append(f"  Steps: {avg_steps:,.0f} avg/day, {total_steps:,.0f} total")
+            
+            # Body battery summary
+            if body_batteries:
+                avg_bb = sum(body_batteries) / len(body_batteries)
+                lines.append(f"  Body Battery: avg {avg_bb:.0f}%")
+            
+            return "\n".join(lines) if len(lines) > 1 else None
+            
+        except Exception as e:
+            logger.error(f"[REPORTS] Health trends error: {e}")
+            return None
     
     def _generate_calendar_summary(self) -> Optional[str]:
         """Generate calendar summary for weekly report."""
-        # TODO: Implement weekly calendar analysis
-        return None
+        try:
+            # Get calendar snapshots from past week
+            snapshots = self.store.get_snapshots("calendar", hours=168, limit=50)
+            if not snapshots:
+                # Fallback to current week data from collector
+                data = self.calendar.collect()
+                if not data:
+                    return None
+                week = data.get("week_summary", {})
+                if not week:
+                    return None
+                
+                lines = ["Calendar Summary"]
+                total_events = week.get("total_events", 0)
+                total_meetings = week.get("total_meetings", 0)
+                meeting_hours = week.get("total_meeting_hours", 0)
+                busiest = week.get("busiest_day")
+                
+                if total_events > 0:
+                    lines.append(f"  {total_events} events, {total_meetings} meetings")
+                    lines.append(f"  {meeting_hours:.1f}h in meetings")
+                    if busiest:
+                        busiest_hours = week.get("busiest_day_hours", 0)
+                        lines.append(f"  Busiest: {busiest} ({busiest_hours:.1f}h)")
+                
+                return "\n".join(lines) if len(lines) > 1 else None
+            
+            # Aggregate data from snapshots
+            total_events = 0
+            total_meetings = 0
+            total_meeting_hours = 0
+            days_with_conflicts = 0
+            busiest_day = None
+            busiest_day_hours = 0
+            days_by_name = {}
+            
+            seen_dates = set()
+            for snapshot in snapshots:
+                data = snapshot.data
+                
+                # Get today's data from each snapshot (avoid double counting)
+                today = data.get("today", {})
+                if not today:
+                    continue
+                
+                # Extract date from snapshot timestamp
+                snapshot_date = snapshot.timestamp.strftime("%Y-%m-%d")
+                if snapshot_date in seen_dates:
+                    continue
+                seen_dates.add(snapshot_date)
+                
+                event_count = today.get("event_count", 0)
+                meeting_count = today.get("meeting_count", 0)
+                meeting_hours = today.get("meeting_hours", 0)
+                has_conflicts = today.get("has_conflicts", False)
+                
+                total_events += event_count
+                total_meetings += meeting_count
+                total_meeting_hours += meeting_hours
+                if has_conflicts:
+                    days_with_conflicts += 1
+                
+                # Track busiest day
+                day_name = snapshot.timestamp.strftime("%A")
+                days_by_name[day_name] = days_by_name.get(day_name, 0) + meeting_hours
+                if meeting_hours > busiest_day_hours:
+                    busiest_day_hours = meeting_hours
+                    busiest_day = day_name
+            
+            if total_events == 0:
+                return None
+            
+            lines = ["Calendar Summary"]
+            lines.append(f"  {total_events} events, {total_meetings} meetings")
+            lines.append(f"  {total_meeting_hours:.1f}h in meetings")
+            
+            if busiest_day:
+                lines.append(f"  Busiest: {busiest_day} ({busiest_day_hours:.1f}h)")
+            
+            if days_with_conflicts > 0:
+                lines.append(f"  {days_with_conflicts} days with conflicts")
+            
+            return "\n".join(lines)
+            
+        except Exception as e:
+            logger.error(f"[REPORTS] Calendar summary error: {e}")
+            return None
     
     def _generate_system_summary(self) -> Optional[str]:
         """Generate system summary for weekly report."""
-        # TODO: Implement weekly system analysis
-        return None
+        try:
+            # Get homelab snapshots from past week
+            snapshots = self.store.get_snapshots("homelab", hours=168, limit=200)
+            
+            if not snapshots:
+                # Fallback to current data
+                data = self.homelab.collect()
+                if not data:
+                    return None
+                
+                services = data.get("services", {})
+                local = data.get("local", {})
+                
+                lines = ["System Summary"]
+                total = services.get("total", 0)
+                up = services.get("up", 0)
+                if total > 0:
+                    lines.append(f"  Services: {up}/{total} up")
+                
+                if local:
+                    lines.append(f"  Local: {local.get('memory_percent', 0):.0f}% mem, {local.get('disk_percent', 0):.0f}% disk")
+                    if local.get("gpu_temp"):
+                        lines.append(f"  GPU: {local['gpu_temp']}C")
+                
+                return "\n".join(lines) if len(lines) > 1 else None
+            
+            # Aggregate data from snapshots
+            service_downtimes = {}  # service_name -> count of down occurrences
+            total_checks = 0
+            cpu_values = []
+            memory_values = []
+            disk_values = []
+            gpu_temps = []
+            
+            for snapshot in snapshots:
+                data = snapshot.data
+                
+                # Service health
+                services = data.get("services", {})
+                if services:
+                    total_checks += 1
+                    down_services = services.get("down_services", [])
+                    for svc in down_services:
+                        service_downtimes[svc] = service_downtimes.get(svc, 0) + 1
+                
+                # Hardware stats
+                hardware = data.get("hardware", {})
+                servers = hardware.get("servers", [])
+                for srv in servers:
+                    if srv.get("status") == "ok":
+                        if srv.get("cpu_percent"):
+                            cpu_values.append(srv["cpu_percent"])
+                        if srv.get("memory_percent"):
+                            memory_values.append(srv["memory_percent"])
+                        if srv.get("disk_percent"):
+                            disk_values.append(srv["disk_percent"])
+                
+                # Local stats
+                local = data.get("local", {})
+                if local:
+                    if local.get("memory_percent"):
+                        memory_values.append(local["memory_percent"])
+                    if local.get("disk_percent"):
+                        disk_values.append(local["disk_percent"])
+                    if local.get("gpu_temp"):
+                        gpu_temps.append(local["gpu_temp"])
+            
+            lines = ["System Summary"]
+            
+            # Service uptime
+            if total_checks > 0:
+                problematic = [(svc, count) for svc, count in service_downtimes.items() 
+                               if count >= 2]  # At least 2 downtimes
+                if problematic:
+                    problematic.sort(key=lambda x: -x[1])
+                    top_issues = problematic[:3]
+                    issues_str = ", ".join(f"{svc} ({count}x)" for svc, count in top_issues)
+                    lines.append(f"  Issues: {issues_str}")
+                else:
+                    lines.append("  Services: All stable")
+            
+            # Resource averages
+            if cpu_values:
+                avg_cpu = sum(cpu_values) / len(cpu_values)
+                max_cpu = max(cpu_values)
+                lines.append(f"  CPU: avg {avg_cpu:.0f}%, peak {max_cpu:.0f}%")
+            
+            if memory_values:
+                avg_mem = sum(memory_values) / len(memory_values)
+                max_mem = max(memory_values)
+                lines.append(f"  Memory: avg {avg_mem:.0f}%, peak {max_mem:.0f}%")
+            
+            if disk_values:
+                max_disk = max(disk_values)
+                lines.append(f"  Disk: max {max_disk:.0f}% used")
+            
+            if gpu_temps:
+                avg_gpu = sum(gpu_temps) / len(gpu_temps)
+                max_gpu = max(gpu_temps)
+                lines.append(f"  GPU: avg {avg_gpu:.0f}C, peak {max_gpu}C")
+            
+            return "\n".join(lines) if len(lines) > 1 else None
+            
+        except Exception as e:
+            logger.error(f"[REPORTS] System summary error: {e}")
+            return None

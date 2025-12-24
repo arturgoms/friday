@@ -31,8 +31,11 @@ vobject = "*"
 
 [dev-packages]
 pytest = "*"
-requests = "*"
+pytest-asyncio = "*"
+pytest-mock = "*"
 pytest-cov = "*"
+requests = "*"
+respx = "*"
 
 [requires]
 python_version = "3.12"

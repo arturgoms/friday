@@ -97,7 +97,8 @@ class InsightsEngine:
         # Control
         self._running = False
         
-        logger.info("InsightsEngine initialized")
+        logger.info("[INSIGHTS] Engine initialized with %d collectors, %d analyzers", 
+                     len(self._collectors), len(self._analyzers))
     
     def _load_report_state(self) -> Dict[str, str]:
         """Load report delivery state from file."""
@@ -122,7 +123,7 @@ class InsightsEngine:
             check_interval: How often to check for work (seconds)
         """
         self._running = True
-        logger.info("InsightsEngine started")
+        logger.info("[INSIGHTS] Engine started - check interval: %.1fs", check_interval)
         
         # Initial cleanup
         self.store.cleanup_old_snapshots(self.config.snapshot_retention_days)
@@ -153,14 +154,15 @@ class InsightsEngine:
                 # Log cycle time if slow
                 cycle_time = time_module.time() - cycle_start
                 if cycle_time > 5.0:
-                    logger.warning(f"Slow cycle: {cycle_time:.1f}s")
+                    logger.warning("[INSIGHTS] Slow cycle detected: %.1fs (collectors=%d)", 
+                                   cycle_time, len(collected_data) if collected_data else 0)
                 
             except Exception as e:
-                logger.error(f"Error in insights cycle: {e}", exc_info=True)
+                logger.error("[INSIGHTS] Error in main cycle: %s", e, exc_info=True)
             
             await asyncio.sleep(check_interval)
         
-        logger.info("InsightsEngine stopped")
+        logger.info("[INSIGHTS] Engine stopped")
     
     def stop(self):
         """Stop the engine."""

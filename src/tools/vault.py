@@ -5,6 +5,7 @@ Tools for managing the Obsidian vault (brain folder).
 Provides read/write/search operations on markdown notes.
 """
 
+import logging
 import os
 import re
 from datetime import datetime
@@ -14,6 +15,8 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from src.core.registry import friday_tool
+
+logger = logging.getLogger(__name__)
 
 # Get vault path from environment or default
 VAULT_PATH = Path(os.getenv("VAULT_PATH", "/home/artur/friday/brain"))
@@ -295,8 +298,8 @@ def vault_search_notes(
                                 if end < len(content):
                                     excerpt = excerpt + "..."
                                 break
-                except:
-                    pass
+                except (OSError, UnicodeDecodeError) as e:
+                    logger.debug(f"Failed to read file {file_path} for search: {e}")
             
             if match_type:
                 results.append({

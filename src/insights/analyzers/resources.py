@@ -75,7 +75,7 @@ class ResourceTrendAnalyzer(PeriodicAnalyzer):
             
             try:
                 ts = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-            except:
+            except (ValueError, TypeError):
                 continue
             
             # Local disk

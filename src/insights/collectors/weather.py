@@ -9,12 +9,10 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
 
+from src.core.constants import BRT
 from src.insights.collectors.base import BaseCollector
 
 logger = logging.getLogger(__name__)
-
-# Brazil timezone
-BRT = timezone(timedelta(hours=-3))
 
 
 class WeatherCollector(BaseCollector):

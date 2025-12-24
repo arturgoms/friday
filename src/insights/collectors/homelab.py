@@ -7,16 +7,17 @@ Collects homelab infrastructure data: services and hardware.
 import asyncio
 import json
 import logging
+import os
+import shutil
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
+from src.core.constants import BRT
 from src.insights.collectors.base import BaseCollector
 
 logger = logging.getLogger(__name__)
-
-# Brazil timezone
-BRT = timezone(timedelta(hours=-3))
 
 
 class HomelabCollector(BaseCollector):
@@ -156,11 +157,11 @@ class HomelabCollector(BaseCollector):
                 try:
                     base_url = f"http://{host}:{port}"
                     
-                    # Detect API version
+                    # Detect API version (v4 is newer Glances)
                     try:
                         client.get(f"{base_url}/api/4/status")
                         api_version = 4
-                    except:
+                    except Exception:
                         api_version = 3
                     
                     # Get stats
@@ -285,10 +286,11 @@ class HomelabCollector(BaseCollector):
                     # Detect API version
                     base_url = f"http://{host}:{port}"
                     
+                    # Detect API version (v4 is newer Glances)
                     try:
                         await client.get(f"{base_url}/api/4/status")
                         api_version = 4
-                    except:
+                    except Exception:
                         api_version = 3
                     
                     # Get stats
@@ -357,7 +359,8 @@ class HomelabCollector(BaseCollector):
         try:
             total, used, free = shutil.disk_usage("/")
             disk_percent = (used / total) * 100
-        except:
+        except OSError as e:
+            logger.debug(f"Failed to get disk usage: {e}")
             disk_percent = 0
         
         # Memory (read from /proc/meminfo)
@@ -376,13 +379,13 @@ class HomelabCollector(BaseCollector):
             total = meminfo.get("MemTotal", 1)
             available = meminfo.get("MemAvailable", 0)
             mem_percent = ((total - available) / total) * 100
-        except:
-            pass
+        except (OSError, ValueError, KeyError) as e:
+            logger.debug(f"Failed to get memory info: {e}")
         
         # Load average
         try:
             load_1, load_5, load_15 = os.getloadavg()
-        except:
+        except OSError:
             load_1 = load_5 = load_15 = 0
         
         # GPU temperature (nvidia-smi)
@@ -395,8 +398,8 @@ class HomelabCollector(BaseCollector):
             )
             if result.returncode == 0:
                 gpu_temp = int(result.stdout.strip())
-        except:
-            pass
+        except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
+            pass  # nvidia-smi not available or failed
         
         return {
             "disk_percent": round(disk_percent, 1),

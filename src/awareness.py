@@ -18,29 +18,19 @@ import asyncio
 import json
 import logging
 import os
-import signal
-import sys
 import time
-from datetime import datetime, timedelta
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import httpx
 
 from src.core.config import get_config
-from src.core.loader import load_extensions
-from src.core.registry import get_sensor_registry, SensorEntry
+from src.core.constants import BRT
+from src.core.registry import get_sensor_registry, SensorFunction
 
-# Configure logging
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
 logger = logging.getLogger(__name__)
-
-# Brazil timezone (UTC-3)
-from datetime import timezone
-BRT = timezone(timedelta(hours=-3))
 
 
 # =============================================================================
@@ -437,10 +427,10 @@ async def send_alert(
                 json=payload
             )
             response.raise_for_status()
-            logger.info(f"Alert sent: [{level}] {sensor} - {message}")
+            logger.info(f"[ALERT] Sent {level.upper()} alert from {sensor}: {message[:100]}")
             return True
     except Exception as e:
-        logger.error(f"Failed to send alert: {e}")
+        logger.error(f"[ALERT] Failed to send {level} alert from {sensor}: {e}")
         return False
 
 
@@ -707,7 +697,7 @@ class ThresholdEvaluator:
                     from datetime import datetime
                     sync_time = datetime.fromisoformat(last_sync.replace("Z", "+00:00"))
                     time_str = sync_time.strftime("%Y-%m-%d %H:%M")
-                except:
+                except (ValueError, TypeError):
                     time_str = last_sync
                 
                 return {
@@ -934,7 +924,7 @@ class SensorRunner:
             interval: How often to check sensors (seconds)
         """
         self._running = True
-        logger.info("Awareness daemon started")
+        logger.info("Awareness daemon started - polling sensors every %.1fs", interval)
         
         while self._running:
             try:

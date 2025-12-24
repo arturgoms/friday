@@ -10,8 +10,7 @@ from enum import Enum
 from typing import Optional, Dict, Any, List
 import uuid
 
-# Brazil timezone (UTC-3)
-BRT = timezone(timedelta(hours=-3))
+from src.core.constants import BRT
 
 
 class InsightType(Enum):

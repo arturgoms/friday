@@ -5,103 +5,16 @@ Garmin health data tools using InfluxDB.
 Provides access to running, sleep, recovery, and wellness metrics.
 """
 
-import json
 import logging
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from src.core.constants import BRT
+from src.core.influxdb import query as _query
 from src.core.registry import friday_tool
+from src.core.utils import format_duration, format_pace
 
 logger = logging.getLogger(__name__)
-
-# Brazil timezone (UTC-3)
-BRT = timezone(timedelta(hours=-3))
-
-
-# =============================================================================
-# InfluxDB Client (Lazy Loading)
-# =============================================================================
-
-_influx_client = None
-
-
-def _get_influx_client():
-    """Get or create InfluxDB client."""
-    global _influx_client
-    
-    if _influx_client is not None:
-        return _influx_client
-    
-    try:
-        from influxdb import InfluxDBClient
-        
-        # Load config
-        config_path = Path(__file__).parent.parent.parent / "config" / "influxdb_mcp.json"
-        if config_path.exists():
-            with open(config_path) as f:
-                config = json.load(f)
-        else:
-            logger.warning(f"InfluxDB config not found at {config_path}")
-            return None
-        
-        _influx_client = InfluxDBClient(
-            host=config.get("host", "localhost"),
-            port=config.get("port", 8086),
-            username=config.get("username", ""),
-            password=config.get("password", ""),
-            database=config.get("database", "health")
-        )
-        
-        # Test connection
-        _influx_client.ping()
-        logger.info(f"Connected to InfluxDB at {config.get('host')}:{config.get('port')}")
-        return _influx_client
-        
-    except ImportError:
-        logger.error("influxdb package not installed. Run: pip install influxdb")
-        return None
-    except Exception as e:
-        logger.error(f"Failed to connect to InfluxDB: {e}")
-        return None
-
-
-def _query(query: str) -> List[Dict]:
-    """Execute InfluxDB query and return points."""
-    client = _get_influx_client()
-    if not client:
-        return []
-    try:
-        result = client.query(query)
-        return list(result.get_points())
-    except Exception as e:
-        logger.error(f"InfluxDB query error: {e}")
-        return []
-
-
-# =============================================================================
-# Helper Functions
-# =============================================================================
-
-def _format_duration(seconds: float) -> str:
-    """Format seconds to human-readable duration."""
-    if seconds is None or seconds == 0:
-        return "0m"
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    if hours > 0:
-        return f"{hours}h {minutes}m"
-    return f"{minutes}m"
-
-
-def _format_pace(speed_ms: float) -> str:
-    """Convert speed (m/s) to pace (min:sec/km)."""
-    if speed_ms is None or speed_ms <= 0:
-        return "N/A"
-    pace_min_km = 1000 / (speed_ms * 60)
-    minutes = int(pace_min_km)
-    seconds = int((pace_min_km - minutes) * 60)
-    return f"{minutes}:{seconds:02d}/km"
 
 
 # =============================================================================
@@ -142,8 +55,8 @@ def get_recent_runs(limit: int = 10, days: int = 30) -> str:
     for p in points:
         speed = p.get("averageSpeed", 0)
         distance_km = round(p.get("distance", 0) / 1000, 2)
-        duration = _format_duration(p.get("movingDuration", 0))
-        pace = _format_pace(speed)
+        duration = format_duration(p.get("movingDuration", 0))
+        pace = format_pace(speed)
         avg_hr = int(p.get("averageHR", 0) or 0)
         
         lines.append(f"\n{p.get('activityName', 'Run')} - {p.get('time', '').split('T')[0]}")
@@ -193,7 +106,7 @@ def get_training_load(weeks: int = 4) -> str:
             total_runs += len(points)
             
             lines.append(f"\nWeek ending {week_end.strftime('%Y-%m-%d')}:")
-            lines.append(f"  {round(week_distance, 1)} km | {_format_duration(week_duration)} | {len(points)} runs")
+            lines.append(f"  {round(week_distance, 1)} km | {format_duration(week_duration)} | {len(points)} runs")
             lines.append(f"  Avg Training Effect: {round(avg_te, 1)}")
         else:
             lines.append(f"\nWeek ending {week_end.strftime('%Y-%m-%d')}: No runs")
@@ -287,7 +200,7 @@ def get_sleep_summary(days: int = 7) -> str:
         
         date = p.get("time", "").split("T")[0]
         lines.append(f"\n{date}: {round(hours, 1)}h | Score: {score}")
-        lines.append(f"  Deep: {_format_duration(deep)} | Light: {_format_duration(light)} | REM: {_format_duration(rem)}")
+        lines.append(f"  Deep: {format_duration(deep)} | Light: {format_duration(light)} | REM: {format_duration(rem)}")
     
     avg_hours = sum(total_hours) / len(total_hours) if total_hours else 0
     avg_score = sum(scores) / len(scores) if scores else 0
@@ -438,7 +351,7 @@ def get_weekly_health(weeks_ago: int = 0) -> str:
         total_km = sum(p.get("distance", 0) for p in points) / 1000
         total_duration = sum(p.get("movingDuration", 0) for p in points)
         total_cal = sum(p.get("calories", 0) or 0 for p in points)
-        lines.append(f"\n🏃 Running: {round(total_km, 1)} km | {_format_duration(total_duration)} | {len(points)} runs")
+        lines.append(f"\n🏃 Running: {round(total_km, 1)} km | {format_duration(total_duration)} | {len(points)} runs")
         lines.append(f"   Calories burned: {int(total_cal)}")
     
     # Sleep
@@ -630,7 +543,7 @@ def get_activity_summary(days: int = 7) -> str:
             name = p.get("activityName", "Activity")
             atype = p.get("activityType", "")
             dist = round((p.get("distance", 0) or 0) / 1000, 1)
-            dur = _format_duration(p.get("movingDuration", 0) or 0)
+            dur = format_duration(p.get("movingDuration", 0) or 0)
             cal = int(p.get("calories", 0) or 0)
             
             lines.append(f"   {name} ({atype}): {dist}km | {dur} | {cal} cal")

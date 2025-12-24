@@ -14,6 +14,7 @@ Usage:
 import json
 import logging
 import re
+import threading
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
@@ -287,10 +288,10 @@ class LLMClient:
             )
             
         except httpx.HTTPStatusError as e:
-            logger.error(f"LLM API error: {e.response.status_code} - {e.response.text}")
+            logger.error(f"[LLM] API error {e.response.status_code}: {e.response.text[:200]}")
             raise
         except httpx.RequestError as e:
-            logger.error(f"LLM request error: {e}")
+            logger.error(f"[LLM] Request failed to {self.base_url}: {e}")
             raise
     
     async def generate_stream(
@@ -375,10 +376,11 @@ class LLMClient:
 # =============================================================================
 
 _llm_client: Optional[LLMClient] = None
+_llm_client_lock = threading.Lock()
 
 
 def get_llm_client() -> LLMClient:
-    """Get the global LLM client instance.
+    """Get the global LLM client instance (thread-safe).
     
     Loads configuration from config.yml on first call.
     
@@ -388,13 +390,17 @@ def get_llm_client() -> LLMClient:
     global _llm_client
     
     if _llm_client is None:
-        config = get_config()
-        _llm_client = LLMClient(
-            base_url=config.llm.base_url,
-            model=config.llm.model_name,
-            temperature=config.llm.temperature,
-            max_tokens=config.llm.max_tokens
-        )
+        with _llm_client_lock:
+            # Double-check pattern for thread safety
+            if _llm_client is None:
+                config = get_config()
+                _llm_client = LLMClient(
+                    base_url=config.llm.base_url,
+                    model=config.llm.model_name,
+                    temperature=config.llm.temperature,
+                    max_tokens=config.llm.max_tokens
+                )
+                logger.info(f"LLMClient initialized: {config.llm.base_url} model={config.llm.model_name}")
     
     return _llm_client
 

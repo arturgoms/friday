@@ -8,12 +8,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
+from src.core.constants import BRT
 from src.core.registry import friday_sensor
 
 logger = logging.getLogger(__name__)
-
-# Brazil timezone (UTC-3)
-BRT = timezone(timedelta(hours=-3))
 
 # Alert thresholds (minutes before event)
 ALERT_THRESHOLDS = [15, 5]  # Alert 15 min and 5 min before

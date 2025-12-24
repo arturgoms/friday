@@ -136,9 +136,25 @@ class InsightsStore:
         collector: str, 
         since: Optional[datetime] = None,
         until: Optional[datetime] = None,
+        hours: Optional[int] = None,
         limit: int = 100
     ) -> List[Snapshot]:
-        """Get snapshots for a collector within a time range."""
+        """Get snapshots for a collector within a time range.
+        
+        Args:
+            collector: Collector name to filter by
+            since: Start time (inclusive)
+            until: End time (inclusive)
+            hours: Alternative to 'since' - get snapshots from last N hours
+            limit: Maximum number of snapshots to return
+            
+        Returns:
+            List of Snapshot objects, newest first
+        """
+        # Convert hours to since if provided
+        if hours is not None and since is None:
+            since = datetime.now(BRT) - timedelta(hours=hours)
+        
         conn = self._get_conn()
         try:
             query = "SELECT * FROM snapshots WHERE collector = ?"
@@ -183,7 +199,7 @@ class InsightsStore:
             )
             conn.commit()
             if result.rowcount > 0:
-                logger.info(f"Cleaned up {result.rowcount} old snapshots")
+                logger.info(f"[STORE] Cleaned up {result.rowcount} old snapshots (retention={retention_days} days)")
         finally:
             conn.close()
     

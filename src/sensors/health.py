@@ -5,78 +5,15 @@ Garmin health data sensors for the awareness engine.
 Monitors sleep, recovery, training readiness, and body battery.
 """
 
-import json
 import logging
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any, Dict, Optional
 
+from src.core.constants import BRT
+from src.core.influxdb import get_influx_client, query_latest, query
 from src.core.registry import friday_sensor
 
 logger = logging.getLogger(__name__)
-
-# Brazil timezone (UTC-3)
-BRT = timezone(timedelta(hours=-3))
-
-# =============================================================================
-# InfluxDB Client (shared with health tools)
-# =============================================================================
-
-_influx_client = None
-
-
-def _get_influx_client():
-    """Get or create InfluxDB client."""
-    global _influx_client
-    
-    if _influx_client is not None:
-        return _influx_client
-    
-    try:
-        from influxdb import InfluxDBClient
-        
-        config_path = Path(__file__).parent.parent.parent / "config" / "influxdb_mcp.json"
-        if config_path.exists():
-            with open(config_path) as f:
-                config = json.load(f)
-        else:
-            logger.warning(f"InfluxDB config not found at {config_path}")
-            return None
-        
-        _influx_client = InfluxDBClient(
-            host=config.get("host", "localhost"),
-            port=config.get("port", 8086),
-            username=config.get("username", ""),
-            password=config.get("password", ""),
-            database=config.get("database", "health")
-        )
-        
-        _influx_client.ping()
-        logger.info(f"Health sensors connected to InfluxDB")
-        return _influx_client
-        
-    except ImportError:
-        logger.error("influxdb package not installed")
-        return None
-    except Exception as e:
-        logger.error(f"Failed to connect to InfluxDB: {e}")
-        return None
-
-
-def _query_latest(measurement: str, fields: str = "*") -> Optional[Dict]:
-    """Query the latest record from a measurement."""
-    client = _get_influx_client()
-    if not client:
-        return None
-    
-    try:
-        query = f"SELECT {fields} FROM {measurement} ORDER BY time DESC LIMIT 1"
-        result = client.query(query)
-        points = list(result.get_points())
-        return points[0] if points else None
-    except Exception as e:
-        logger.error(f"InfluxDB query error: {e}")
-        return None
 
 
 # =============================================================================
@@ -96,7 +33,7 @@ def check_sleep_quality() -> Dict[str, Any]:
         Dictionary with sleep quality data
     """
     try:
-        data = _query_latest(
+        data = query_latest(
             "SleepSummary",
             "sleepScore, deepSleepSeconds, lightSleepSeconds, remSleepSeconds, avgOvernightHrv, restingHeartRate, time"
         )
@@ -144,7 +81,7 @@ def check_training_readiness() -> Dict[str, Any]:
         Dictionary with training readiness data
     """
     try:
-        data = _query_latest(
+        data = query_latest(
             "TrainingReadiness",
             "score, level, recoveryTime, hrvFactorPercent, sleepScoreFactorPercent, time"
         )
@@ -184,7 +121,7 @@ def check_body_battery() -> Dict[str, Any]:
         Dictionary with body battery data
     """
     try:
-        data = _query_latest(
+        data = query_latest(
             "DailyStats",
             "bodyBatteryAtWakeTime, stressAvg, totalSteps, time"
         )
@@ -222,7 +159,7 @@ def check_recovery_status() -> Dict[str, Any]:
     """
     try:
         # Get latest sleep data for HRV and RHR
-        sleep_data = _query_latest(
+        sleep_data = query_latest(
             "SleepSummary",
             "avgOvernightHrv, restingHeartRate, sleepScore"
         )
@@ -235,16 +172,11 @@ def check_recovery_status() -> Dict[str, Any]:
         sleep_score = sleep_data.get("sleepScore", 0) or 0
         
         # Get 7-day HRV average for comparison
-        client = _get_influx_client()
-        if client:
-            try:
-                query = "SELECT mean(avgOvernightHrv) as avg_hrv FROM SleepSummary WHERE time > now() - 7d"
-                result = client.query(query)
-                points = list(result.get_points())
-                hrv_baseline = points[0].get("avg_hrv", hrv) if points else hrv
-            except:
-                hrv_baseline = hrv
-        else:
+        try:
+            hrv_points = query("SELECT mean(avgOvernightHrv) as avg_hrv FROM SleepSummary WHERE time > now() - 7d")
+            hrv_baseline = hrv_points[0].get("avg_hrv", hrv) if hrv_points else hrv
+        except Exception as e:
+            logger.debug(f"Failed to get HRV baseline, using current value: {e}")
             hrv_baseline = hrv
         
         # Calculate HRV deviation from baseline
@@ -285,14 +217,8 @@ def check_garmin_sync_status() -> Dict[str, Any]:
         Dictionary with sync status
     """
     try:
-        client = _get_influx_client()
-        if not client:
-            return {"sensor": "garmin_sync_status", "error": "InfluxDB not available"}
-        
         # Query the last heart rate intraday record
-        query = 'SELECT last("HeartRate") FROM "HeartRateIntraday"'
-        result = client.query(query)
-        points = list(result.get_points())
+        points = query('SELECT last("HeartRate") FROM "HeartRateIntraday"')
         
         if not points:
             return {
@@ -308,8 +234,9 @@ def check_garmin_sync_status() -> Dict[str, Any]:
         # InfluxDB returns ISO format: 2024-01-15T10:30:00Z
         try:
             last_time = datetime.fromisoformat(last_time_str.replace("Z", "+00:00"))
-        except:
-            # Try alternative parsing
+        except (ValueError, TypeError) as e:
+            # Try alternative parsing for non-standard formats
+            logger.debug(f"ISO parse failed for '{last_time_str}', trying dateutil: {e}")
             from dateutil import parser
             last_time = parser.parse(last_time_str)
         
@@ -353,10 +280,10 @@ def check_stress_level() -> Dict[str, Any]:
     """
     try:
         # Get current stress from intraday data
-        current_stress = _query_latest("StressIntraday", "stressLevel, time")
+        current_stress = query_latest("StressIntraday", "stressLevel, time")
         
         # Get daily stress breakdown
-        daily_data = _query_latest(
+        daily_data = query_latest(
             "DailyStats",
             "highStressDuration, mediumStressDuration, lowStressDuration, restStressDuration, time"
         )

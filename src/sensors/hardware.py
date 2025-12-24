@@ -1,13 +1,16 @@
 """
 Friday 3.0 Hardware Sensors
 
-Example sensors for monitoring system hardware.
+Sensors for monitoring system hardware (disk, memory, GPU).
 """
 
+import logging
 import shutil
 from typing import Dict, Any
 
 from src.core.registry import friday_sensor
+
+logger = logging.getLogger(__name__)
 
 
 @friday_sensor(name="disk_usage", interval_seconds=300)

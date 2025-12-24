@@ -13,19 +13,18 @@ Usage:
 
 import json
 import logging
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
 from .config import get_config
+from .constants import BRT
 from .interpreter import CodeInterpreter, ExecutionResult, get_interpreter
 from .llm import LLMClient, LLMResponse, get_llm_client
 from .registry import execute_tool, get_all_tool_schemas, get_tool_schemas_text
 
 logger = logging.getLogger(__name__)
-
-# Brazil timezone (UTC-3)
-BRT = timezone(timedelta(hours=-3))
 
 
 # =============================================================================
@@ -447,10 +446,11 @@ class HybridAgent:
 # =============================================================================
 
 _agent: Optional[HybridAgent] = None
+_agent_lock = threading.Lock()
 
 
 def get_agent() -> HybridAgent:
-    """Get the global agent instance.
+    """Get the global agent instance (thread-safe).
     
     Returns:
         HybridAgent instance
@@ -458,10 +458,14 @@ def get_agent() -> HybridAgent:
     global _agent
     
     if _agent is None:
-        config = get_config()
-        _agent = HybridAgent(
-            max_iterations=config.interpreter.max_iterations
-        )
+        with _agent_lock:
+            # Double-check pattern for thread safety
+            if _agent is None:
+                config = get_config()
+                _agent = HybridAgent(
+                    max_iterations=config.interpreter.max_iterations
+                )
+                logger.info("HybridAgent initialized")
     
     return _agent
 

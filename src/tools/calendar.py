@@ -12,21 +12,20 @@ Features:
 - Cross-calendar availability check
 """
 
-import os
 import json
-import pickle
 import logging
+import os
+import pickle
+import threading
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from dataclasses import dataclass
 
+from src.core.constants import BRT
 from src.core.registry import friday_tool
 
 logger = logging.getLogger(__name__)
-
-# Brazil timezone (UTC-3)
-BRT = timezone(timedelta(hours=-3))
 
 # =============================================================================
 # Configuration
@@ -486,11 +485,18 @@ class CalendarManager:
 
 # Global instance
 _calendar_manager = None
+_calendar_manager_lock = threading.Lock()
+
 
 def get_calendar_manager() -> CalendarManager:
+    """Get the global calendar manager instance (thread-safe)."""
     global _calendar_manager
     if _calendar_manager is None:
-        _calendar_manager = CalendarManager()
+        with _calendar_manager_lock:
+            # Double-check pattern for thread safety
+            if _calendar_manager is None:
+                _calendar_manager = CalendarManager()
+                logger.info("CalendarManager initialized")
     return _calendar_manager
 
 

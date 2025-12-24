@@ -5,7 +5,11 @@ Personal AI assistant running on local Ubuntu server with RTX 3090. Quad-service
 ## Project Structure
 
 - `src/api/` - FastAPI routes (`/chat`, `/alert`, `/health`)
-- `src/core/` - Agent logic, LLM client, RAG, config, registry
+- `src/core/` - Agent logic, LLM client, RAG, config, registry, shared utilities
+  - `constants.py` - Shared constants (BRT timezone)
+  - `influxdb.py` - Thread-safe shared InfluxDB client
+  - `api_client.py` - Shared HTTP client for Friday API
+  - `utils.py` - Common utilities (format_duration, format_pace, etc.)
 - `src/tools/` - Action modules using `@friday_tool` decorator
 - `src/sensors/` - Data input modules using `@friday_sensor` decorator
 - `src/insights/` - Awareness engine (collectors, analyzers, decision, delivery)
@@ -16,6 +20,7 @@ Personal AI assistant running on local Ubuntu server with RTX 3090. Quad-service
 - `scripts/vllm/` - vLLM startup script
 - `data/` - ChromaDB, SQLite (insights.db), state files
 - `brain/` - Obsidian vault for RAG context
+- `tests/` - Pytest test suite with shared fixtures
 
 ## Services
 
@@ -95,7 +100,7 @@ Key env vars: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_USER_ID`, `FRIDAY_API_KEY`, `GOOGL
 
 ## Timezone
 
-All times use **America/Sao_Paulo (BRT, UTC-3)**. Use the `BRT` timezone from `src/insights/models.py`.
+All times use **America/Sao_Paulo (BRT, UTC-3)**. Use the `BRT` timezone from `src/core/constants.py`.
 
 ## Important Notes
 
@@ -113,3 +118,67 @@ All times use **America/Sao_Paulo (BRT, UTC-3)**. Use the `BRT` timezone from `s
 - Google Calendar (work, read-only) + Nextcloud (personal, CalDAV)
 - Glances API for homelab monitoring
 - OpenWeatherMap for weather
+
+## Code Patterns
+
+### Logging Prefixes
+Use consistent log prefixes for easier filtering:
+- `[AGENT]` - Agent operations
+- `[ALERT]` - Alert handling
+- `[CHAT]` - Chat requests
+- `[DELIVERY]` - Insight delivery
+- `[INSIGHTS]` - Insights engine
+- `[LLM]` - LLM client
+- `[REPORTS]` - Report generation
+- `[STORE]` - Database operations
+- `[TELEGRAM]` - Telegram bot
+- `[TOOL]` - Tool execution
+
+### Thread-Safe Singletons
+Use double-check locking for singleton patterns:
+```python
+_instance = None
+_lock = threading.Lock()
+
+def get_instance():
+    global _instance
+    if _instance is None:
+        with _lock:
+            if _instance is None:
+                _instance = create_instance()
+    return _instance
+```
+
+### Using Shared Modules
+
+**Timezone** - Always import from constants:
+```python
+from src.core.constants import BRT
+```
+
+**InfluxDB** - Use shared client instead of creating connections:
+```python
+from src.core.influxdb import get_influx_client, query, query_latest, query_time_range
+```
+
+**Formatting utilities**:
+```python
+from src.core.utils import format_duration, format_pace, format_distance, truncate_text, safe_get
+```
+
+**API client**:
+```python
+from src.core.api_client import get_api_url, get_api_headers, FridayAPIClient
+```
+
+### Exception Handling
+Always catch specific exceptions, never use bare `except:`:
+```python
+# Good
+except ValueError as e:
+    logger.error(f"[PREFIX] Specific error: {e}")
+
+# Bad
+except:
+    pass
+```

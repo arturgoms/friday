@@ -4,18 +4,15 @@ Friday Insights Engine - Health Collector
 Collects health data from Garmin via InfluxDB.
 """
 
-import json
 import logging
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Dict, Any, Optional, List
 
+from src.core.constants import BRT
+from src.core.influxdb import get_influx_client, query as influx_query
 from src.insights.collectors.base import BaseCollector
 
 logger = logging.getLogger(__name__)
-
-# Brazil timezone
-BRT = timezone(timedelta(hours=-3))
 
 
 class HealthCollector(BaseCollector):
@@ -33,51 +30,24 @@ class HealthCollector(BaseCollector):
     
     def __init__(self):
         super().__init__("health")
-        self._client = None
     
     def initialize(self) -> bool:
-        """Connect to InfluxDB."""
-        try:
-            from influxdb import InfluxDBClient
-            
-            config_path = Path(__file__).parent.parent.parent.parent / "config" / "influxdb_mcp.json"
-            if not config_path.exists():
-                logger.error(f"InfluxDB config not found: {config_path}")
-                return False
-            
-            with open(config_path) as f:
-                config = json.load(f)
-            
-            self._client = InfluxDBClient(
-                host=config.get("host", "localhost"),
-                port=config.get("port", 8086),
-                username=config.get("username", ""),
-                password=config.get("password", ""),
-                database=config.get("database", "health")
-            )
-            self._client.ping()
-            logger.info("HealthCollector connected to InfluxDB")
+        """Connect to InfluxDB via shared client."""
+        client = get_influx_client()
+        if client:
             self._initialized = True
+            logger.info("[HEALTH_COLLECTOR] Initialized with shared InfluxDB client")
             return True
-            
-        except Exception as e:
-            logger.error(f"HealthCollector init failed: {e}")
-            return False
+        logger.error("[HEALTH_COLLECTOR] Failed to get InfluxDB client")
+        return False
     
-    def _query(self, query: str) -> List[Dict]:
-        """Execute InfluxDB query."""
-        if not self._client:
-            return []
-        try:
-            result = self._client.query(query)
-            return list(result.get_points())
-        except Exception as e:
-            logger.error(f"InfluxDB query error: {e}")
-            return []
+    def _query(self, query_str: str) -> List[Dict]:
+        """Execute InfluxDB query via shared client."""
+        return influx_query(query_str)
     
     def collect(self) -> Optional[Dict[str, Any]]:
         """Collect current health metrics."""
-        if not self._client:
+        if not self._initialized:
             if not self.initialize():
                 return None
         

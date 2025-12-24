@@ -18,6 +18,7 @@ ENV/
 
 # Configuration (contains user-specific settings)
 config.yml
+config/influxdb_mcp.json
 
 # Credentials
 data/google_token.pickle

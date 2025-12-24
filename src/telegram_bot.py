@@ -290,7 +290,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not text:
         return
     
-    logger.info(f"Message from {user.id} ({user.username}): {text[:50]}...")
+    logger.info(f"[TELEGRAM] Message from user {user.id} (@{user.username}): {text[:50]}{'...' if len(text) > 50 else ''}")
     
     await process_user_input(message, context, text, user)
 
@@ -321,7 +321,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         duration = audio.duration or 0
         audio_type = "audio"
     
-    logger.info(f"{audio_type.title()} message from {user.id} ({user.username}), duration: {duration}s")
+    logger.info(f"[TELEGRAM] Voice message from user {user.id} (@{user.username}): {duration}s {audio_type}")
     
     # Check if Whisper is configured
     if not CONFIG["whisper_url"]:

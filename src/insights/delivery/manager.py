@@ -70,7 +70,7 @@ class DeliveryManager:
         
         stats["skipped"] = len(decisions[DeliveryAction.SKIP])
         
-        logger.info(f"Processed {len(insights)} insights: {stats}")
+        logger.info(f"[DELIVERY] Processed {len(insights)} insights: delivered={stats.get('delivered', 0)}, batched={stats.get('batched', 0)}, queued={stats.get('queued', 0)}, skipped={stats.get('skipped', 0)}")
         return stats
     
     def _deliver_immediate(self, insight: Insight) -> bool:
@@ -81,7 +81,7 @@ class DeliveryManager:
                 self.decision.record_delivery(insight, DeliveryChannel.TELEGRAM)
             return success
         except Exception as e:
-            logger.error(f"Failed to deliver insight: {e}")
+            logger.error(f"[DELIVERY] Failed to deliver insight '{insight.title}': {e}")
             return False
     
     def _batch_for_report(self, insight: Insight):
@@ -107,12 +107,12 @@ class DeliveryManager:
             success = self.telegram.send_report_sync(report, "morning")
             
             if success:
-                logger.info("Morning report sent successfully")
+                logger.info("[DELIVERY] Morning report sent successfully")
             
             return success
             
         except Exception as e:
-            logger.error(f"Failed to send morning report: {e}")
+            logger.error(f"[DELIVERY] Failed to send morning report: {e}")
             return False
     
     def send_evening_report(self) -> bool:
@@ -122,12 +122,12 @@ class DeliveryManager:
             success = self.telegram.send_report_sync(report, "evening")
             
             if success:
-                logger.info("Evening report sent successfully")
+                logger.info("[DELIVERY] Evening report sent successfully")
             
             return success
             
         except Exception as e:
-            logger.error(f"Failed to send evening report: {e}")
+            logger.error(f"[DELIVERY] Failed to send evening report: {e}")
             return False
     
     def send_weekly_report(self) -> bool:
