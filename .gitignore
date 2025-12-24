@@ -19,14 +19,21 @@ ENV/
 # Configuration (contains user-specific settings)
 config.yml
 config/influxdb_mcp.json
+config/external_services.json
 
 # Credentials
 data/google_token.pickle
 data/google_credentials.json
 
+# Data files (contain personal information)
+data/chroma/
+data/*.db
+data/*.json
+!data/.gitkeep
 
 # Logs
 *.log
+logs/*.log
 friday.log
 
 # ChromaDB
