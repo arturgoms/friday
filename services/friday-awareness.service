@@ -1,5 +1,5 @@
 [Unit]
-Description=Friday Awareness Engine
+Description=Friday Insights Engine (Awareness)
 After=network.target friday-core.service
 Wants=friday-core.service
 
@@ -8,7 +8,8 @@ Type=simple
 WorkingDirectory=/home/artur/friday
 Environment="PATH=/home/artur/.local/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PYTHONPATH=/home/artur/friday"
-ExecStart=/home/artur/.local/bin/pipenv run python -m src.awareness
+# Use new Insights Engine (replaces old awareness.py)
+ExecStart=/home/artur/.local/bin/pipenv run python -m src.insights.engine
 Restart=always
 RestartSec=10
 StandardOutput=append:/home/artur/friday/logs/friday-awareness.log

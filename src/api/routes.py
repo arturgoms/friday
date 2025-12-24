@@ -71,12 +71,13 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_USER_ID = os.getenv("TELEGRAM_USER_ID", "")
 
 
-async def send_telegram_notification(message: str, level: str = "info") -> bool:
+async def send_telegram_notification(message: str, level: str = "info", raw: bool = False) -> bool:
     """Send a notification to Telegram.
     
     Args:
         message: Message to send
         level: Alert level (info/warning/critical) for emoji prefix
+        raw: If True, send message as-is without adding prefix
         
     Returns:
         True if sent successfully
@@ -85,9 +86,12 @@ async def send_telegram_notification(message: str, level: str = "info") -> bool:
         logger.warning("Telegram not configured, skipping notification")
         return False
     
-    # Add emoji prefix based on level
-    emoji = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨"}.get(level, "📢")
-    formatted_message = f"{emoji} Friday Alert\n\n{message}"
+    if raw:
+        formatted_message = message
+    else:
+        # Add emoji prefix based on level
+        emoji = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨"}.get(level, "📢")
+        formatted_message = f"{emoji} Friday Alert\n\n{message}"
     
     try:
         import httpx
@@ -377,18 +381,24 @@ async def receive_alert(request: AlertRequest, authorized: bool = Depends(verify
         
         # Forward warning, critical, and scheduled reports to Telegram
         is_scheduled_report = request.sensor.startswith("scheduled_")
+        is_insights_alert = request.sensor.startswith("insights_")
+        
         if request.level in ("warning", "critical") or is_scheduled_report:
-            # Format message with sensor data (plain text, no markdown)
-            alert_message = f"[{request.level.upper()}] {request.sensor}\n\n{request.message}"
+            # Insights alerts are already well-formatted, pass through directly
+            if is_insights_alert:
+                alert_message = request.message
+            else:
+                # Format message with sensor data (plain text, no markdown)
+                alert_message = f"[{request.level.upper()}] {request.sensor}\n\n{request.message}"
+                
+                # Add relevant data if present
+                if request.data:
+                    data_lines = [f"- {k}: {v}" for k, v in request.data.items() if k != "sensor"]
+                    if data_lines:
+                        alert_message += "\n\n" + "\n".join(data_lines)
             
-            # Add relevant data if present
-            if request.data:
-                data_lines = [f"- {k}: {v}" for k, v in request.data.items() if k != "sensor"]
-                if data_lines:
-                    alert_message += "\n\n" + "\n".join(data_lines)
-            
-            # Send to Telegram
-            sent = await send_telegram_notification(alert_message, request.level)
+            # Send to Telegram (insights alerts are pre-formatted, use raw mode)
+            sent = await send_telegram_notification(alert_message, request.level, raw=is_insights_alert)
             if sent:
                 action_taken = "telegram_notification_sent"
         
