@@ -7,7 +7,14 @@ Type=simple
 WorkingDirectory=/home/artur/friday
 Environment="PATH=/home/artur/.local/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="CUDA_VISIBLE_DEVICES=0"
+
+# Kill all child processes when stopping (vLLM spawns subprocesses)
+KillMode=control-group
+KillSignal=SIGKILL
+TimeoutStopSec=10
+
 ExecStart=/home/artur/friday/scripts/vllm/start_vllm.sh
+
 Restart=always
 RestartSec=30
 StandardOutput=append:/home/artur/friday/logs/friday-vllm.log
