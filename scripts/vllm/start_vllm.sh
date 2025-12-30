@@ -11,4 +11,6 @@ exec /home/artur/.local/share/virtualenvs/friday/bin/python -m vllm.entrypoints.
     --gpu-memory-utilization 0.85 \
     --trust-remote-code \
     --dtype auto \
-    --max-model-len 16384
+    --max-model-len 16384 \
+    --enable-auto-tool-choice \
+    --tool-call-parser hermes

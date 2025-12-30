@@ -23,12 +23,10 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 
-from src.core.agent import close_agent, get_agent
+from src.core.npc_agent import get_agent
 from src.core.config import get_config
-from src.core.context import get_context_builder
 from src.core.loader import load_extensions
-from src.core.llm import close_llm_client, get_llm_client
-from src.core.registry import get_all_tool_schemas, get_sensor_registry, get_tool_registry
+from src.core.registry import get_sensor_registry, get_tool_registry
 from src.core.vector_store import BrainIndexer, get_vector_store
 
 # Configure logging with timezone-aware timestamps (UTC-3 / America/Sao_Paulo)
@@ -188,25 +186,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Vector store initialization failed: {e}")
     
-    # Initialize context builder and wire to agent
-    context_builder = get_context_builder()
+    # Initialize agent (npcpy-based)
     agent = get_agent()
-    agent.context_builder = context_builder.build_for_query
-    logger.info("Context builder wired to agent")
-    
-    # Verify LLM connection
-    llm = get_llm_client()
-    if await llm.health_check():
-        logger.info("LLM connection verified")
-    else:
-        logger.warning("LLM not reachable - some features may not work")
+    logger.info("npcpy agent initialized")
     
     yield
     
     # Shutdown
     logger.info("Shutting down Friday 3.0 Core...")
-    await close_agent()
-    await close_llm_client()
 
 
 # =============================================================================
@@ -287,8 +274,13 @@ async def root():
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 async def health_check():
     """Health check endpoint."""
-    llm = get_llm_client()
-    llm_available = await llm.health_check()
+    # Try to initialize agent to verify it works
+    try:
+        agent = get_agent()
+        llm_available = True
+    except Exception as e:
+        logger.error(f"Agent initialization failed: {e}")
+        llm_available = False
     
     return HealthResponse(
         status="healthy",
@@ -302,8 +294,8 @@ async def health_check():
 async def chat(request: ChatRequest, authorized: bool = Depends(verify_api_key)):
     """Main chat endpoint.
     
-    Processes user messages through the Hybrid Agent which routes
-    between tools, code execution, and chat based on the request.
+    Processes user messages through the npcpy-based agent with
+    native function calling and automatic tool execution.
     """
     try:
         # Log incoming request
@@ -318,46 +310,39 @@ async def chat(request: ChatRequest, authorized: bool = Depends(verify_api_key))
             logger.info(f"[CHAT] Cleared conversation for session={session}")
         
         if request.stream:
-            # Streaming response
-            async def generate():
-                async for chunk in agent.run_stream(
-                    request.text,
-                    user_id=request.user_id,
-                    session_id=request.session_id
-                ):
-                    yield chunk
-            
-            return StreamingResponse(generate(), media_type="text/plain")
+            # Streaming not yet implemented with npcpy
+            logger.warning("[CHAT] Streaming not yet supported with npcpy agent")
+            raise HTTPException(status_code=501, detail="Streaming not yet implemented")
         
-        # Non-streaming response
-        response = await agent.run(
-            request.text,
+        # Get response from npcpy agent
+        response = agent.chat(
+            message=request.text,
+            session_id=request.session_id or request.user_id,
             user_id=request.user_id,
-            session_id=request.session_id
+            enable_rag=True
         )
         
         # Log response details
-        logger.info(f"[CHAT] Response mode={response.mode}, iterations={response.iterations}")
-        if response.tool_results:
-            for tr in response.tool_results:
-                tool_name = tr.get('tool', 'unknown')
-                success = tr.get('success', False)
-                result_preview = str(tr.get('result', ''))[:100]
-                logger.info(f"[TOOL] {tool_name}: success={success}, result={result_preview}...")
-        if response.code_results:
-            for i, cr in enumerate(response.code_results):
-                logger.info(f"[CODE] Block {i+1}: success={cr.success}, stdout={cr.stdout[:100] if cr.stdout else '(none)'}...")
+        tool_calls = response.get('tool_calls', [])
+        mode = response.get('mode', 'chat')
+        logger.info(f"[CHAT] Response mode={mode}, tools called={len(tool_calls)}")
+        
+        if tool_calls:
+            for tc in tool_calls:
+                tool_name = tc.get('name', 'unknown') if isinstance(tc, dict) else 'unknown'
+                logger.info(f"[TOOL] {tool_name} called")
         
         # Log response text preview
-        response_preview = response.text[:150] if response.text else '(empty)'
-        logger.info(f"[CHAT] Response text: {response_preview}{'...' if len(response.text or '') > 150 else ''}")
+        response_text = response.get('text', '')
+        response_preview = response_text[:150] if response_text else '(empty)'
+        logger.info(f"[CHAT] Response text: {response_preview}{'...' if len(response_text) > 150 else ''}")
         
         return ChatResponse(
-            text=response.text,
-            mode=response.mode,
-            tool_results=response.tool_results,
-            iterations=response.iterations,
-            error=response.error
+            text=response_text,
+            mode=mode,
+            tool_results=response.get('tool_results', []),
+            iterations=1,  # npcpy handles iterations internally
+            error=None
         )
         
     except Exception as e:

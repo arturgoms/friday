@@ -28,6 +28,7 @@ google-api-python-client = "*"
 google-auth-httplib2 = "*"
 google-auth-oauthlib = "*"
 vobject = "*"
+npcpy = {extras = ["all"], version = "*"}
 
 [dev-packages]
 pytest = "*"
