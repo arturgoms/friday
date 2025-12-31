@@ -10,8 +10,9 @@ Friday is an autonomous AI platform designed to run on a local Ubuntu server wit
 
 - **Local LLM Inference** - Runs Qwen2.5-7B on your RTX 3090 via vLLM
 - **Proactive Awareness** - Monitors health metrics, calendar, homelab, and weather
+- **Daily Journal System** - Zero-friction journaling with automatic daily notes in Obsidian
 - **Tool Execution** - 44 tools for calendar management, health tracking, system monitoring, and more
-- **Telegram Interface** - Chat with Friday from anywhere
+- **Telegram Interface** - Chat with Friday from anywhere (text + voice messages)
 - **RAG Integration** - Connects to your Obsidian vault for persistent context
 - **Scheduled Reports** - Morning briefings, evening summaries, and weekly analysis
 
@@ -79,10 +80,11 @@ Friday runs as four independent systemd services:
    GOOGLE_CREDENTIALS_PATH=/path/to/credentials.json
    INFLUXDB_URL=http://localhost:8086
    INFLUXDB_TOKEN=your_influxdb_token
-   INFLUXDB_PASSWORD=your_influxdb_password
-   OPENWEATHERMAP_API_KEY=your_api_key
-   EOF
-   ```
+    INFLUXDB_PASSWORD=your_influxdb_password
+    OPENWEATHERMAP_API_KEY=your_api_key
+    WHISPER_URL=http://localhost:8001  # Optional: for voice transcription
+    EOF
+    ```
 
 4. **Install systemd services**
    ```bash
@@ -113,11 +115,36 @@ Friday runs as four independent systemd services:
 
 # Interactive chat
 ./friday chat
+
+# Journal commands
+./friday journal-thread          # Send morning journal thread
+./friday journal-entries          # View today's entries
+./friday journal-entries -f       # Follow entries in real-time
+./friday journal-note             # Generate today's daily note
+./friday journal-note -d 2025-01-01  # Generate note for specific date
 ```
 
 ### Telegram
 
-Message your configured Telegram bot to chat with Friday.
+Message your configured Telegram bot to chat with Friday. Supports both text and voice messages.
+
+### Daily Journal
+
+Friday includes a zero-friction journaling system that creates structured daily notes in your Obsidian vault:
+
+1. **Morning Thread (10:00 AM)** - Friday sends a Telegram message each morning
+2. **Capture Entries** - Reply to the thread with text or voice messages throughout the day
+3. **Daily Note (23:59)** - Friday automatically generates a structured markdown note
+
+Daily notes include:
+- Weather summary
+- Health metrics (sleep, stress, steps) with anomaly detection
+- Calendar events from Google and Nextcloud
+- Habit tracking (exercise, reading, meditation, etc.)
+- Journal entries organized into: Events, Thoughts, Ideas, Concerns, and Reminders
+- Automatic extraction of tasks from "Remember to..." entries
+
+All Portuguese entries are automatically translated to English in the final note.
 
 ### API
 
@@ -153,6 +180,28 @@ brain:
 
 Configure collectors, analyzers, and delivery settings for the awareness engine.
 
+#### Journal Configuration
+
+```json
+{
+  "journal": {
+    "habits": [
+      "Read",
+      "Exercise",
+      "Quality time with wife",
+      "Quality time with pets",
+      "Play games",
+      "Meditation"
+    ],
+    "health_targets": {
+      "min_sleep_hours": 7,
+      "max_stress": 40,
+      "min_steps": 8000
+    }
+  }
+}
+```
+
 ## External Integrations
 
 - **Garmin** - Health data via InfluxDB (garmin-connect-sync)
@@ -160,6 +209,7 @@ Configure collectors, analyzers, and delivery settings for the awareness engine.
 - **Nextcloud** - Personal calendar via CalDAV
 - **Glances** - Homelab server monitoring
 - **OpenWeatherMap** - Weather data
+- **Whisper** - Voice transcription via whisper-asr-webservice
 
 ## Development
 
