@@ -58,7 +58,7 @@ Friday runs as four independent systemd services:
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/friday.git
+   git clone https://github.com/arturgoms/friday.git
    cd friday
    ```
 
