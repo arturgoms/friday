@@ -38,7 +38,25 @@
   "delivery": {
     "morning_report": {"enabled": true, "time": "10:00"},
     "evening_report": {"enabled": true, "time": "21:00"},
-    "weekly_report": {"enabled": true, "day": "sunday", "time": "20:00"}
+    "weekly_report": {"enabled": true, "day": "sunday", "time": "20:00"},
+    "journal_thread": {"enabled": true, "time": "10:00"},
+    "daily_note": {"enabled": true, "time": "23:59"}
+  },
+  
+  "journal": {
+    "habits": [
+      "Read",
+      "Exercise",
+      "Quality time with wife",
+      "Quality time with pets",
+      "Play games",
+      "Meditation"
+    ],
+    "health_targets": {
+      "sleep_hours": 7,
+      "stress_avg": 40,
+      "steps": 8000
+    }
   },
   
   "timezone": "America/Sao_Paulo",

@@ -418,6 +418,228 @@ def sensors():
 
 
 # =============================================================================
+# Journal Commands
+# =============================================================================
+
+@app.command()
+def journal_thread():
+    """Send the morning journal thread to Telegram."""
+    try:
+        from datetime import datetime
+        from src.core.constants import BRT
+        from src.journal_handler import get_journal_handler
+        
+        # Get environment variables
+        user_id_str = os.getenv('TELEGRAM_USER_ID')
+        bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+        
+        if not user_id_str or not bot_token:
+            console.print("[red]Error: TELEGRAM_USER_ID and TELEGRAM_BOT_TOKEN must be set[/red]")
+            raise typer.Exit(1)
+        
+        user_id = int(user_id_str)
+        
+        # Get journal handler and generate message
+        handler = get_journal_handler()
+        message_text = handler.get_morning_thread_message()
+        
+        console.print(f"[cyan]Sending journal thread to user {user_id}...[/cyan]")
+        console.print(f'[dim]Message: "{message_text}"[/dim]\n')
+        
+        # Send via Telegram API
+        async def send_message():
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json={
+                    "chat_id": user_id,
+                    "text": message_text
+                })
+                return response.json()
+        
+        result = asyncio.run(send_message())
+        
+        if result.get('ok'):
+            message_id = result['result']['message_id']
+            console.print(f"[green]✓[/green] Message sent! Message ID: [cyan]{message_id}[/cyan]")
+            
+            # Save the thread message ID
+            today = datetime.now(BRT).strftime('%Y-%m-%d')
+            success = handler.save_thread_message(today, message_id)
+            
+            if success:
+                console.print(f"[green]✓[/green] Thread saved for {today}")
+            else:
+                console.print(f"[yellow]⚠[/yellow] Thread for {today} already exists (skipped)")
+            
+            console.print(f"\n[bold green]📱 Now reply to that message in Telegram to add journal entries![/bold green]")
+        else:
+            console.print(f"[red]✗ Failed to send message: {result}[/red]")
+            raise typer.Exit(1)
+            
+    except ImportError as e:
+        console.print(f"[red]Error importing modules: {e}[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def journal_entries(
+    date: Optional[str] = typer.Option(None, "--date", "-d", help="Date to view entries for (YYYY-MM-DD, default: today)"),
+    follow: bool = typer.Option(False, "-f", "--follow", help="Follow mode - refresh every 5 seconds")
+):
+    """View journal entries for a date."""
+    try:
+        from datetime import datetime
+        from src.core.constants import BRT
+        from src.journal_handler import get_journal_handler
+        import time
+        
+        # Parse date
+        if date:
+            try:
+                datetime.strptime(date, "%Y-%m-%d")
+                target_date = date
+            except ValueError:
+                console.print(f"[red]Error: Invalid date format. Use YYYY-MM-DD[/red]")
+                raise typer.Exit(1)
+        else:
+            target_date = datetime.now(BRT).strftime('%Y-%m-%d')
+        
+        handler = get_journal_handler()
+        
+        def display_entries():
+            console.clear()
+            entries = handler.get_entries_for_date(target_date)
+            
+            console.print(f"[bold cyan]Journal Entries for {target_date}[/bold cyan]\n")
+            
+            if not entries:
+                console.print("[yellow]No entries yet for this date[/yellow]")
+                return
+            
+            # Create table
+            table = Table(show_header=True, header_style="bold magenta")
+            table.add_column("Time", style="cyan", width=8)
+            table.add_column("Type", style="yellow", width=8)
+            table.add_column("Thread ID", style="dim", width=10)
+            table.add_column("Content", style="white")
+            
+            for entry in entries:
+                timestamp = entry["timestamp"].strftime("%H:%M")
+                entry_type = entry["entry_type"]
+                content = entry["content"]
+                thread_id = entry.get("thread_message_id", "-")
+                
+                # Truncate long entries
+                if len(content) > 70:
+                    content = content[:67] + "..."
+                
+                # Color code by type
+                type_display = f"[green]{entry_type}[/green]" if entry_type == "text" else f"[blue]{entry_type}[/blue]"
+                
+                # Format thread ID
+                thread_display = str(thread_id) if thread_id else "-"
+                
+                table.add_row(timestamp, type_display, thread_display, content)
+            
+            console.print(table)
+            console.print(f"\n[dim]Total: {len(entries)} entries[/dim]")
+        
+        if follow:
+            console.print("[dim]Follow mode - Press Ctrl+C to exit[/dim]\n")
+            try:
+                while True:
+                    display_entries()
+                    time.sleep(5)
+            except KeyboardInterrupt:
+                console.print("\n[dim]Stopped following[/dim]")
+        else:
+            display_entries()
+            
+    except ImportError as e:
+        console.print(f"[red]Error importing modules: {e}[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def journal_note(
+    date: Optional[str] = typer.Option(None, "--date", "-d", help="Date to generate note for (YYYY-MM-DD, default: today)")
+):
+    """Generate the daily journal note."""
+    try:
+        from datetime import datetime, date as date_type
+        from src.core.constants import BRT
+        from src.insights.config import InsightsConfig
+        from src.insights.store import InsightsStore
+        from src.insights.analyzers.daily_journal import DailyJournalAnalyzer
+        
+        # Parse date
+        if date:
+            try:
+                target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            except ValueError:
+                console.print(f"[red]Error: Invalid date format. Use YYYY-MM-DD[/red]")
+                raise typer.Exit(1)
+        else:
+            target_date = datetime.now(BRT).date()
+        
+        console.print(f"[cyan]Generating daily journal note for {target_date}...[/cyan]\n")
+        
+        # Initialize
+        config = InsightsConfig.load()
+        store = InsightsStore()
+        analyzer = DailyJournalAnalyzer(config, store)
+        
+        # Collect and generate
+        with console.status("[yellow]Collecting data...[/yellow]", spinner="dots"):
+            # Temporarily override the collect method to use our target date
+            from src.insights.collectors.journal import JournalCollector
+            collector = JournalCollector(store)
+            journal_data = collector.collect(target_date=target_date)
+        
+        if not journal_data:
+            console.print("[yellow]⚠ No data collected for this date[/yellow]")
+            raise typer.Exit(1)
+        
+        entry_count = journal_data.get("entry_count", 0)
+        event_count = journal_data.get("event_count", 0)
+        
+        console.print(f"[green]✓[/green] Collected {entry_count} journal entries, {event_count} calendar events")
+        
+        # Generate note
+        with console.status("[yellow]Generating note with LLM...[/yellow]", spinner="dots"):
+            result = analyzer.run({"target_date": target_date})
+        
+        if result.success and result.insights:
+            insight = result.insights[0]
+            console.print(f"\n[green]✓ Daily note created![/green]\n")
+            console.print("[bold]Notification:[/bold]")
+            console.print(insight.message)
+            
+            note_path = insight.data.get("path", "")
+            if note_path:
+                console.print(f"\n[cyan]Note location:[/cyan] {note_path}")
+        else:
+            error_msg = result.error if hasattr(result, 'error') and result.error else "Unknown error"
+            console.print(f"[red]✗ Failed to generate note: {error_msg}[/red]")
+            raise typer.Exit(1)
+            
+    except ImportError as e:
+        console.print(f"[red]Error importing modules: {e}[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
+        raise typer.Exit(1)
+
+
+# =============================================================================
 # Version Command
 # =============================================================================
 

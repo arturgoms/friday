@@ -59,6 +59,28 @@ class DeliveryConfig:
     weekly_report_enabled: bool = True
     weekly_report_day: str = "sunday"
     weekly_report_time: time = field(default_factory=lambda: time(20, 0))
+    journal_thread_enabled: bool = True
+    journal_thread_time: time = field(default_factory=lambda: time(10, 0))
+    daily_note_enabled: bool = True
+    daily_note_time: time = field(default_factory=lambda: time(23, 59))
+
+
+@dataclass
+class JournalConfig:
+    """Configuration for journal system."""
+    habits: List[str] = field(default_factory=lambda: [
+        "Read",
+        "Exercise",
+        "Quality time with wife",
+        "Quality time with pets",
+        "Play games",
+        "Meditation"
+    ])
+    health_targets: Dict[str, Any] = field(default_factory=lambda: {
+        "sleep_hours": 7,
+        "stress_avg": 40,
+        "steps": 8000
+    })
 
 
 @dataclass
@@ -79,6 +101,9 @@ class InsightsConfig:
     
     # Delivery settings
     delivery: DeliveryConfig = field(default_factory=DeliveryConfig)
+    
+    # Journal settings
+    journal: JournalConfig = field(default_factory=JournalConfig)
     
     # General
     timezone: str = "America/Sao_Paulo"
@@ -188,6 +213,8 @@ class InsightsConfig:
             morning = del_data.get("morning_report", {})
             evening = del_data.get("evening_report", {})
             weekly = del_data.get("weekly_report", {})
+            journal_thread = del_data.get("journal_thread", {})
+            daily_note = del_data.get("daily_note", {})
             
             config.delivery = DeliveryConfig(
                 morning_report_enabled=morning.get("enabled", True),
@@ -197,6 +224,18 @@ class InsightsConfig:
                 weekly_report_enabled=weekly.get("enabled", True),
                 weekly_report_day=weekly.get("day", "sunday"),
                 weekly_report_time=cls._parse_time(weekly.get("time", "20:00")),
+                journal_thread_enabled=journal_thread.get("enabled", True),
+                journal_thread_time=cls._parse_time(journal_thread.get("time", "10:00")),
+                daily_note_enabled=daily_note.get("enabled", True),
+                daily_note_time=cls._parse_time(daily_note.get("time", "23:59")),
+            )
+        
+        # Parse journal config
+        if "journal" in data:
+            journal_data = data["journal"]
+            config.journal = JournalConfig(
+                habits=journal_data.get("habits", JournalConfig().habits),
+                health_targets=journal_data.get("health_targets", JournalConfig().health_targets),
             )
         
         # General settings

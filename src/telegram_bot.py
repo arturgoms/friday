@@ -22,6 +22,7 @@ import asyncio
 import logging
 import os
 import sys
+from datetime import datetime
 from typing import Optional, Set
 
 import httpx
@@ -33,6 +34,9 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+
+from src.core.constants import BRT
+from src.journal_handler import get_journal_handler
 
 # Configure logging
 logging.basicConfig(
@@ -243,24 +247,60 @@ async def transcribe_voice(audio_bytes: bytes) -> Optional[str]:
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             # Send audio to Whisper service
-            # Most Whisper services accept multipart form data
-            files = {"file": ("voice.ogg", audio_bytes, "audio/ogg")}
+            # Try different Whisper service endpoints
+            files = {"audio_file": ("voice.ogg", audio_bytes, "audio/ogg")}
             
-            response = await client.post(
-                f"{CONFIG['whisper_url']}/transcribe",
-                files=files
-            )
-            response.raise_for_status()
+            # Try common Whisper service endpoints
+            endpoints = [
+                ("/asr", "audio_file"),  # whisper-asr-webservice
+                ("/v1/audio/transcriptions", "file"),  # OpenAI compatible
+                ("/transcribe", "file"),  # faster-whisper-server
+                ("/api/transcribe", "file")  # alternative
+            ]
             
-            result = response.json()
+            for endpoint, file_field in endpoints:
+                try:
+                    # Prepare files dict with correct field name
+                    files_dict = {file_field: ("voice.ogg", audio_bytes, "audio/ogg")}
+                    
+                    response = await client.post(
+                        f"{CONFIG['whisper_url']}{endpoint}",
+                        files=files_dict
+                    )
+                    
+                    if response.status_code == 200:
+                        # Try to parse JSON first
+                        try:
+                            result = response.json()
+                            
+                            # Handle different response formats
+                            if isinstance(result, dict):
+                                text = result.get("text") or result.get("transcription") or result.get("result", "")
+                            else:
+                                text = str(result)
+                        except Exception as json_error:
+                            # If JSON parsing fails, try plain text
+                            logger.debug(f"JSON parse failed for {endpoint}: {json_error}")
+                            text = response.text.strip()
+                        
+                        if text and text.strip():
+                            logger.info(f"Successfully transcribed using endpoint {endpoint}: {text[:50]}...")
+                            return text.strip()
+                    elif response.status_code == 404:
+                        # Try next endpoint
+                        continue
+                    else:
+                        # Other error, try next endpoint
+                        logger.warning(f"Endpoint {endpoint} returned {response.status_code}")
+                        continue
+                        
+                except httpx.HTTPError as e:
+                    logger.debug(f"Endpoint {endpoint} failed: {e}")
+                    continue
             
-            # Handle different response formats
-            if isinstance(result, dict):
-                text = result.get("text") or result.get("transcription") or result.get("result", "")
-            else:
-                text = str(result)
-            
-            return text.strip() if text else None
+            # If all endpoints failed
+            logger.error(f"All Whisper endpoints failed")
+            return None
             
     except httpx.ConnectError:
         logger.error(f"Cannot connect to Whisper service at {CONFIG['whisper_url']}")
@@ -290,6 +330,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not text:
         return
     
+    # Check if this is a reply to a journal thread
+    journal = get_journal_handler()
+    reply_to = message.reply_to_message.message_id if message.reply_to_message else None
+    
+    logger.info(f"[TELEGRAM] Message reply_to: {reply_to}")
+    
+    if reply_to:
+        is_journal = journal.is_reply_to_journal_thread(reply_to)
+        logger.info(f"[TELEGRAM] Is reply to journal thread: {is_journal}")
+        
+        if is_journal:
+            # This is a journal entry - save it
+            logger.info(f"[TELEGRAM] Journal entry from user {user.id}: {text[:50]}{'...' if len(text) > 50 else ''}")
+            success = journal.save_entry(content=text, entry_type="text")
+            
+            if success:
+                await message.reply_text("Added")
+            else:
+                await message.reply_text("Sorry, I couldn't save that entry. Please try again.")
+            return
+    
+    # Regular message processing
     logger.info(f"[TELEGRAM] Message from user {user.id} (@{user.username}): {text[:50]}{'...' if len(text) > 50 else ''}")
     
     await process_user_input(message, context, text, user)
@@ -350,6 +412,21 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             return
         
         logger.info(f"Transcribed: {transcribed_text[:100]}...")
+        
+        # Check if this is a reply to a journal thread
+        journal = get_journal_handler()
+        reply_to = message.reply_to_message.message_id if message.reply_to_message else None
+        
+        if reply_to and journal.is_reply_to_journal_thread(reply_to):
+            # This is a journal voice entry - save it
+            logger.info(f"[TELEGRAM] Journal voice entry from user {user.id}")
+            success = journal.save_entry(content=transcribed_text, entry_type="voice")
+            
+            if success:
+                await message.reply_text("Added")
+            else:
+                await message.reply_text("Sorry, I couldn't save that entry. Please try again.")
+            return
         
         # Show what was heard (helps user verify transcription)
         await message.reply_text(f"🎤 I heard: \"{transcribed_text}\"")
@@ -467,6 +544,45 @@ async def process_user_input(message, context, text: str, user) -> None:
 
 
 # =============================================================================
+# Journal Thread Scheduler
+# =============================================================================
+
+async def check_and_send_journal_thread(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Check if it's time to send the morning journal thread."""
+    journal = get_journal_handler()
+    
+    if not journal.should_send_morning_thread():
+        return
+    
+    # Get user ID to send to
+    if not CONFIG["allowed_users"]:
+        logger.warning("[JOURNAL] No allowed users configured, cannot send journal thread")
+        return
+    
+    user_id = list(CONFIG["allowed_users"])[0]  # Send to first allowed user
+    
+    try:
+        # Generate and send the message
+        message_text = journal.get_morning_thread_message()
+        today = datetime.now(BRT).strftime("%Y-%m-%d")
+        
+        # Send the message
+        sent_message = await context.bot.send_message(
+            chat_id=user_id,
+            text=message_text
+        )
+        
+        # Save the thread message ID
+        if journal.save_thread_message(today, sent_message.message_id):
+            logger.info(f"[JOURNAL] Sent morning thread for {today}, message_id={sent_message.message_id}")
+        else:
+            logger.warning(f"[JOURNAL] Thread for {today} already exists")
+            
+    except Exception as e:
+        logger.error(f"[JOURNAL] Failed to send morning thread: {e}")
+
+
+# =============================================================================
 # Error Handler
 # =============================================================================
 
@@ -506,6 +622,16 @@ def main():
     
     # Add error handler
     application.add_error_handler(error_handler)
+    
+    # Schedule journal thread check (every 5 minutes)
+    job_queue = application.job_queue
+    if job_queue:
+        job_queue.run_repeating(
+            check_and_send_journal_thread,
+            interval=300,  # 5 minutes
+            first=10  # Start after 10 seconds
+        )
+        logger.info("Journal thread scheduler started (checks every 5 minutes)")
     
     # Start polling
     logger.info("Bot is running. Press Ctrl+C to stop.")

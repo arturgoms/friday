@@ -107,6 +107,28 @@ class InsightsStore:
                     max_per_day INTEGER DEFAULT 5,
                     deliveries TEXT DEFAULT '[]'
                 );
+                
+                -- Journal threads: Daily journal thread messages
+                CREATE TABLE IF NOT EXISTS journal_threads (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT UNIQUE NOT NULL,
+                    message_id INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_journal_threads_date ON journal_threads(date);
+                
+                -- Journal entries: User journal entries from Telegram
+                CREATE TABLE IF NOT EXISTS journal_entries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    entry_type TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    thread_message_id INTEGER,
+                    FOREIGN KEY (thread_message_id) REFERENCES journal_threads(message_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_journal_entries_date ON journal_entries(date);
+                CREATE INDEX IF NOT EXISTS idx_journal_entries_timestamp ON journal_entries(timestamp);
             """)
             conn.commit()
             logger.info(f"Insights database initialized at {self.db_path}")
@@ -412,5 +434,113 @@ class InsightsStore:
                 (json.dumps(deliveries), today)
             )
             conn.commit()
+        finally:
+            conn.close()
+    
+    # =========================================================================
+    # Journal Operations
+    # =========================================================================
+    
+    def save_journal_thread(self, date: str, message_id: int) -> bool:
+        """Save a journal thread message ID for a date.
+        
+        Args:
+            date: Date in YYYY-MM-DD format
+            message_id: Telegram message ID
+            
+        Returns:
+            True if saved, False if already exists
+        """
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                """INSERT INTO journal_threads (date, message_id, created_at)
+                   VALUES (?, ?, ?)""",
+                (date, message_id, datetime.now(BRT).isoformat())
+            )
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            # Date already has a thread
+            return False
+        finally:
+            conn.close()
+    
+    def get_journal_thread(self, date: str) -> Optional[int]:
+        """Get the thread message ID for a date.
+        
+        Args:
+            date: Date in YYYY-MM-DD format
+            
+        Returns:
+            Message ID or None if not found
+        """
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT message_id FROM journal_threads WHERE date = ?",
+                (date,)
+            ).fetchone()
+            return row["message_id"] if row else None
+        finally:
+            conn.close()
+    
+    def save_journal_entry(
+        self, 
+        date: str, 
+        timestamp: datetime,
+        entry_type: str,
+        content: str,
+        thread_message_id: Optional[int] = None
+    ):
+        """Save a journal entry.
+        
+        Args:
+            date: Date in YYYY-MM-DD format
+            timestamp: When the entry was created
+            entry_type: 'text' or 'voice'
+            content: Entry content or transcription
+            thread_message_id: Optional reference to the thread message
+        """
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                """INSERT INTO journal_entries 
+                   (date, timestamp, entry_type, content, thread_message_id)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (date, timestamp.isoformat(), entry_type, content, thread_message_id)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    
+    def get_journal_entries(self, date: str) -> List[Dict[str, Any]]:
+        """Get all journal entries for a date.
+        
+        Args:
+            date: Date in YYYY-MM-DD format
+            
+        Returns:
+            List of journal entry dicts
+        """
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                """SELECT * FROM journal_entries 
+                   WHERE date = ? 
+                   ORDER BY timestamp ASC""",
+                (date,)
+            ).fetchall()
+            return [
+                {
+                    "id": row["id"],
+                    "date": row["date"],
+                    "timestamp": datetime.fromisoformat(row["timestamp"]),
+                    "entry_type": row["entry_type"],
+                    "content": row["content"],
+                    "thread_message_id": row["thread_message_id"]
+                }
+                for row in rows
+            ]
         finally:
             conn.close()

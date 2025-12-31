@@ -22,6 +22,7 @@ class InsightType(Enum):
     REMINDER = "reminder"        # Calendar, scheduled event
     DIGEST = "digest"            # Summary report (daily/weekly)
     STATUS = "status"            # System status update
+    INFO = "info"                # Informational message
 
 
 class Priority(Enum):
@@ -40,6 +41,7 @@ class Category(Enum):
     CALENDAR = "calendar"
     WEATHER = "weather"
     SYSTEM = "system"
+    JOURNAL = "journal"
 
 
 class DeliveryChannel(Enum):

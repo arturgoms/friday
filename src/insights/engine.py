@@ -30,6 +30,7 @@ from src.insights.analyzers import (
     ThresholdAnalyzer, StressAnalyzer, CalendarAnalyzer,
     SleepCorrelationAnalyzer, ResourceTrendAnalyzer
 )
+from src.insights.analyzers.daily_journal import DailyJournalAnalyzer
 from src.insights.decision import DecisionEngine, BudgetManager
 from src.insights.delivery import DeliveryManager
 
@@ -81,6 +82,11 @@ class InsightsEngine:
         self._periodic_analyzers = {
             "sleep_correlation": SleepCorrelationAnalyzer(self.config, self.store),
             "resource_trend": ResourceTrendAnalyzer(self.config, self.store),
+        }
+        
+        # Scheduled analyzers (run at specific times)
+        self._scheduled_analyzers = {
+            "daily_journal": DailyJournalAnalyzer(self.config, self.store),
         }
         
         # Track last run times for periodic analyzers
@@ -297,6 +303,24 @@ class InsightsEngine:
                     success = self.delivery.send_weekly_report()
                     if success:
                         self._mark_report_sent("weekly", week_key)
+        
+        # Daily journal note (23:59)
+        if self.config.delivery.daily_note_enabled:
+            if self._is_report_due("daily_note", today, now):
+                logger.info("Generating daily journal note...")
+                try:
+                    # Run the daily journal analyzer
+                    analyzer = self._scheduled_analyzers.get("daily_journal")
+                    if analyzer:
+                        result = analyzer.run({})
+                        if result.success and result.insights:
+                            # Process the insights (will send notification)
+                            self.delivery.process_insights(result.insights)
+                            self._mark_report_sent("daily_note", today)
+                        else:
+                            logger.warning("Daily journal analyzer returned no insights")
+                except Exception as e:
+                    logger.error(f"Failed to generate daily note: {e}", exc_info=True)
     
     def _is_report_due(
         self, 

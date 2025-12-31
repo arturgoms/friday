@@ -29,6 +29,7 @@ data/google_credentials.json
 data/chroma/
 data/*.db
 data/*.json
+data/media/
 !data/.gitkeep
 
 # Logs
