@@ -80,6 +80,10 @@ from src.tools.web import (
     web_fetch,
     web_news,
 )
+from src.tools.media import (
+    generate_image,
+    generate_speech,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +162,9 @@ class FridayAgent:
             web_search,
             web_fetch,
             web_news,
+            # Media
+            generate_image,
+            generate_speech,
         ]
         
         logger.info(f"[AGENT] Loaded {len(self.tools)} tools")
@@ -209,6 +216,18 @@ You have access to tools for:
 - System monitoring (homelab, services, resources)
 - Web search and news retrieval
 - Daily briefing generation
+- Image generation (create images from text descriptions)
+- Speech synthesis (convert text to voice audio in English or Portuguese)
+
+CRITICAL: When the user requests an action that requires a tool, you MUST call the tool using function calling.
+DO NOT describe what the tool would do or show JSON examples - ACTUALLY CALL THE TOOL.
+
+Examples:
+- User: "generate an image of a sunset" -> CALL generate_image() tool, don't describe it
+- User: "what's the weather" -> CALL get_current_weather() tool
+- User: "convert this to speech: hello" -> CALL generate_speech(text="hello", lang="en")
+- User: "say in Portuguese: olá" -> CALL generate_speech(text="olá", lang="pt")
+- User asks in Portuguese or wants Portuguese audio -> use lang="pt"
 
 Always use the appropriate tool when the user asks for information or actions.
 Be concise, helpful, and proactive. You know the user well - Artur, a runner and developer.
@@ -363,6 +382,78 @@ Use this context to inform your responses when relevant."""
             
             tool_calls = response.get('tool_calls', [])
             mode = 'tool' if tool_calls else 'chat'
+            response_text = response.get('response', '')
+            
+            # FALLBACK: If model described a tool call but didn't actually call it,
+            # parse the JSON and execute the tool manually
+            if not tool_calls and '```json' in response_text:
+                import re
+                import json
+                
+                logger.info("[AGENT] Attempting to parse tool call from response text")
+                
+                # Extract JSON block
+                json_match = re.search(r'```json\s*({[^`]+})\s*```', response_text, re.DOTALL)
+                if json_match:
+                    try:
+                        tool_desc = json.loads(json_match.group(1))
+                        tool_name = tool_desc.get('name')
+                        tool_args = tool_desc.get('arguments', {})
+                        
+                        if tool_name:
+                            logger.info(f"[AGENT] Manually executing tool: {tool_name}")
+                            
+                            # Find and execute the tool
+                            tool_func = None
+                            for tool in self.tools:
+                                if hasattr(tool, '__name__') and tool.__name__ == tool_name:
+                                    tool_func = tool
+                                    break
+                            
+                            if tool_func:
+                                # SPECIAL CASE: Map old 'voice' parameter to 'lang' for generate_speech
+                                if tool_name == 'generate_speech' and 'voice' in tool_args:
+                                    # Infer language from voice or default to 'pt' if not English
+                                    voice_val = tool_args.pop('voice', 'default')
+                                    # If voice isn't "male/female/default", treat it as language
+                                    if voice_val not in ['male', 'female', 'default']:
+                                        tool_args['lang'] = voice_val
+                                    elif 'lang' not in tool_args:
+                                        tool_args['lang'] = 'en'  # Default to English
+                                
+                                tool_result = tool_func(**tool_args)
+                                response_text = tool_result
+                                mode = 'tool'
+                                logger.info(f"[AGENT] Tool executed successfully: {tool_name}")
+                            else:
+                                logger.warning(f"[AGENT] Tool not found: {tool_name}")
+                    except Exception as e:
+                        logger.error(f"[AGENT] Failed to parse/execute tool from JSON: {e}")
+            
+            # AUTO-CONVERT to audio if user explicitly asks for audio response
+            import re
+            audio_request_pattern = r'\b(respond|answer|reply|say|tell me)\s+(with|in|as|using)?\s*(audio|voice|speech)\b'
+            if re.search(audio_request_pattern, message, re.IGNORECASE):
+                if '[AUDIO:' not in response_text and '[IMAGE:' not in response_text:
+                    logger.info("[AGENT] User requested audio response - converting text to speech")
+                    # Find generate_speech tool
+                    for tool in self.tools:
+                        if hasattr(tool, '__name__') and tool.__name__ == 'generate_speech':
+                            # Clean response text for speech (remove markdown, code blocks, etc)
+                            clean_text = re.sub(r'```[^`]*```', '', response_text)  # Remove code blocks
+                            clean_text = re.sub(r'\[.*?\]\(.*?\)', '', clean_text)  # Remove markdown links
+                            clean_text = re.sub(r'[#*_`]', '', clean_text)  # Remove markdown formatting
+                            clean_text = clean_text.strip()
+                            
+                            if clean_text and len(clean_text) < 500:  # Only for reasonable length
+                                try:
+                                    audio_result = tool(clean_text[:500])  # Limit to 500 chars
+                                    response_text = audio_result
+                                    mode = 'tool'
+                                    logger.info("[AGENT] Auto-converted response to audio")
+                                except Exception as e:
+                                    logger.error(f"[AGENT] Failed to auto-convert to audio: {e}")
+                            break
             
             logger.info(
                 f"[AGENT] Response generated - mode: {mode}, "
@@ -370,7 +461,7 @@ Use this context to inform your responses when relevant."""
             )
             
             return {
-                'text': response.get('response', ''),
+                'text': response_text,
                 'tool_calls': tool_calls,
                 'tool_results': response.get('tool_results', []),
                 'mode': mode,

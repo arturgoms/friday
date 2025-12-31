@@ -9,7 +9,15 @@ Type=simple
 WorkingDirectory=/home/artur/friday
 Environment="PATH=/home/artur/.local/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PYTHONPATH=/home/artur/friday"
+
+# Wait for core API to be ready before starting
+ExecStartPre=/bin/bash -c 'for i in {1..20}; do curl -s http://localhost:8080/health >/dev/null && exit 0; sleep 3; done; exit 1'
+
 ExecStart=/home/artur/.local/bin/pipenv run python -m src.telegram_bot
+
+# Allow enough time for health check
+TimeoutStartSec=90
+
 Restart=always
 RestartSec=10
 StandardOutput=append:/home/artur/friday/logs/friday-telegram.log

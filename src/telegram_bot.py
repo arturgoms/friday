@@ -386,6 +386,54 @@ async def process_user_input(message, context, text: str, user) -> None:
         
         reply_text = response.get("text", "I couldn't generate a response.")
         
+        # Check for media attachments (image or audio)
+        import re
+        
+        # Check for image
+        image_match = re.search(r'\[IMAGE:([^\]]+)\]', reply_text)
+        if image_match:
+            image_path = image_match.group(1)
+            # Remove the [IMAGE:...] tag from text
+            clean_text = re.sub(r'\[IMAGE:[^\]]+\]\s*', '', reply_text)
+            
+            # Send image
+            try:
+                with open(image_path, 'rb') as photo:
+                    await context.bot.send_photo(
+                        chat_id=message.chat_id,
+                        photo=photo,
+                        caption=clean_text if clean_text.strip() else None
+                    )
+                logger.info(f"[TELEGRAM] Sent image: {image_path}")
+                return
+            except Exception as e:
+                logger.error(f"[TELEGRAM] Failed to send image: {e}")
+                await message.reply_text(f"{clean_text}\n\n(Failed to send image)")
+                return
+        
+        # Check for audio
+        audio_match = re.search(r'\[AUDIO:([^\]]+)\]', reply_text)
+        if audio_match:
+            audio_path = audio_match.group(1)
+            # Remove the [AUDIO:...] tag from text
+            clean_text = re.sub(r'\[AUDIO:[^\]]+\]\s*', '', reply_text)
+            
+            # Send audio as voice message
+            try:
+                with open(audio_path, 'rb') as audio:
+                    await context.bot.send_voice(
+                        chat_id=message.chat_id,
+                        voice=audio,
+                        caption=clean_text if clean_text.strip() else None
+                    )
+                logger.info(f"[TELEGRAM] Sent audio: {audio_path}")
+                return
+            except Exception as e:
+                logger.error(f"[TELEGRAM] Failed to send audio: {e}")
+                await message.reply_text(f"{clean_text}\n\n(Failed to send audio)")
+                return
+        
+        # Regular text response (no media)
         # Telegram has a 4096 character limit
         if len(reply_text) > 4000:
             # Split into chunks
