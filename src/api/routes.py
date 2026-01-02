@@ -370,11 +370,12 @@ async def receive_alert(request: AlertRequest, authorized: bool = Depends(verify
         
         action_taken = None
         
-        # Forward warning, critical, and scheduled reports to Telegram
+        # Forward critical/warning alerts, scheduled reports, and insights alerts to Telegram
+        # Note: insights alerts include their own spam protection (cooldown, daily budget)
         is_scheduled_report = request.sensor.startswith("scheduled_")
         is_insights_alert = request.sensor.startswith("insights_")
         
-        if request.level in ("warning", "critical") or is_scheduled_report:
+        if request.level in ("warning", "critical") or is_scheduled_report or is_insights_alert:
             # Insights alerts are already well-formatted, pass through directly
             if is_insights_alert:
                 alert_message = request.message

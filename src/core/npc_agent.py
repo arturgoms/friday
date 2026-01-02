@@ -11,6 +11,7 @@ npcpy-based implementation that provides:
 
 import logging
 import os
+import threading
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -84,8 +85,16 @@ from src.tools.media import (
     generate_image,
     generate_speech,
 )
+from src.tools.memory import (
+    get_conversation_history,
+    get_last_user_message,
+    summarize_conversation,
+)
 
 logger = logging.getLogger(__name__)
+
+# Thread-local storage for current session context
+_session_context = threading.local()
 
 
 class FridayAgent:
@@ -111,6 +120,10 @@ class FridayAgent:
         
         # Collect all tools
         self.tools = [
+            # Memory (conversation history)
+            get_conversation_history,
+            get_last_user_message,
+            summarize_conversation,
             # Calendar
             get_calendar_events,
             get_today_schedule,
@@ -209,6 +222,7 @@ Current time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}
 Timezone: America/Sao_Paulo (BRT, UTC-3)
 
 You have access to tools for:
+- Conversation memory (search past messages, get last message, summarize conversations)
 - Calendar management (Google Calendar read-only, Nextcloud CalDAV read-write)
 - Health data from Garmin (via InfluxDB) - running, sleep, HRV, recovery
 - Obsidian vault for notes and knowledge management
@@ -219,6 +233,10 @@ You have access to tools for:
 - Image generation (create images from text descriptions)
 - Speech synthesis (convert text to voice audio in English or Portuguese)
 
+IMPORTANT: Conversation history is NOT automatically loaded. If the user asks about past conversations
+(e.g., "what did I say about X?", "what was my last message?"), you MUST call get_conversation_history()
+or get_last_user_message() tool to retrieve that information.
+
 CRITICAL: When the user requests an action that requires a tool, you MUST call the tool using function calling.
 DO NOT describe what the tool would do or show JSON examples - ACTUALLY CALL THE TOOL.
 NEVER return JSON in markdown blocks - use native function calling instead.
@@ -227,6 +245,8 @@ Examples:
 - User: "generate an image of a sunset" -> CALL generate_image() tool, don't describe it
 - User: "what's the weather" -> CALL get_current_weather() tool
 - User: "what's the weather and my next meeting?" -> CALL get_current_weather() AND get_next_event() tools
+- User: "what did I say about weather yesterday?" -> CALL get_conversation_history(query="weather")
+- User: "what was my last message?" -> CALL get_last_user_message()
 - User: "convert this to speech: hello" -> CALL generate_speech(text="hello", lang="en")
 - User: "say in Portuguese: olá" -> CALL generate_speech(text="olá", lang="pt")
 - User asks in Portuguese or wants Portuguese audio -> use lang="pt"
@@ -306,6 +326,9 @@ When displaying information from vault notes or RAG results:
         """
         logger.info(f"[AGENT] Processing message from session: {session_id}")
         
+        # Store session_id in thread-local storage so memory tools can access it
+        _session_context.session_id = session_id
+        
         # Build system prompt with optional RAG context
         base_prompt = self._build_base_system_prompt()
         
@@ -328,34 +351,74 @@ Use this context to inform your responses when relevant."""
         # Update NPC directive
         self.npc.primary_directive = enhanced_prompt
         
-        # Load conversation history from database
-        # IMPORTANT: Conversation history breaks native function calling
-        # Even with minimal history (4 messages), certain conversation patterns confuse the model
-        # and it stops using proper tool calling. Disabling for now until we find a better solution.
-        MAX_HISTORY_MESSAGES = 0  # DISABLED - breaks function calling
+        # Conversation history is now a TOOL, not loaded into context
+        # This prevents history from interfering with function calling
+        # The model can access history via get_conversation_history() tool when needed
         messages_history = []
-        if self.npc.command_history and MAX_HISTORY_MESSAGES > 0:
+        
+        # DISABLED: Old history loading approach
+        if False:
             try:
                 conversations = self.npc.command_history.get_conversations_by_id(session_id)
                 # Convert to OpenAI message format and limit to most recent messages
                 all_messages = []
                 for conv in conversations:
+                    content = conv.get("content", "")
+                    role = conv.get("role", "user")
+                    
+                    # FILTER STRATEGY: Only keep truly conversational messages
+                    # Skip both tool results AND tool-request questions
+                    
+                    # Skip user messages that are clearly tool requests (contain "what", "show", "get", etc.)
+                    if role == "user":
+                        tool_request_indicators = [
+                            "what's the", "what is the", "show me", "get ",
+                            "check ", "how was my", "do i have", "will it"
+                        ]
+                        if any(indicator in content.lower() for indicator in tool_request_indicators):
+                            logger.info(f"[AGENT] Filtered tool-request user message from history")
+                            continue
+                    
+                    # Skip assistant messages that look like tool results or tool calls
+                    if role == "assistant":
+                        # Skip if contains tool call XML
+                        if "<tool_call>" in content or "```json" in content:
+                            logger.info(f"[AGENT] Filtered tool call XML/JSON from history")
+                            continue
+                        
+                        # Skip if contains tool result patterns
+                        skip_patterns = [
+                            "Weather in ", "Your sleep", "Your next", "========",
+                            "get_current_weather:", "get_next_event:", "get_sleep_summary:",
+                            "The weather", "The disk usage", "currently", "temperature"
+                        ]
+                        if any(pattern in content for pattern in skip_patterns):
+                            logger.info(f"[AGENT] Filtered tool result from history")
+                            continue
+                    
                     all_messages.append({
-                        "role": conv.get("role", "user"),
-                        "content": conv.get("content", "")
+                        "role": role,
+                        "content": content
                     })
                 
                 # Keep only the most recent messages
                 if len(all_messages) > MAX_HISTORY_MESSAGES:
                     messages_history = all_messages[-MAX_HISTORY_MESSAGES:]
-                    logger.info(f"[AGENT] Loaded {len(messages_history)} messages from history (limited from {len(all_messages)})")
+                    logger.info(f"[AGENT] Loaded {len(messages_history)} messages from history (limited from {len(all_messages)}, with filtering)")
                 else:
                     messages_history = all_messages
                     if messages_history:
-                        logger.info(f"[AGENT] Loaded {len(messages_history)} messages from history")
+                        logger.info(f"[AGENT] Loaded {len(messages_history)} messages from history (with filtering)")
             except Exception as e:
                 logger.warning(f"[AGENT] Failed to load conversation history: {e}")
 
+        
+        # DEBUG: Log history content to understand what breaks tool calling
+        if messages_history:
+            logger.info(f"[AGENT] DEBUG: Sending {len(messages_history)} history messages:")
+            for i, msg in enumerate(messages_history):
+                content_preview = msg['content'][:100] if msg['content'] else ''
+                logger.info(f"[AGENT] DEBUG:   [{i}] {msg['role']}: {content_preview}...")
         
         try:
             # Call npcpy with conversation history

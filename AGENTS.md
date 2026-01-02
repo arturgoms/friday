@@ -35,6 +35,31 @@ All services run as systemd user units in `~/.config/systemd/user/`.
 
 ## Code Conventions
 
+### Conversation Memory (History as a Tool)
+
+Friday uses a unique approach to conversation history that prevents interference with native function calling:
+
+**How it works:**
+- Conversation history is **NOT** automatically loaded into the LLM context
+- History is available through **memory tools** that the model calls when needed
+- This keeps the context clean and allows reliable parallel tool calling
+
+**Memory Tools:**
+- `get_conversation_history(query, limit)` - Search past messages
+- `get_last_user_message()` - Get the user's last message
+- `summarize_conversation(messages)` - Get a summary of recent topics
+
+**When the model uses memory tools:**
+- User asks: "What did I say about X?" → Calls `get_conversation_history(query="X")`
+- User asks: "What was my last message?" → Calls `get_last_user_message()`
+- User asks: "What have we discussed?" → Calls `summarize_conversation()`
+
+**Why this approach?**
+- ✅ Prevents conversation history from breaking native function calling
+- ✅ More token-efficient (only loads history when needed)
+- ✅ Model decides when history is relevant
+- ✅ Supports reliable parallel tool execution
+
 ### Adding a Tool
 ```python
 # src/tools/example.py
@@ -44,6 +69,15 @@ from src.core.registry import friday_tool
 def my_tool(param: str, optional: int = 10) -> str:
     """Docstring becomes LLM tool description."""
     return f"Result: {param}"
+```
+
+**Note:** If your tool needs access to the current session/conversation context, use the thread-local storage:
+```python
+from src.core.npc_agent import _session_context
+
+def my_tool() -> str:
+    session_id = getattr(_session_context, 'session_id', 'default')
+    # Use session_id to access session-specific data
 ```
 
 ### Adding a Sensor
@@ -111,6 +145,7 @@ All times use **America/Sao_Paulo (BRT, UTC-3)**. Use the `BRT` timezone from `s
 - Quiet hours: 22:00-08:00 BRT, max 5 reach-outs/day
 - Reports: Morning (10:00), Evening (21:00), Weekly (Sunday 20:00) BRT
 - Work calendar (Google) is READ-ONLY
+- Native function calling with `tool_choice='auto'` and `parallel_tool_calls=True`
 
 ## External Integrations
 

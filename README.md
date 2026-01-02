@@ -8,10 +8,11 @@ Friday is an autonomous AI platform designed to run on a local Ubuntu server wit
 
 ### Key Features
 
-- **Local LLM Inference** - Runs Qwen2.5-7B on your RTX 3090 via vLLM
+- **Local LLM Inference** - Runs Hermes-3-Llama-3.1-8B on your RTX 3090 via vLLM with native function calling
 - **Proactive Awareness** - Monitors health metrics, calendar, homelab, and weather
 - **Daily Journal System** - Zero-friction journaling with automatic daily notes in Obsidian
-- **Tool Execution** - 44 tools for calendar management, health tracking, system monitoring, and more
+- **Tool Execution** - 49 tools for calendar management, health tracking, system monitoring, conversation memory, and more
+- **Conversation Memory as Tools** - History accessed on-demand via tools, preventing context interference
 - **Telegram Interface** - Chat with Friday from anywhere (text + voice messages)
 - **RAG Integration** - Connects to your Obsidian vault for persistent context
 - **Scheduled Reports** - Morning briefings, evening summaries, and weekly analysis
@@ -28,8 +29,8 @@ Friday runs as four independent systemd services:
 
 | Service | Port | Description |
 |---------|------|-------------|
-| `friday-vllm` | 8000 | vLLM inference server with Qwen2.5-7B-Instruct |
-| `friday-core` | 8080 | FastAPI brain - routing, tools, RAG |
+| `friday-vllm` | 8000 | vLLM inference server with Hermes-3-Llama-3.1-8B |
+| `friday-core` | 8080 | FastAPI brain - routing, tools, RAG, native function calling |
 | `friday-awareness` | - | Insights engine daemon (collectors, analyzers, delivery) |
 | `friday-telegram` | - | Telegram bot interface |
 
@@ -133,6 +134,12 @@ Friday runs as four independent systemd services:
 ### Telegram
 
 Message your configured Telegram bot to chat with Friday. Supports both text and voice messages.
+
+**Conversation Memory:**
+- History is accessed on-demand via tools, not loaded into context
+- Ask "What did I say about X?" → Friday calls `get_conversation_history(query="X")`
+- Ask "What was my last message?" → Friday calls `get_last_user_message()`
+- This approach prevents history from interfering with function calling while keeping it available when needed
 
 ### Daily Journal
 
