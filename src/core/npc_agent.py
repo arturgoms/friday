@@ -221,14 +221,17 @@ You have access to tools for:
 
 CRITICAL: When the user requests an action that requires a tool, you MUST call the tool using function calling.
 DO NOT describe what the tool would do or show JSON examples - ACTUALLY CALL THE TOOL.
+NEVER return JSON in markdown blocks - use native function calling instead.
 
 Examples:
 - User: "generate an image of a sunset" -> CALL generate_image() tool, don't describe it
 - User: "what's the weather" -> CALL get_current_weather() tool
+- User: "what's the weather and my next meeting?" -> CALL get_current_weather() AND get_next_event() tools
 - User: "convert this to speech: hello" -> CALL generate_speech(text="hello", lang="en")
 - User: "say in Portuguese: olá" -> CALL generate_speech(text="olá", lang="pt")
 - User asks in Portuguese or wants Portuguese audio -> use lang="pt"
 
+When multiple pieces of information are requested, call ALL necessary tools in one response.
 Always use the appropriate tool when the user asks for information or actions.
 Be concise, helpful, and proactive. You know the user well - Artur, a runner and developer.
 
@@ -326,20 +329,33 @@ Use this context to inform your responses when relevant."""
         self.npc.primary_directive = enhanced_prompt
         
         # Load conversation history from database
+        # IMPORTANT: Conversation history breaks native function calling
+        # Even with minimal history (4 messages), certain conversation patterns confuse the model
+        # and it stops using proper tool calling. Disabling for now until we find a better solution.
+        MAX_HISTORY_MESSAGES = 0  # DISABLED - breaks function calling
         messages_history = []
-        if self.npc.command_history:
+        if self.npc.command_history and MAX_HISTORY_MESSAGES > 0:
             try:
                 conversations = self.npc.command_history.get_conversations_by_id(session_id)
-                # Convert to OpenAI message format
+                # Convert to OpenAI message format and limit to most recent messages
+                all_messages = []
                 for conv in conversations:
-                    messages_history.append({
+                    all_messages.append({
                         "role": conv.get("role", "user"),
                         "content": conv.get("content", "")
                     })
-                if messages_history:
-                    logger.info(f"[AGENT] Loaded {len(messages_history)} messages from history")
+                
+                # Keep only the most recent messages
+                if len(all_messages) > MAX_HISTORY_MESSAGES:
+                    messages_history = all_messages[-MAX_HISTORY_MESSAGES:]
+                    logger.info(f"[AGENT] Loaded {len(messages_history)} messages from history (limited from {len(all_messages)})")
+                else:
+                    messages_history = all_messages
+                    if messages_history:
+                        logger.info(f"[AGENT] Loaded {len(messages_history)} messages from history")
             except Exception as e:
                 logger.warning(f"[AGENT] Failed to load conversation history: {e}")
+
         
         try:
             # Call npcpy with conversation history
@@ -348,6 +364,8 @@ Use this context to inform your responses when relevant."""
                 message,
                 messages=messages_history,
                 auto_process_tool_calls=True,
+                tool_choice='auto',  # Enable automatic tool selection
+                parallel_tool_calls=True,  # Re-enabled - need to handle vLLM parser issues
             )
             
             # Store conversation in CommandHistory with session_id
@@ -384,19 +402,63 @@ Use this context to inform your responses when relevant."""
             mode = 'tool' if tool_calls else 'chat'
             response_text = response.get('response', '')
             
+            # DEBUG: Log what the model actually returned
+            if not tool_calls:
+                logger.info(f"[AGENT] DEBUG: No tool_calls in response. Response text: {response_text[:300]}")
+            
             # FALLBACK: If model described a tool call but didn't actually call it,
-            # parse the JSON and execute the tool manually
-            if not tool_calls and '```json' in response_text:
+            # parse the JSON/XML and execute the tool manually
+            # NOTE: This should rarely happen - indicates model isn't using function calling properly
+            # Support both JSON markdown and Hermes XML format
+            if not tool_calls and ('```json' in response_text or '<tool_call>' in response_text):
                 import re
                 import json
                 
+                logger.warning("[AGENT] FALLBACK: Model returned JSON/XML instead of function calls - this indicates improper function calling behavior")
                 logger.info("[AGENT] Attempting to parse tool call from response text")
                 
-                # Extract JSON block
-                json_match = re.search(r'```json\s*({[^`]+})\s*```', response_text, re.DOTALL)
-                if json_match:
+                tool_results = []
+                
+                # Check for Hermes XML format first
+                if '<tool_call>' in response_text:
+                    logger.info("[AGENT] Detected Hermes XML tool call format")
+                    # Extract JSON from inside <tool_call> tags
+                    xml_match = re.search(r'<tool_call>\s*(.+?)\s*</tool_call>', response_text, re.DOTALL)
+                    if xml_match:
+                        json_content = xml_match.group(1).strip()
+                        # Split by newlines to get individual JSON objects
+                        json_lines = [line.strip() for line in json_content.split('\n') if line.strip()]
+                        for json_line in json_lines:
+                            try:
+                                tool_desc = json.loads(json_line)
+                                tool_name = tool_desc.get('name')
+                                tool_args = tool_desc.get('arguments', {})
+                                
+                                if tool_name:
+                                    logger.info(f"[AGENT] Manually executing tool from XML: {tool_name}")
+                                    
+                                    # Find and execute the tool
+                                    tool_func = None
+                                    for tool in self.tools:
+                                        if hasattr(tool, '__name__') and tool.__name__ == tool_name:
+                                            tool_func = tool
+                                            break
+                                    
+                                    if tool_func:
+                                        tool_result = tool_func(**tool_args)
+                                        tool_results.append(f"{tool_name}: {tool_result}")
+                                        logger.info(f"[AGENT] Tool executed successfully: {tool_name}")
+                                    else:
+                                        logger.warning(f"[AGENT] Tool not found: {tool_name}")
+                            except Exception as e:
+                                logger.error(f"[AGENT] Failed to parse/execute tool from XML: {e}")
+                
+                # Also check for JSON markdown blocks
+                json_blocks = re.findall(r'```json\s*({[^`]+})\s*```', response_text, re.DOTALL)
+                
+                for json_block in json_blocks:
                     try:
-                        tool_desc = json.loads(json_match.group(1))
+                        tool_desc = json.loads(json_block)
                         tool_name = tool_desc.get('name')
                         tool_args = tool_desc.get('arguments', {})
                         
@@ -413,22 +475,24 @@ Use this context to inform your responses when relevant."""
                             if tool_func:
                                 # SPECIAL CASE: Map old 'voice' parameter to 'lang' for generate_speech
                                 if tool_name == 'generate_speech' and 'voice' in tool_args:
-                                    # Infer language from voice or default to 'pt' if not English
                                     voice_val = tool_args.pop('voice', 'default')
-                                    # If voice isn't "male/female/default", treat it as language
                                     if voice_val not in ['male', 'female', 'default']:
                                         tool_args['lang'] = voice_val
                                     elif 'lang' not in tool_args:
-                                        tool_args['lang'] = 'en'  # Default to English
+                                        tool_args['lang'] = 'en'
                                 
                                 tool_result = tool_func(**tool_args)
-                                response_text = tool_result
-                                mode = 'tool'
+                                tool_results.append(f"{tool_name}: {tool_result}")
                                 logger.info(f"[AGENT] Tool executed successfully: {tool_name}")
                             else:
                                 logger.warning(f"[AGENT] Tool not found: {tool_name}")
                     except Exception as e:
                         logger.error(f"[AGENT] Failed to parse/execute tool from JSON: {e}")
+                
+                # Combine all tool results
+                if tool_results:
+                    response_text = "\n\n".join(tool_results)
+                    mode = 'tool'
             
             # AUTO-CONVERT to audio if user explicitly asks for audio response
             import re

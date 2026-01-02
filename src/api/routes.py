@@ -329,7 +329,13 @@ async def chat(request: ChatRequest, authorized: bool = Depends(verify_api_key))
         
         if tool_calls:
             for tc in tool_calls:
-                tool_name = tc.get('name', 'unknown') if isinstance(tc, dict) else 'unknown'
+                # Handle both dict and object formats
+                if isinstance(tc, dict):
+                    tool_name = tc.get('name', 'unknown')
+                elif hasattr(tc, 'function') and hasattr(tc.function, 'name'):
+                    tool_name = tc.function.name
+                else:
+                    tool_name = 'unknown'
                 logger.info(f"[TOOL] {tool_name} called")
         
         # Log response text preview
