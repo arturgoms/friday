@@ -16,6 +16,12 @@ Friday is an autonomous AI platform designed to run on a local Ubuntu server wit
 - **RAG Integration** - Connects to your Obsidian vault for persistent context
 - **Scheduled Reports** - Morning briefings, evening summaries, and weekly analysis
 
+## Documentation
+
+- **[TECHNICAL_FLOW.md](TECHNICAL_FLOW.md)** - Insights Engine: Message flow, sensors, collectors, and delivery system
+- **[CORE_VLLM_FLOW.md](CORE_VLLM_FLOW.md)** - Core & vLLM: LLM inference, function calling, RAG, and tool execution
+- **[AGENTS.md](AGENTS.md)** - Development guidelines, code conventions, and project structure
+
 ## Architecture
 
 Friday runs as four independent systemd services:
