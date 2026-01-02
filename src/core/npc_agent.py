@@ -75,6 +75,8 @@ from src.tools.system import (
     get_friday_logs,
     get_homelab_status,
     get_friday_status,
+    days_until_date,
+    days_between_dates,
 )
 from src.tools.web import (
     web_search,
@@ -184,6 +186,8 @@ class FridayAgent:
             get_friday_logs,
             get_homelab_status,
             get_friday_status,
+            days_until_date,
+            days_between_dates,
             # Web
             web_search,
             web_fetch,
@@ -291,12 +295,19 @@ IMPORTANT MEMORY PATTERNS:
    - For REAL-TIME/CURRENT information (weather, news, match schedules, scores, etc.) → use web_search()
    - For PERSONAL notes/knowledge → use vault_read_note() or search_knowledge()
    - For FACTUAL information about the user → use get_fact() or search_facts()
+   - For DATE CALCULATIONS (days until, time between dates) → ALWAYS use days_until_date() or days_between_dates(), NEVER calculate manually
+   
+   CRITICAL: DO NOT calculate date math yourself - you WILL get it wrong. ALWAYS use date tools:
+   - "How many days until X?" → days_until_date()
+   - "What's the difference between X and Y?" → days_between_dates()
+   IMPORTANT: When parsing dates like "12/12", the format is MM/DD (month/day), so 12/12 = December 12th
    
    Examples:
    - "When is Cruzeiro's next match?" → web_search (real-time sports schedule)
    - "What was the last match score?" → web_search (recent sports result)
    - "What's the weather?" → get_current_weather (real-time weather data)
    - "What did I write about work?" → vault_read_note (personal notes)
+   - "How many days until my birthday?" → get_fact("birthday") THEN days_until_date(month=12, day=15)
 
 CRITICAL: When the user requests an action that requires a tool, you MUST call the tool using function calling.
 DO NOT describe what the tool would do or show JSON examples - ACTUALLY CALL THE TOOL.
@@ -313,6 +324,8 @@ Examples:
 - User: "Tell me about my family" → CALL search_facts(query="family") OR search_knowledge(query="family")
 - User: "When is my team playing?" → FIRST call search_knowledge(query="team"), THEN (after getting team name) call web_search(query="[team_name] next match")
 - User: "What's the score of my team's last game?" → FIRST call search_knowledge(query="team"), THEN call web_search(query="[team_name] latest result")
+- User: "When is my wife's birthday? How many days left?" → FIRST call get_fact(topic="wife_birthday") which returns "12/12", THEN call days_until_date(month=12, day=12) [parse MM/DD format]
+- User: "What's the difference between my birthday and my wife's birthday?" → FIRST call get_fact(topic="birthday") and get_fact(topic="wife_birthday"), THEN call days_between_dates(month1=3, day1=30, month2=12, day2=12)
 - User: "convert this to speech: hello" → CALL generate_speech(text="hello", lang="en")
 - User asks in Portuguese or wants Portuguese audio → use lang="pt"
 
@@ -323,6 +336,7 @@ MULTI-STEP QUERIES: For queries requiring personal info lookup + action:
 - Make the FIRST tool call to retrieve personal info
 - After getting the result, make a SECOND tool call with the retrieved information
 - Do NOT stop after just retrieving the fact - complete the full user request
+- EXAMPLE: "how many days until X?" → get_fact → parse the date from result → days_until_date(month, day)
 
 Be concise, helpful, and proactive. You know the user well - Artur, a runner and developer.
 
@@ -520,7 +534,27 @@ Use this context to inform your responses when relevant."""
                 tool_calls = response.get('tool_calls', [])
                 tool_results = response.get('tool_results', [])
                 
+                # Log tool calls and results
+                if tool_calls:
+                    logger.info(f"[AGENT] Turn {turn} - {len(tool_calls)} tool(s) called:")
+                    for tc in tool_calls:
+                        # Extract tool name from different formats
+                        if isinstance(tc, dict):
+                            tc_name = tc.get('function', {}).get('name', 'unknown')
+                        elif hasattr(tc, 'function') and hasattr(tc.function, 'name'):
+                            tc_name = tc.function.name
+                        else:
+                            tc_name = 'unknown'
+                        logger.info(f"[AGENT]   → {tc_name}")
+                
                 if tool_results:
+                    logger.info(f"[AGENT] Turn {turn} - {len(tool_results)} tool result(s):")
+                    for tr in tool_results:
+                        tool_name = tr.get('tool_name', 'unknown')
+                        result_preview = str(tr.get('result', ''))[:150]
+                        if len(str(tr.get('result', ''))) > 150:
+                            result_preview += '...'
+                        logger.info(f"[AGENT]   ← {tool_name}: {result_preview}")
                     accumulated_tool_results.extend(tool_results)
                 
                 # If no tool calls, we're done
@@ -528,8 +562,29 @@ Use this context to inform your responses when relevant."""
                     logger.info(f"[AGENT] No more tool calls after turn {turn}, finishing")
                     break
                 
-                # If we have tool results, continue to next turn
-                logger.info(f"[AGENT] Turn {turn} made {len(tool_calls)} tool calls, continuing...")
+                # Check if we should continue or stop
+                # "Lookup" tools that retrieve info that needs to be used for another action
+                # Most tools should allow one more turn for the model to process results
+                terminal_only_tools = {
+                    'save_fact', 'add_event', 'update_event', 'delete_event',  # Write operations
+                    'generate_image', 'generate_speech',  # Generation complete
+                }
+                
+                # Check if ALL tool calls were terminal-only
+                all_terminal = True
+                for tc in tool_calls:
+                    tc_name = tc.get('function', {}).get('name') if isinstance(tc, dict) else getattr(tc.function, 'name', '') if hasattr(tc, 'function') else ''
+                    if tc_name not in terminal_only_tools:
+                        all_terminal = False
+                        break
+                
+                # If ALL tool calls were terminal-only, stop here
+                if all_terminal:
+                    logger.info(f"[AGENT] Turn {turn} made {len(tool_calls)} terminal-only tool calls, finishing")
+                    break
+                
+                # Otherwise, continue to let model process results
+                logger.info(f"[AGENT] Turn {turn} made {len(tool_calls)} tool calls (at least one requires processing), continuing...")
                 
                 # Add this turn's exchange to the message history for next turn
                 # Add assistant's tool call message
@@ -547,7 +602,8 @@ Use this context to inform your responses when relevant."""
                     })
                 
                 # Set current_message for next iteration
-                current_message = "Continue based on the tool results above."
+                # Remind the model of the original request
+                current_message = f"Based on the tool results above, please answer the user's original question: '{message}'"
             
             # Ensure we have a response
             if response is None:
@@ -558,6 +614,19 @@ Use this context to inform your responses when relevant."""
                 response['tool_results'] = accumulated_tool_results
             
             logger.info(f"[AGENT] Completed after {turn} turns with {len(accumulated_tool_results)} total tool calls")
+            
+            # Log final summary of all tools called
+            if accumulated_tool_results:
+                logger.info("[AGENT] === Tool Execution Summary ===")
+                for i, tr in enumerate(accumulated_tool_results, 1):
+                    tool_name = tr.get('tool_name', 'unknown')
+                    args = tr.get('arguments', {})
+                    result_preview = str(tr.get('result', ''))[:100]
+                    if len(str(tr.get('result', ''))) > 100:
+                        result_preview += '...'
+                    logger.info(f"[AGENT] {i}. {tool_name}({args})")
+                    logger.info(f"[AGENT]    → {result_preview}")
+                logger.info("[AGENT] ===================================")
             
             # Store conversation in CommandHistory with session_id
             if self.npc.command_history:
@@ -614,8 +683,10 @@ Use this context to inform your responses when relevant."""
                 if '<tool_call>' in response_text:
                     logger.info("[AGENT] Detected Hermes XML tool call format")
                     # Extract JSON from inside <tool_call> tags
-                    xml_match = re.search(r'<tool_call>\s*(.+?)\s*</tool_call>', response_text, re.DOTALL)
+                    # Also handle malformed closing tag (<tool_call> instead of </tool_call>)
+                    xml_match = re.search(r'<tool_call>\s*(.+?)\s*(?:</tool_call>|<tool_call>)', response_text, re.DOTALL)
                     if xml_match:
+                        logger.info(f"[AGENT] Extracted tool call content: {xml_match.group(1)[:100]}...")
                         json_content = xml_match.group(1).strip()
                         # Split by newlines to get individual JSON objects
                         json_lines = [line.strip() for line in json_content.split('\n') if line.strip()]
@@ -626,7 +697,7 @@ Use this context to inform your responses when relevant."""
                                 tool_args = tool_desc.get('arguments', {})
                                 
                                 if tool_name:
-                                    logger.info(f"[AGENT] Manually executing tool from XML: {tool_name}")
+                                    logger.info(f"[AGENT] Manually executing tool from XML: {tool_name} with args: {tool_args}")
                                     
                                     # Find and execute the tool
                                     tool_func = None
@@ -636,11 +707,15 @@ Use this context to inform your responses when relevant."""
                                             break
                                     
                                     if tool_func:
-                                        tool_result = tool_func(**tool_args)
-                                        tool_results.append(f"{tool_name}: {tool_result}")
-                                        logger.info(f"[AGENT] Tool executed successfully: {tool_name}")
+                                        try:
+                                            tool_result = tool_func(**tool_args)
+                                            tool_results.append(f"{tool_name}: {tool_result}")
+                                            logger.info(f"[AGENT] Tool executed successfully: {tool_name}")
+                                        except Exception as e:
+                                            logger.error(f"[AGENT] Tool execution failed: {tool_name}: {e}")
+                                            tool_results.append(f"{tool_name}: Error - {str(e)}")
                                     else:
-                                        logger.warning(f"[AGENT] Tool not found: {tool_name}")
+                                        logger.warning(f"[AGENT] Tool not found: {tool_name}. Available tools: {[t.__name__ for t in self.tools if hasattr(t, '__name__')][:10]}")
                             except Exception as e:
                                 logger.error(f"[AGENT] Failed to parse/execute tool from XML: {e}")
                 

@@ -339,3 +339,112 @@ def get_friday_status() -> str:
         
     except Exception as e:
         return f"Error getting status: {e}"
+
+
+@friday_tool(name="days_until_date")
+def days_until_date(month: int, day: int, year: int = 0) -> str:
+    """Calculate how many days until a specific date.
+    
+    Use this tool when the user asks "how many days until X" or "when is X birthday".
+    DO NOT try to calculate dates yourself - always use this tool.
+    
+    Args:
+        month: Month number (1-12, where 1=January, 12=December)
+        day: Day of month (1-31)
+        year: Optional specific year (if not provided, assumes current or next occurrence)
+    
+    Returns:
+        String with the date and number of days until that date
+    
+    Examples:
+        - days_until_date(12, 25) → Days until December 25th
+        - days_until_date(3, 15, 2026) → Days until March 15, 2026
+    """
+    try:
+        now = datetime.now(BRT)
+        
+        # Determine target year
+        if year and year > 0:
+            target_year = year
+        else:
+            # Try current year first
+            target_year = now.year
+            target_date = datetime(target_year, month, day, tzinfo=BRT)
+            
+            # If date has already passed this year, use next year
+            if target_date < now:
+                target_year = now.year + 1
+        
+        # Create target date
+        target_date = datetime(target_year, month, day, tzinfo=BRT)
+        
+        # Calculate difference
+        delta = target_date - now
+        days_until = delta.days
+        
+        # Format target date
+        date_formatted = target_date.strftime("%B %d, %Y")
+        day_name = target_date.strftime("%A")
+        
+        if days_until < 0:
+            return f"❌ {date_formatted} ({day_name}) was {abs(days_until)} days ago"
+        elif days_until == 0:
+            return f"🎉 {date_formatted} is TODAY!"
+        elif days_until == 1:
+            return f"📅 {date_formatted} ({day_name}) is TOMORROW"
+        else:
+            return f"📅 {date_formatted} ({day_name}) is in {days_until} days"
+        
+    except Exception as e:
+        logger.error(f"Error calculating days until date: {e}")
+        return f"❌ Error: Invalid date - month={month}, day={day}, year={year}: {e}"
+
+
+@friday_tool(name="days_between_dates")
+def days_between_dates(month1: int, day1: int, month2: int, day2: int) -> str:
+    """Calculate the difference in days between two dates (same year).
+    
+    Use this tool when the user asks "what's the difference between X and Y dates".
+    DO NOT try to calculate date differences yourself - always use this tool.
+    
+    Args:
+        month1: First date's month (1-12)
+        day1: First date's day (1-31)
+        month2: Second date's month (1-12)
+        day2: Second date's day (1-31)
+    
+    Returns:
+        String with the number of days between the two dates
+    
+    Examples:
+        - days_between_dates(12, 25, 1, 1) → Days between Dec 25 and Jan 1
+        - days_between_dates(3, 15, 12, 12) → Days between Mar 15 and Dec 12
+    """
+    try:
+        now = datetime.now(BRT)
+        current_year = now.year
+        
+        # Create both dates in the same year for comparison
+        date1 = datetime(current_year, month1, day1, tzinfo=BRT)
+        date2 = datetime(current_year, month2, day2, tzinfo=BRT)
+        
+        # Calculate absolute difference
+        delta = abs((date2 - date1).days)
+        
+        # Format dates
+        date1_formatted = date1.strftime("%B %d")
+        date2_formatted = date2.strftime("%B %d")
+        
+        # Determine which is earlier
+        if date1 < date2:
+            earlier = date1_formatted
+            later = date2_formatted
+        else:
+            earlier = date2_formatted
+            later = date1_formatted
+        
+        return f"📊 There are {delta} days between {earlier} and {later}"
+        
+    except Exception as e:
+        logger.error(f"Error calculating days between dates: {e}")
+        return f"❌ Error: Invalid dates - date1: {month1}/{day1}, date2: {month2}/{day2}: {e}"
