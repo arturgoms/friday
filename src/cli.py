@@ -5,13 +5,19 @@ Command-line interface for managing Friday services and interacting
 with the AI assistant.
 
 Usage:
-    friday status              - Show service status
-    friday start [service]     - Start service(s)
-    friday stop [service]      - Stop service(s)
-    friday logs [service]      - Tail service logs
-    friday chat                - Interactive chat mode
-    friday run "query"         - Single query execution
-    friday config [view|edit]  - View or edit configuration
+    friday status                     - Show service status
+    friday start [service]            - Start service(s)
+    friday stop [service]             - Stop service(s)
+    friday logs [service]             - Tail service logs
+    friday chat                       - Interactive chat mode
+    friday run "query"                - Single query execution
+    friday config [view|edit]         - View or edit configuration
+    friday facts-list                 - List all saved facts
+    friday facts-search <query>       - Search for facts
+    friday facts-delete <topic> [-y]  - Delete a specific fact
+    friday facts-delete-date <date>   - Delete facts from a date onwards
+    friday facts-categories           - List fact categories
+    friday facts-export [-o file]     - Export facts to JSON
 """
 
 import asyncio
@@ -667,6 +673,354 @@ def version():
     """Show Friday version."""
     console.print("[bold]Friday 3.0[/bold]")
     console.print("Autonomous AI Platform")
+
+
+# =============================================================================
+# Knowledge Management Commands
+# =============================================================================
+
+@app.command()
+def facts_list(
+    category: Optional[str] = typer.Option(None, "--category", "-c", help="Filter by category"),
+    limit: int = typer.Option(50, "--limit", "-l", help="Maximum number of facts to show")
+):
+    """List all saved facts."""
+    import sqlite3
+    
+    db_path = os.path.expanduser("~/friday_facts.db")
+    if not os.path.exists(db_path):
+        console.print("[yellow]No facts database found. No facts have been saved yet.[/yellow]")
+        return
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Get latest fact for each topic
+        if category:
+            sql = """
+                SELECT f1.topic, f1.value, f1.category, f1.created_at, f1.notes
+                FROM facts f1
+                INNER JOIN (
+                    SELECT topic, MAX(created_at) as max_date
+                    FROM facts
+                    WHERE category = ?
+                    GROUP BY topic
+                ) f2 ON f1.topic = f2.topic AND f1.created_at = f2.max_date
+                ORDER BY f1.created_at DESC
+                LIMIT ?
+            """
+            cursor.execute(sql, (category, limit))
+        else:
+            sql = """
+                SELECT f1.topic, f1.value, f1.category, f1.created_at, f1.notes
+                FROM facts f1
+                INNER JOIN (
+                    SELECT topic, MAX(created_at) as max_date
+                    FROM facts
+                    GROUP BY topic
+                ) f2 ON f1.topic = f2.topic AND f1.created_at = f2.max_date
+                ORDER BY f1.created_at DESC
+                LIMIT ?
+            """
+            cursor.execute(sql, (limit,))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        if not rows:
+            console.print(f"[yellow]No facts found{f' in category {category}' if category else ''}[/yellow]")
+            return
+        
+        # Display as table
+        table = Table(title=f"Personal Facts{f' ({category})' if category else ''}", show_header=True)
+        table.add_column("Topic", style="cyan", width=20)
+        table.add_column("Value", style="green", width=30)
+        table.add_column("Category", style="blue", width=15)
+        table.add_column("Updated", style="yellow", width=20)
+        
+        for topic, value, cat, created_at, notes in rows:
+            table.add_row(
+                topic,
+                value[:50] + "..." if len(value) > 50 else value,
+                cat or "",
+                created_at
+            )
+        
+        console.print(table)
+        console.print(f"\n[dim]Showing {len(rows)} facts (use --limit to show more)[/dim]")
+        
+    except Exception as e:
+        console.print(f"[red]Error listing facts: {e}[/red]")
+
+
+@app.command()
+def facts_search(
+    query: str = typer.Argument(..., help="Search query"),
+    category: Optional[str] = typer.Option(None, "--category", "-c", help="Filter by category")
+):
+    """Search for facts matching a query."""
+    import sqlite3
+    
+    db_path = os.path.expanduser("~/friday_facts.db")
+    if not os.path.exists(db_path):
+        console.print("[yellow]No facts database found.[/yellow]")
+        return
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Search in topic, value, and notes
+        if category:
+            sql = """
+                SELECT DISTINCT topic, value, category, created_at, notes
+                FROM facts
+                WHERE category = ?
+                  AND (topic LIKE ? OR value LIKE ? OR notes LIKE ?)
+                ORDER BY created_at DESC
+            """
+            params = (category, f"%{query}%", f"%{query}%", f"%{query}%")
+        else:
+            sql = """
+                SELECT DISTINCT topic, value, category, created_at, notes
+                FROM facts
+                WHERE topic LIKE ? OR value LIKE ? OR notes LIKE ?
+                ORDER BY created_at DESC
+                LIMIT 50
+            """
+            params = (f"%{query}%", f"%{query}%", f"%{query}%")
+        
+        cursor.execute(sql, params)
+        rows = cursor.fetchall()
+        
+        # Get unique topics (latest only)
+        unique = {}
+        for topic, value, cat, created_at, notes in rows:
+            if topic not in unique:
+                unique[topic] = (value, cat, created_at, notes)
+        
+        conn.close()
+        
+        if not unique:
+            console.print(f"[yellow]No facts found matching '{query}'[/yellow]")
+            return
+        
+        console.print(f"\n[bold]Found {len(unique)} facts matching '{query}':[/bold]\n")
+        
+        for topic, (value, cat, created_at, notes) in unique.items():
+            console.print(f"[cyan]• {topic}[/cyan]: [green]{value}[/green]")
+            if cat:
+                console.print(f"  Category: [blue]{cat}[/blue]")
+            if notes:
+                console.print(f"  Notes: {notes}")
+            console.print(f"  Updated: [yellow]{created_at}[/yellow]\n")
+        
+    except Exception as e:
+        console.print(f"[red]Error searching facts: {e}[/red]")
+
+
+@app.command()
+def facts_delete(
+    topic: str = typer.Argument(..., help="Topic to delete"),
+    confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation")
+):
+    """Delete a specific fact (all versions)."""
+    import sqlite3
+    
+    db_path = os.path.expanduser("~/friday_facts.db")
+    if not os.path.exists(db_path):
+        console.print("[yellow]No facts database found.[/yellow]")
+        return
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Check if topic exists
+        cursor.execute("SELECT COUNT(*) FROM facts WHERE topic = ?", (topic,))
+        count = cursor.fetchone()[0]
+        
+        if count == 0:
+            console.print(f"[yellow]No facts found for topic '{topic}'[/yellow]")
+            conn.close()
+            return
+        
+        # Confirm deletion
+        if not confirm:
+            console.print(f"[yellow]This will delete {count} fact(s) for topic '{topic}'[/yellow]")
+            if not typer.confirm("Are you sure?"):
+                console.print("Cancelled.")
+                conn.close()
+                return
+        
+        # Delete
+        cursor.execute("DELETE FROM facts WHERE topic = ?", (topic,))
+        conn.commit()
+        conn.close()
+        
+        console.print(f"[green]✓ Deleted {count} fact(s) for topic '{topic}'[/green]")
+        
+    except Exception as e:
+        console.print(f"[red]Error deleting fact: {e}[/red]")
+
+
+@app.command()
+def facts_delete_date(
+    date: str = typer.Argument(..., help="Date (YYYY-MM-DD) - delete facts from this date"),
+    confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation")
+):
+    """Delete facts created on or after a specific date."""
+    import sqlite3
+    
+    db_path = os.path.expanduser("~/friday_facts.db")
+    if not os.path.exists(db_path):
+        console.print("[yellow]No facts database found.[/yellow]")
+        return
+    
+    try:
+        # Validate date format
+        from datetime import datetime
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            console.print(f"[red]Invalid date format. Use YYYY-MM-DD (e.g., 2026-01-02)[/red]")
+            return
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Check how many facts will be deleted
+        cursor.execute("SELECT COUNT(*) FROM facts WHERE DATE(created_at) >= ?", (date,))
+        count = cursor.fetchone()[0]
+        
+        if count == 0:
+            console.print(f"[yellow]No facts found on or after {date}[/yellow]")
+            conn.close()
+            return
+        
+        # Show facts to be deleted
+        cursor.execute("""
+            SELECT topic, value, created_at
+            FROM facts
+            WHERE DATE(created_at) >= ?
+            ORDER BY created_at DESC
+        """, (date,))
+        facts = cursor.fetchall()
+        
+        console.print(f"\n[yellow]Facts to be deleted ({count} total):[/yellow]")
+        for topic, value, created_at in facts[:10]:  # Show first 10
+            console.print(f"  • {topic}: {value[:50]}... ({created_at})")
+        if count > 10:
+            console.print(f"  ... and {count - 10} more")
+        
+        # Confirm deletion
+        if not confirm:
+            console.print(f"\n[yellow]This will delete {count} fact(s) from {date} onwards[/yellow]")
+            if not typer.confirm("Are you sure?"):
+                console.print("Cancelled.")
+                conn.close()
+                return
+        
+        # Delete
+        cursor.execute("DELETE FROM facts WHERE DATE(created_at) >= ?", (date,))
+        conn.commit()
+        conn.close()
+        
+        console.print(f"[green]✓ Deleted {count} fact(s) from {date} onwards[/green]")
+        
+    except Exception as e:
+        console.print(f"[red]Error deleting facts: {e}[/red]")
+
+
+@app.command()
+def facts_categories():
+    """List all fact categories with counts."""
+    import sqlite3
+    
+    db_path = os.path.expanduser("~/friday_facts.db")
+    if not os.path.exists(db_path):
+        console.print("[yellow]No facts database found.[/yellow]")
+        return
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT category, COUNT(DISTINCT topic) as topic_count, COUNT(*) as total_records
+            FROM facts
+            WHERE category IS NOT NULL
+            GROUP BY category
+            ORDER BY topic_count DESC
+        """)
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        if not rows:
+            console.print("[yellow]No categorized facts yet.[/yellow]")
+            return
+        
+        table = Table(title="Fact Categories", show_header=True)
+        table.add_column("Category", style="cyan")
+        table.add_column("Unique Topics", style="green", justify="right")
+        table.add_column("Total Records", style="blue", justify="right")
+        
+        for category, topics, records in rows:
+            table.add_row(category, str(topics), str(records))
+        
+        console.print(table)
+        
+    except Exception as e:
+        console.print(f"[red]Error listing categories: {e}[/red]")
+
+
+@app.command()
+def facts_export(
+    output: str = typer.Option("facts_export.json", "--output", "-o", help="Output file path")
+):
+    """Export all facts to JSON."""
+    import sqlite3
+    import json
+    
+    db_path = os.path.expanduser("~/friday_facts.db")
+    if not os.path.exists(db_path):
+        console.print("[yellow]No facts database found.[/yellow]")
+        return
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT topic, value, category, confidence, created_at, source, notes
+            FROM facts
+            ORDER BY created_at DESC
+        """)
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        facts = []
+        for row in rows:
+            facts.append({
+                "topic": row[0],
+                "value": row[1],
+                "category": row[2],
+                "confidence": row[3],
+                "created_at": row[4],
+                "source": row[5],
+                "notes": row[6]
+            })
+        
+        with open(output, 'w') as f:
+            json.dump(facts, f, indent=2)
+        
+        console.print(f"[green]✓ Exported {len(facts)} facts to {output}[/green]")
+        
+    except Exception as e:
+        console.print(f"[red]Error exporting facts: {e}[/red]")
 
 
 # =============================================================================

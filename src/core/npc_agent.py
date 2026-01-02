@@ -90,6 +90,13 @@ from src.tools.memory import (
     get_last_user_message,
     summarize_conversation,
 )
+from src.tools.knowledge import (
+    save_fact,
+    get_fact,
+    search_facts,
+    search_knowledge,
+    list_fact_categories,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +131,12 @@ class FridayAgent:
             get_conversation_history,
             get_last_user_message,
             summarize_conversation,
+            # Knowledge (personal facts)
+            save_fact,
+            get_fact,
+            search_facts,
+            search_knowledge,
+            list_fact_categories,
             # Calendar
             get_calendar_events,
             get_today_schedule,
@@ -223,6 +236,7 @@ Timezone: America/Sao_Paulo (BRT, UTC-3)
 
 You have access to tools for:
 - Conversation memory (search past messages, get last message, summarize conversations)
+- Personal knowledge (save and retrieve facts about the user - preferences, personal info, etc.)
 - Calendar management (Google Calendar read-only, Nextcloud CalDAV read-write)
 - Health data from Garmin (via InfluxDB) - running, sleep, HRV, recovery
 - Obsidian vault for notes and knowledge management
@@ -233,26 +247,83 @@ You have access to tools for:
 - Image generation (create images from text descriptions)
 - Speech synthesis (convert text to voice audio in English or Portuguese)
 
-IMPORTANT: Conversation history is NOT automatically loaded. If the user asks about past conversations
-(e.g., "what did I say about X?", "what was my last message?"), you MUST call get_conversation_history()
-or get_last_user_message() tool to retrieve that information.
+IMPORTANT MEMORY PATTERNS:
+
+1. **Conversation History** - NOT automatically loaded. If user asks about past messages:
+   - "What did I say about X?" → call get_conversation_history(query="X")
+   - "What was my last message?" → call get_last_user_message()
+
+2. **Personal Facts** - Store and retrieve long-term information about the user:
+   - When user tells you personal info → call save_fact(topic, value, category)
+   - When you need to know something about user → call get_fact(topic) or search_knowledge(query)
+   - If you don't know something → call search_knowledge(query) FIRST, then ask user if not found
+   
+3. **Auto-save Facts** - Automatically save when user shares personal information:
+   - "My favorite color is blue" → save_fact("favorite_color", "blue", "preferences")
+   - "I was born in June" → save_fact("birth_month", "June", "personal")
+   - "My wife is Sarah" → save_fact("wife_name", "Sarah", "family")
+   - "I support Cruzeiro" → save_fact("favorite_soccer_team", "Cruzeiro Esporte Clube", "hobbies")
+   
+4. **Fact Updates** - When user updates information, save the new value (we keep history):
+   - User says "Actually, I prefer red now" → save_fact("favorite_color", "red", "preferences")
+   - get_fact() always returns the LATEST value
+
+5. **Resolving Personal References** - CRITICAL PATTERN for "my X" queries:
+   STEP 1: Retrieve the personal information from facts
+   STEP 2: Use that information to complete the actual request
+   
+   Examples:
+   - "When is my team playing?" 
+     → FIRST: search_knowledge(query="team") → finds "Cruzeiro Esporte Clube"
+     → THEN: web_search(query="Cruzeiro Esporte Clube next match") → finds match schedule
+   
+   - "What's my favorite restaurant address?"
+     → FIRST: get_fact(topic="favorite_restaurant") → finds "Restaurante ABC"
+     → THEN: web_search(query="Restaurante ABC address") → finds address
+   
+   - "Schedule meeting with my wife"
+     → FIRST: get_fact(topic="wife_name") → finds "Sarah"
+     → THEN: add_event(title="Meeting with Sarah", ...) → creates event
+   
+   - NEVER assume or guess personal information - ALWAYS retrieve from facts first, THEN act on it
+
+6. **Choosing the Right Tool for Information**:
+   - For REAL-TIME/CURRENT information (weather, news, match schedules, scores, etc.) → use web_search()
+   - For PERSONAL notes/knowledge → use vault_read_note() or search_knowledge()
+   - For FACTUAL information about the user → use get_fact() or search_facts()
+   
+   Examples:
+   - "When is Cruzeiro's next match?" → web_search (real-time sports schedule)
+   - "What was the last match score?" → web_search (recent sports result)
+   - "What's the weather?" → get_current_weather (real-time weather data)
+   - "What did I write about work?" → vault_read_note (personal notes)
 
 CRITICAL: When the user requests an action that requires a tool, you MUST call the tool using function calling.
 DO NOT describe what the tool would do or show JSON examples - ACTUALLY CALL THE TOOL.
 NEVER return JSON in markdown blocks - use native function calling instead.
 
 Examples:
-- User: "generate an image of a sunset" -> CALL generate_image() tool, don't describe it
-- User: "what's the weather" -> CALL get_current_weather() tool
-- User: "what's the weather and my next meeting?" -> CALL get_current_weather() AND get_next_event() tools
-- User: "what did I say about weather yesterday?" -> CALL get_conversation_history(query="weather")
-- User: "what was my last message?" -> CALL get_last_user_message()
-- User: "convert this to speech: hello" -> CALL generate_speech(text="hello", lang="en")
-- User: "say in Portuguese: olá" -> CALL generate_speech(text="olá", lang="pt")
-- User asks in Portuguese or wants Portuguese audio -> use lang="pt"
+- User: "generate an image of a sunset" → CALL generate_image() tool
+- User: "what's the weather" → CALL get_current_weather() tool
+- User: "what's the weather and my next meeting?" → CALL get_current_weather() AND get_next_event() tools
+- User: "what did I say about weather yesterday?" → CALL get_conversation_history(query="weather")
+- User: "what was my last message?" → CALL get_last_user_message()
+- User: "My favorite color is blue" → CALL save_fact(topic="favorite_color", value="blue", category="preferences") then acknowledge
+- User: "What's my favorite color?" → CALL search_knowledge(query="favorite color") OR get_fact(topic="favorite_color")
+- User: "Tell me about my family" → CALL search_facts(query="family") OR search_knowledge(query="family")
+- User: "When is my team playing?" → FIRST call search_knowledge(query="team"), THEN (after getting team name) call web_search(query="[team_name] next match")
+- User: "What's the score of my team's last game?" → FIRST call search_knowledge(query="team"), THEN call web_search(query="[team_name] latest result")
+- User: "convert this to speech: hello" → CALL generate_speech(text="hello", lang="en")
+- User asks in Portuguese or wants Portuguese audio → use lang="pt"
 
 When multiple pieces of information are requested, call ALL necessary tools in one response.
 Always use the appropriate tool when the user asks for information or actions.
+
+MULTI-STEP QUERIES: For queries requiring personal info lookup + action:
+- Make the FIRST tool call to retrieve personal info
+- After getting the result, make a SECOND tool call with the retrieved information
+- Do NOT stop after just retrieving the fact - complete the full user request
+
 Be concise, helpful, and proactive. You know the user well - Artur, a runner and developer.
 
 Important guidelines:
@@ -421,15 +492,72 @@ Use this context to inform your responses when relevant."""
                 logger.info(f"[AGENT] DEBUG:   [{i}] {msg['role']}: {content_preview}...")
         
         try:
-            # Call npcpy with conversation history
-            logger.info("[AGENT] Calling NPC.get_llm_response()")
-            response = self.npc.get_llm_response(
-                message,
-                messages=messages_history,
-                auto_process_tool_calls=True,
-                tool_choice='auto',  # Enable automatic tool selection
-                parallel_tool_calls=True,  # Re-enabled - need to handle vLLM parser issues
-            )
+            # Multi-turn tool calling: Keep calling LLM until it stops making tool calls
+            # This enables multi-step reasoning like "get team from facts, then search web"
+            max_turns = 3  # Prevent infinite loops
+            turn = 0
+            accumulated_tool_results = []
+            response = None
+            
+            current_message = message
+            turn_messages = messages_history.copy()
+            
+            while turn < max_turns:
+                turn += 1
+                logger.info(f"[AGENT] Tool calling turn {turn}/{max_turns}")
+                
+                # Call npcpy with conversation history
+                logger.info("[AGENT] Calling NPC.get_llm_response()")
+                response = self.npc.get_llm_response(
+                    current_message,
+                    messages=turn_messages,
+                    auto_process_tool_calls=True,
+                    tool_choice='auto',  # Enable automatic tool selection
+                    parallel_tool_calls=True,  # Re-enabled - need to handle vLLM parser issues
+                )
+                
+                # Check if any tools were called
+                tool_calls = response.get('tool_calls', [])
+                tool_results = response.get('tool_results', [])
+                
+                if tool_results:
+                    accumulated_tool_results.extend(tool_results)
+                
+                # If no tool calls, we're done
+                if not tool_calls:
+                    logger.info(f"[AGENT] No more tool calls after turn {turn}, finishing")
+                    break
+                
+                # If we have tool results, continue to next turn
+                logger.info(f"[AGENT] Turn {turn} made {len(tool_calls)} tool calls, continuing...")
+                
+                # Add this turn's exchange to the message history for next turn
+                # Add assistant's tool call message
+                turn_messages.append({
+                    "role": "assistant",
+                    "content": response.get('response', ''),
+                })
+                
+                # Add tool results as a system/tool message
+                if tool_results:
+                    results_text = "\n".join([f"{tr.get('tool_name', 'tool')}: {tr.get('result', '')}" for tr in tool_results])
+                    turn_messages.append({
+                        "role": "user",  # npcpy expects tool results as user messages
+                        "content": f"Tool results from previous call:\n{results_text}\n\nNow continue with the user's original request: {message}"
+                    })
+                
+                # Set current_message for next iteration
+                current_message = "Continue based on the tool results above."
+            
+            # Ensure we have a response
+            if response is None:
+                raise RuntimeError("No response generated after tool calling loop")
+                
+            # Update accumulated tool results
+            if accumulated_tool_results:
+                response['tool_results'] = accumulated_tool_results
+            
+            logger.info(f"[AGENT] Completed after {turn} turns with {len(accumulated_tool_results)} total tool calls")
             
             # Store conversation in CommandHistory with session_id
             if self.npc.command_history:

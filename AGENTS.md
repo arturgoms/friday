@@ -21,6 +21,8 @@ Personal AI assistant running on local Ubuntu server with RTX 3090. Quad-service
 - `data/` - ChromaDB, SQLite (insights.db), state files
 - `brain/` - Obsidian vault for RAG context
 - `tests/` - Pytest test suite with shared fixtures
+- `~/friday_facts.db` - Personal facts database (SQLite)
+- `~/friday_history.db` - Conversation history (SQLite)
 
 ## Services
 
@@ -35,9 +37,11 @@ All services run as systemd user units in `~/.config/systemd/user/`.
 
 ## Code Conventions
 
-### Conversation Memory (History as a Tool)
+### Memory & Knowledge Architecture
 
-Friday uses a unique approach to conversation history that prevents interference with native function calling:
+Friday uses a tool-based approach for both conversation memory and personal knowledge:
+
+#### Conversation Memory (History as a Tool)
 
 **How it works:**
 - Conversation history is **NOT** automatically loaded into the LLM context
@@ -49,16 +53,44 @@ Friday uses a unique approach to conversation history that prevents interference
 - `get_last_user_message()` - Get the user's last message
 - `summarize_conversation(messages)` - Get a summary of recent topics
 
-**When the model uses memory tools:**
-- User asks: "What did I say about X?" → Calls `get_conversation_history(query="X")`
-- User asks: "What was my last message?" → Calls `get_last_user_message()`
-- User asks: "What have we discussed?" → Calls `summarize_conversation()`
-
 **Why this approach?**
 - ✅ Prevents conversation history from breaking native function calling
 - ✅ More token-efficient (only loads history when needed)
 - ✅ Model decides when history is relevant
 - ✅ Supports reliable parallel tool execution
+
+#### Personal Knowledge Graph
+
+**Storage:** `~/friday_facts.db` - SQLite database storing personal facts about the user
+
+**Knowledge Tools:**
+- `save_fact(topic, value, category)` - Save personal information
+- `get_fact(topic)` - Retrieve specific fact
+- `search_facts(query, category)` - Search within facts
+- `search_knowledge(query)` - Search everywhere (facts + vault)
+- `list_fact_categories()` - List all categories
+
+**Auto-save Behavior:**
+The model automatically saves when you share personal information:
+- "My favorite color is blue" → Saves as fact
+- "I was born in June" → Saves as fact
+- "Actually, I prefer red now" → Updates with new record (keeps history)
+
+**Multi-Step Personal Queries:**
+Friday automatically resolves personal references in multi-step queries:
+- "When is my team playing?" → Retrieves "Cruzeiro Esporte Clube" from facts → Searches web for match schedule
+- "What's my favorite restaurant's address?" → Gets restaurant name from facts → Searches web for address
+- This uses **multi-turn tool calling** (up to 3 turns) to complete complex requests
+
+**CLI Management:**
+```bash
+./friday facts-list                    # List all facts
+./friday facts-search <query>          # Search for facts
+./friday facts-delete <topic> -y       # Delete specific fact
+./friday facts-delete-date 2026-01-02  # Delete facts from date onwards
+./friday facts-categories              # Show categories
+./friday facts-export -o backup.json   # Export to JSON
+```
 
 ### Adding a Tool
 ```python
@@ -120,6 +152,14 @@ journalctl --user -u friday-core -f
 ./friday logs core
 ./friday chat
 
+# Knowledge management
+./friday facts-list                    # List all facts
+./friday facts-search <query>          # Search for facts
+./friday facts-delete <topic> -y       # Delete specific fact
+./friday facts-delete-date 2026-01-02  # Delete facts from date onwards
+./friday facts-categories              # Show categories
+./friday facts-export -o backup.json   # Export to JSON
+
 # Testing
 pipenv run pytest tests/
 ```
@@ -146,6 +186,7 @@ All times use **America/Sao_Paulo (BRT, UTC-3)**. Use the `BRT` timezone from `s
 - Reports: Morning (10:00), Evening (21:00), Weekly (Sunday 20:00) BRT
 - Work calendar (Google) is READ-ONLY
 - Native function calling with `tool_choice='auto'` and `parallel_tool_calls=True`
+- Multi-turn tool calling (max 3 turns) enables complex multi-step queries like "when is my team playing?"
 
 ## External Integrations
 

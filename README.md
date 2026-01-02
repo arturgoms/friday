@@ -129,6 +129,14 @@ Friday runs as four independent systemd services:
 ./friday journal-entries -f       # Follow entries in real-time
 ./friday journal-note             # Generate today's daily note
 ./friday journal-note -d 2025-01-01  # Generate note for specific date
+
+# Knowledge management
+./friday facts-list                    # List all saved facts
+./friday facts-search <query>          # Search for facts
+./friday facts-delete <topic> -y       # Delete specific fact
+./friday facts-delete-date 2026-01-02  # Delete facts from date onwards
+./friday facts-categories              # Show categories with counts
+./friday facts-export -o backup.json   # Export to JSON
 ```
 
 ### Telegram
