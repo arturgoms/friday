@@ -9,11 +9,18 @@ Environment="PATH=/home/artur/.local/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="CUDA_VISIBLE_DEVICES=0"
 
 # Kill all child processes when stopping (vLLM spawns subprocesses)
-KillMode=control-group
-KillSignal=SIGKILL
-TimeoutStopSec=10
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=15
+FinalKillSignal=SIGKILL
+
+# Clean up any orphaned vLLM processes before starting
+ExecStartPre=/home/artur/friday/scripts/vllm/cleanup_vllm.sh
 
 ExecStart=/home/artur/friday/scripts/vllm/start_vllm.sh
+
+# Ensure cleanup after stopping
+ExecStopPost=/home/artur/friday/scripts/vllm/cleanup_vllm.sh
 
 Restart=always
 RestartSec=30

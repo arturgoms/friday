@@ -225,8 +225,8 @@ class ReportGenerator:
             if not data:
                 return None
             
-            sync = data.get("sync", {})
-            if sync.get("status") != "fresh":
+            sync = data.get("sync_status", {})
+            if sync.get("status") not in ["current", "recent"]:
                 hours_ago = sync.get("hours_ago", 0)
                 return f"Health\nGarmin data stale ({hours_ago:.0f}h ago)"
             
@@ -234,8 +234,8 @@ class ReportGenerator:
             
             # Sleep
             sleep = data.get("sleep", {})
-            sleep_score = sleep.get("sleep_score")
-            sleep_dur = sleep.get("duration_hours")
+            sleep_score = sleep.get("score")
+            sleep_dur = sleep.get("total_hours")
             if sleep_score:
                 lines.append(f"Sleep: {sleep_score} ({sleep_dur:.1f}h)" if sleep_dur else f"Sleep score: {sleep_score}")
             
@@ -258,7 +258,8 @@ class ReportGenerator:
     def _generate_homelab_brief(self) -> Optional[str]:
         """Generate brief homelab status."""
         try:
-            self.homelab.initialize()
+            if not self.homelab._initialized:
+                self.homelab.initialize()
             data = self.homelab.collect()
             if not data:
                 return None
@@ -267,6 +268,10 @@ class ReportGenerator:
             up = services.get("up", 0)
             total = services.get("total", 0)
             down = services.get("down_services", [])
+            
+            # Skip if no services are configured
+            if total == 0:
+                return None
             
             if down:
                 return f"Homelab: {up}/{total} services ({len(down)} down: {', '.join(down[:3])})"
@@ -284,8 +289,8 @@ class ReportGenerator:
             if not data:
                 return None
             
-            sync = data.get("sync", {})
-            if sync.get("status") != "fresh":
+            sync = data.get("sync_status", {})
+            if sync.get("status") not in ["current", "recent"]:
                 return None
             
             lines = ["Health Recap"]
@@ -299,14 +304,14 @@ class ReportGenerator:
                 lines.append(f"Body battery: {current}% (range: {low}-{high}%)")
             
             # Steps
-            activity = data.get("activity", {})
-            steps = activity.get("steps")
+            daily_stats = data.get("daily_stats", {})
+            steps = daily_stats.get("steps")
             if steps:
                 lines.append(f"Steps: {steps:,}")
             
             # Stress summary
             stress = data.get("stress", {})
-            avg = stress.get("average")
+            avg = stress.get("daily_avg")
             if avg:
                 lines.append(f"Average stress: {avg}")
             

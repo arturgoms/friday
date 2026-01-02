@@ -227,17 +227,30 @@ def logs(
     follow: bool = typer.Option(True, "-f", "--follow/--no-follow", help="Follow log output")
 ):
     """Tail logs for a Friday service."""
+    # Get logs directory
+    logs_dir = Path(__file__).parent.parent / "logs"
+    
     if service == "all":
-        # Show combined logs from all services
+        # Show combined logs from all log files
         console.print(f"[cyan]Tailing logs for all Friday services...[/cyan]")
         console.print("[dim]Press Ctrl+C to exit[/dim]\n")
         
-        cmd = ["journalctl", "--user", "-n", str(lines)]
-        # Add all service units
+        # Build tail command for all log files
+        log_files = []
         for svc in SERVICES:
-            cmd.extend(["-u", svc])
+            log_file = logs_dir / f"{svc}.log"
+            if log_file.exists():
+                log_files.append(str(log_file))
+        
+        if not log_files:
+            console.print("[yellow]No log files found[/yellow]")
+            return
+        
+        # Use tail with multiple files (shows file markers and combines output)
+        cmd = ["tail", f"-n", str(lines)]
         if follow:
             cmd.append("-f")
+        cmd.extend(log_files)
         
         try:
             subprocess.run(cmd)
@@ -247,9 +260,15 @@ def logs(
         console.print(f"[cyan]Tailing logs for {service}...[/cyan]")
         console.print("[dim]Press Ctrl+C to exit[/dim]\n")
         
-        cmd = ["journalctl", "--user", "-u", service, "-n", str(lines)]
+        log_file = logs_dir / f"{service}.log"
+        if not log_file.exists():
+            console.print(f"[yellow]Log file not found: {log_file}[/yellow]")
+            return
+        
+        cmd = ["tail", f"-n", str(lines)]
         if follow:
             cmd.append("-f")
+        cmd.append(str(log_file))
         
         try:
             subprocess.run(cmd)
