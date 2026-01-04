@@ -1465,6 +1465,35 @@ def get_vllm_tool_definitions():
                     "required": ["name"]
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "list_people",
+                "description": "List all people in the database with their names and relationship to the user. Use this to discover who people are before calling person_data.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "calculate_age",
+                "description": "Calculate someone's current age from their birthday. Handles leap years and returns exact age.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "birthday": {
+                            "type": "string",
+                            "description": "Birthday in YYYY-MM-DD format (e.g., '1995-12-12')"
+                        }
+                    },
+                    "required": ["birthday"]
+                }
+            }
         }
     ]
 
@@ -1503,8 +1532,8 @@ def execute_vllm_tool(tool_call):
         user_info = {
             "name": "Artur Gomes",
             "birthday": "1996-03-30",
-            "email": ["contato@arturgomes.com.br"],
-            "phone": "+55 41 12345438",
+            "email": ["contato@arturgomes.com.br", "artur@yourcounterpart.com"],
+            "phone": "+55 41 998711394",
             "company": "Counterpart",
             "favorite_color": "black",
             "favorite_food": "pizza"
@@ -1513,7 +1542,7 @@ def execute_vllm_tool(tool_call):
 
     elif func["name"] == "person_data":
         person_name = args.get("name", "").lower()
-
+        
         # Hardcoded person database
         people_db = {
             "camila santos": {
@@ -1547,12 +1576,52 @@ def execute_vllm_tool(tool_call):
                 "relationship": "father"
             }
         }
-
+        
         person_info = people_db.get(person_name)
         if person_info:
             return json.dumps(person_info)
         else:
             return json.dumps({"error": f"Person '{args.get('name')}' not found in database"})
+    
+    elif func["name"] == "list_people":
+        # Return list of all people with name and relationship
+        people_list = [
+            {"name": "Camila Santos", "relationship": "wife"},
+            {"name": "Sofia Menezes", "relationship": "daughter"},
+            {"name": "Giulia Menezes", "relationship": "daughter"},
+            {"name": "Sayonara Aparecida", "relationship": "mother"},
+            {"name": "Jose Roberto", "relationship": "father"}
+        ]
+        return json.dumps(people_list)
+    
+    elif func["name"] == "calculate_age":
+        birthday_str = args.get("birthday", "")
+        try:
+            from datetime import datetime
+            import pytz
+            
+            # Parse birthday
+            birthday = datetime.strptime(birthday_str, "%Y-%m-%d")
+            
+            # Get current date in BRT timezone
+            brt = pytz.timezone("America/Sao_Paulo")
+            today = datetime.now(brt)
+            
+            # Calculate age
+            age = today.year - birthday.year
+            
+            # Adjust if birthday hasn't occurred yet this year
+            if (today.month, today.day) < (birthday.month, birthday.day):
+                age -= 1
+            
+            return json.dumps({
+                "age": age,
+                "birthday": birthday_str,
+                "current_date": today.strftime("%Y-%m-%d"),
+                "next_birthday": f"{today.year if (today.month, today.day) < (birthday.month, birthday.day) else today.year + 1}-{birthday.month:02d}-{birthday.day:02d}"
+            })
+        except Exception as e:
+            return json.dumps({"error": f"Invalid birthday format: {str(e)}"})
 
     return "Unknown tool"
 
@@ -1582,13 +1651,13 @@ def vllm_query(
     if reasoning:
         system_content = """You are a helpful AI assistant with access to tools.
 
-CRITICAL: When the user's query requires information from a tool, CALL THE TOOL immediately using function calling. DO NOT explain what you will do - JUST DO IT.
+When the user asks for information, use tools to retrieve it, then present the results to the user. You can make multiple tool calls in sequence.
 
-You can use <think> tags for complex reasoning when needed."""
+Use <think> tags to plan your approach, then execute by calling tools. After receiving tool results, present the information to the user clearly."""
     else:
         system_content = """You are a helpful AI assistant with access to tools.
 
-CRITICAL: When the user's query requires information from a tool, CALL THE TOOL immediately using function calling. DO NOT explain what you will do - JUST DO IT."""
+When the user asks for information, use tools to retrieve it, then present the results to the user. You can make multiple tool calls in sequence."""
 
     messages.append({
         "role": "system",
@@ -1760,7 +1829,7 @@ def vllm_chat(
     if reasoning:
         console.print("[dim]Mode: Reasoning enabled (<think> tags)[/dim]")
     console.print("[dim]Type 'exit' or 'quit' to end the conversation[/dim]")
-    console.print("[dim]Tools available: get_current_time(), calculate(), user_data(), person_data(name)[/dim]\n")
+    console.print("[dim]Tools: get_current_time(), calculate(), user_data(), person_data(), list_people(), calculate_age()[/dim]\n")
 
     vllm_url = "http://localhost:8000/v1/chat/completions"
 
@@ -1768,13 +1837,13 @@ def vllm_chat(
     if reasoning:
         system_content = """You are a helpful AI assistant with access to tools.
 
-CRITICAL: When the user's query requires information from a tool, CALL THE TOOL immediately using function calling. DO NOT explain what you will do - JUST DO IT.
+When the user asks for information, use tools to retrieve it, then present the results to the user. You can make multiple tool calls in sequence.
 
-You can use <think> tags for complex reasoning when needed."""
+Use <think> tags to plan your approach, then execute by calling tools. After receiving tool results, present the information to the user clearly."""
     else:
         system_content = """You are a helpful AI assistant with access to tools.
 
-CRITICAL: When the user's query requires information from a tool, CALL THE TOOL immediately using function calling. DO NOT explain what you will do - JUST DO IT."""
+When the user asks for information, use tools to retrieve it, then present the results to the user. You can make multiple tool calls in sequence."""
 
     messages = [{
         "role": "system",
@@ -1816,36 +1885,68 @@ CRITICAL: When the user's query requires information from a tool, CALL THE TOOL 
                 "max_tokens": 256
             }
 
-            # Get response
-            response = asyncio.run(make_request(payload))
-            message = response["choices"][0]["message"]
-
-            # Check for tool calls
-            if "tool_calls" in message and message["tool_calls"]:
-                console.print("[dim]→ Using tools...[/dim]")
-
-                # Add assistant message with tool calls
-                messages.append(message)
-
-                # Execute all tools
-                for tool_call in message["tool_calls"]:
-                    func_name = tool_call["function"]["name"]
-                    result = execute_vllm_tool(tool_call)
-
-                    console.print(f"[dim]  • {func_name}() → {result}[/dim]")
-
-                    # Add tool result
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call["id"],
-                        "content": result
-                    })
-
-                # Get final response with tool results
-                payload["messages"] = messages
-                # Keep tools available for potential follow-up calls
+            # Multi-turn tool calling loop
+            # Let the model keep calling tools until it's done
+            max_turns = 10  # Safety limit
+            turn = 0
+            message = None
+            
+            while turn < max_turns:
+                # Get response
                 response = asyncio.run(make_request(payload))
                 message = response["choices"][0]["message"]
+                
+                # Extract and display thinking/plan if present (before tool calls)
+                content = message.get("content", "")
+                if content and reasoning:
+                    import re
+                    thinking_pattern = r'<think>(.*?)</think>'
+                    thinking_matches = re.findall(thinking_pattern, content, re.DOTALL)
+                    
+                    if thinking_matches and turn == 0:
+                        # Show the plan on first turn
+                        console.print(f"[bold yellow]Plan:[/bold yellow]")
+                        for think_content in thinking_matches:
+                            console.print(f"[dim]{think_content.strip()}[/dim]\n")
+                
+                # Check for tool calls
+                if "tool_calls" in message and message["tool_calls"]:
+                    turn += 1
+                    if turn == 1:
+                        console.print("[dim]→ Executing plan...[/dim]")
+                    else:
+                        console.print(f"[dim]→ Turn {turn}...[/dim]")
+
+                    # Add assistant message with tool calls
+                    messages.append(message)
+
+                    # Execute all tools in this turn
+                    for tool_call in message["tool_calls"]:
+                        func_name = tool_call["function"]["name"]
+                        result = execute_vllm_tool(tool_call)
+
+                        console.print(f"[dim]  • {func_name}() → {result[:100]}{'...' if len(result) > 100 else ''}[/dim]")
+
+                        # Add tool result
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call["id"],
+                            "content": result
+                        })
+
+                    # Update payload for next turn
+                    payload["messages"] = messages
+                else:
+                    # No more tool calls, we're done
+                    break
+            
+            if turn >= max_turns:
+                console.print(f"[yellow]⚠ Reached max turns ({max_turns}), stopping[/yellow]")
+            
+            # Ensure we have a message to display
+            if message is None:
+                console.print("[red]Error: No response from model[/red]")
+                continue
 
             # Display assistant response
             content = message.get("content", "")
