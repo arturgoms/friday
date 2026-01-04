@@ -696,10 +696,11 @@ def facts_list(
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        # Get latest fact for each topic
+        # Get latest fact for each topic with vault location
         if category:
             sql = """
-                SELECT f1.topic, f1.value, f1.category, f1.created_at, f1.notes
+                SELECT f1.topic, f1.value, f1.category, f1.created_at, f1.notes,
+                       f1.vault_path, f1.vault_field, f1.vault_section
                 FROM facts f1
                 INNER JOIN (
                     SELECT topic, MAX(created_at) as max_date
@@ -713,7 +714,8 @@ def facts_list(
             cursor.execute(sql, (category, limit))
         else:
             sql = """
-                SELECT f1.topic, f1.value, f1.category, f1.created_at, f1.notes
+                SELECT f1.topic, f1.value, f1.category, f1.created_at, f1.notes,
+                       f1.vault_path, f1.vault_field, f1.vault_section
                 FROM facts f1
                 INNER JOIN (
                     SELECT topic, MAX(created_at) as max_date
@@ -734,21 +736,41 @@ def facts_list(
         
         # Display as table
         table = Table(title=f"Personal Facts{f' ({category})' if category else ''}", show_header=True)
-        table.add_column("Topic", style="cyan", width=20)
-        table.add_column("Value", style="green", width=30)
-        table.add_column("Category", style="blue", width=15)
-        table.add_column("Updated", style="yellow", width=20)
+        table.add_column("Topic", style="cyan", width=18)
+        table.add_column("Value", style="green", width=22)
+        table.add_column("Category", style="blue", width=11)
+        table.add_column("Vault Location", style="magenta", width=25)
+        table.add_column("Updated", style="yellow", width=16)
         
-        for topic, value, cat, created_at, notes in rows:
+        for row in rows:
+            topic, value, cat, created_at, notes, vault_path, vault_field, vault_section = row
+            
+            # Format vault location
+            if vault_path:
+                from pathlib import Path
+                vault_file = Path(vault_path).stem  # Get filename without extension
+                if vault_field:
+                    location = f"{vault_file}:{vault_field}"
+                elif vault_section:
+                    # Get last part of section path
+                    section_name = vault_section.split('/')[-1] if vault_section else "section"
+                    location = f"{vault_file}§{section_name}"
+                else:
+                    location = vault_file
+            else:
+                location = "[dim]legacy[/dim]"
+            
             table.add_row(
                 topic,
-                value[:50] + "..." if len(value) > 50 else value,
+                value[:40] + "..." if len(value) > 40 else value,
                 cat or "",
+                location,
                 created_at
             )
         
         console.print(table)
         console.print(f"\n[dim]Showing {len(rows)} facts (use --limit to show more)[/dim]")
+        console.print(f"[dim]Legend: filename:field (frontmatter) | filename§section (markdown section)[/dim]")
         
     except Exception as e:
         console.print(f"[red]Error listing facts: {e}[/red]")
@@ -1021,6 +1043,350 @@ def facts_export(
         
     except Exception as e:
         console.print(f"[red]Error exporting facts: {e}[/red]")
+
+
+@app.command("facts-history")
+def facts_history(
+    topic: str = typer.Argument(..., help="Topic to show history for"),
+    limit: int = typer.Option(10, "--limit", "-l", help="Maximum number of versions to show"),
+):
+    """Show the history of changes for a specific fact.
+    
+    Displays all versions of a fact over time, showing when it was created/updated
+    and what the value was at each point.
+    
+    Example:
+        ./friday facts-history favorite_color
+        ./friday facts-history wife_birthday --limit 5
+    """
+    try:
+        import sqlite3
+        from datetime import datetime
+        
+        db_path = os.path.expanduser("~/friday_facts.db")
+        
+        if not os.path.exists(db_path):
+            console.print("[yellow]No facts database found. Start chatting with Friday to create facts.[/yellow]")
+            return
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Get all versions of this fact, ordered by creation time (newest first)
+        cursor.execute("""
+            SELECT value, category, confidence, created_at, source, notes
+            FROM facts
+            WHERE topic = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (topic, limit))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        if not rows:
+            console.print(f"[yellow]No history found for topic: {topic}[/yellow]")
+            console.print("\n[dim]Tip: Use './friday facts-list' to see all available topics[/dim]")
+            return
+        
+        # Display header
+        console.print(f"\n[bold cyan]History for '{topic}':[/bold cyan]")
+        console.print(f"[dim]Showing {len(rows)} version(s)[/dim]\n")
+        
+        # Display each version
+        for i, row in enumerate(rows, 1):
+            value, category, confidence, created_at, source, notes = row
+            
+            # Parse timestamp
+            try:
+                dt = datetime.fromisoformat(created_at)
+                time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+            except:
+                time_str = created_at
+            
+            # Current value marker
+            is_current = (i == 1)
+            marker = "[bold green]CURRENT[/bold green]" if is_current else f"[dim]Version {len(rows) - i + 1}[/dim]"
+            
+            console.print(f"{marker}")
+            console.print(f"  [bold]Value:[/bold] {value}")
+            console.print(f"  [dim]Category:[/dim] {category or 'none'}")
+            console.print(f"  [dim]Confidence:[/dim] {confidence}")
+            console.print(f"  [dim]Updated:[/dim] {time_str}")
+            console.print(f"  [dim]Source:[/dim] {source}")
+            
+            if notes:
+                console.print(f"  [dim]Notes:[/dim] {notes}")
+            
+            if i < len(rows):
+                console.print()  # Empty line between versions
+        
+        console.print()
+        
+    except Exception as e:
+        console.print(f"[red]Error viewing fact history: {e}[/red]")
+
+
+@app.command("facts-reindex")
+def facts_reindex(
+    force: bool = typer.Option(False, "--force", "-f", help="Reindex all facts, even if they have embeddings")
+):
+    """Generate embeddings for facts to enable semantic search.
+    
+    This creates vector embeddings for all facts in the database, enabling
+    semantic search capabilities. Run this after importing facts or to update embeddings.
+    
+    Example:
+        ./friday facts-reindex                # Index facts without embeddings
+        ./friday facts-reindex --force        # Reindex all facts
+    """
+    try:
+        import sqlite3
+        import numpy as np
+        from src.core.embeddings import get_embeddings
+        
+        console.print("[cyan]Initializing embeddings model...[/cyan]")
+        embeddings_model = get_embeddings()
+        
+        db_path = os.path.expanduser("~/friday_facts.db")
+        if not os.path.exists(db_path):
+            console.print("[yellow]No facts database found.[/yellow]")
+            return
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Get facts that need indexing
+        if force:
+            cursor.execute("SELECT id, topic, value FROM facts")
+            console.print("[yellow]Reindexing ALL facts...[/yellow]")
+        else:
+            cursor.execute("SELECT id, topic, value FROM facts WHERE embedding IS NULL")
+            console.print("[cyan]Indexing facts without embeddings...[/cyan]")
+        
+        facts = cursor.fetchall()
+        
+        if not facts:
+            console.print("[green]✓ All facts already have embeddings![/green]")
+            conn.close()
+            return
+        
+        console.print(f"Found {len(facts)} facts to index\n")
+        
+        # Generate embeddings in batch
+        with console.status("[bold cyan]Generating embeddings...") as status:
+            for i, (fact_id, topic, value) in enumerate(facts, 1):
+                try:
+                    # Generate embedding
+                    text = f"{topic}: {value}"
+                    embedding = embeddings_model.encode(text, normalize=True)
+                    embedding_blob = embedding.tobytes()
+                    
+                    # Update database
+                    cursor.execute(
+                        "UPDATE facts SET embedding = ? WHERE id = ?",
+                        (embedding_blob, fact_id)
+                    )
+                    
+                    if i % 10 == 0:
+                        status.update(f"[bold cyan]Processed {i}/{len(facts)} facts...")
+                        conn.commit()
+                    
+                except Exception as e:
+                    console.print(f"[yellow]⚠ Error indexing '{topic}': {e}[/yellow]")
+        
+        conn.commit()
+        conn.close()
+        
+        console.print(f"\n[green]✓ Successfully indexed {len(facts)} facts![/green]")
+        console.print("[dim]Semantic search is now enabled for these facts.[/dim]")
+        
+    except Exception as e:
+        console.print(f"[red]Error indexing facts: {e}[/red]")
+
+
+@app.command()
+def facts_sync(
+    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Show what would be synced without making changes"),
+    force: bool = typer.Option(False, "--force", "-f", help="Re-sync all facts even if already indexed")
+):
+    """Sync facts from Obsidian vault to database index.
+    
+    Scans your vault notes and indexes any facts that aren't already in the database.
+    This allows manual vault edits to become searchable.
+    
+    Example:
+        ./friday facts-sync                # Sync new facts
+        ./friday facts-sync --dry-run      # Preview what would be synced
+        ./friday facts-sync --force        # Re-sync everything
+    """
+    try:
+        import sqlite3
+        from pathlib import Path
+        from src.core.vault import (
+            parse_frontmatter,
+            read_vault_file,
+            USER_NOTE,
+            FRIDAY_NOTE,
+            NOTES_DIR,
+            USER_ATTRIBUTES
+        )
+        from src.core.embeddings import get_embeddings
+        from datetime import datetime
+        from src.core.constants import BRT
+        
+        console.print("[cyan]Scanning Obsidian vault for facts...[/cyan]\n")
+        
+        db_path = os.path.expanduser("~/friday_facts.db")
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Get existing facts
+        cursor.execute("SELECT topic, vault_path, vault_field FROM facts")
+        existing = {(row[0], row[1], row[2]) for row in cursor.fetchall()}
+        
+        facts_to_sync = []
+        
+        # 1. Scan user note (Artur Gomes.md) for user attributes
+        console.print(f"📄 Scanning {USER_NOTE.name}...")
+        if USER_NOTE.exists():
+            content = read_vault_file(USER_NOTE)
+            frontmatter, _ = parse_frontmatter(content)
+            
+            for field, value in frontmatter.items():
+                # Check if it's a user attribute
+                if field.lower() in USER_ATTRIBUTES or field.startswith('favorite_'):
+                    topic = field.lower()
+                    vault_path = str(USER_NOTE)
+                    
+                    # Skip if already indexed (unless force)
+                    if not force and (topic, vault_path, field) in existing:
+                        continue
+                    
+                    facts_to_sync.append({
+                        'topic': topic,
+                        'value': str(value),
+                        'category': 'preferences' if field.startswith('favorite_') else 'personal',
+                        'vault_path': vault_path,
+                        'vault_field': field,
+                        'vault_section': None
+                    })
+                    console.print(f"  → Found: {topic} = {value}")
+        
+        # 2. Scan person notes for facts about people
+        console.print(f"\n📄 Scanning person notes...")
+        if NOTES_DIR.exists():
+            for note_file in NOTES_DIR.glob("*.md"):
+                # Skip special notes
+                if note_file.stem in ['Friday', 'Artur Gomes']:
+                    continue
+                
+                content = read_vault_file(note_file)
+                frontmatter, _ = parse_frontmatter(content)
+                
+                # Check if it's a person note
+                tags = frontmatter.get('tags', [])
+                if not any('person/' in str(tag) for tag in tags):
+                    continue
+                
+                console.print(f"  📝 {note_file.stem}")
+                
+                # Index relevant fields
+                person_name = note_file.stem.lower().replace(' ', '_')
+                for field in ['birthday', 'email', 'phone', 'relationship']:
+                    if field in frontmatter:
+                        value = frontmatter[field]
+                        topic = f"{person_name}_{field}"
+                        vault_path = str(note_file)
+                        
+                        if not force and (topic, vault_path, field) in existing:
+                            continue
+                        
+                        facts_to_sync.append({
+                            'topic': topic,
+                            'value': str(value),
+                            'category': 'family' if 'family' in str(tags) else 'contacts',
+                            'vault_path': vault_path,
+                            'vault_field': field,
+                            'vault_section': None
+                        })
+                        console.print(f"    → Found: {topic} = {value}")
+        
+        conn.close()
+        
+        # Summary
+        console.print(f"\n{'='*60}")
+        console.print(f"Found {len(facts_to_sync)} facts to sync")
+        
+        if dry_run:
+            console.print("\n[yellow]DRY RUN - No changes made[/yellow]")
+            if facts_to_sync:
+                console.print("\nWould sync:")
+                for fact in facts_to_sync[:10]:  # Show first 10
+                    console.print(f"  • {fact['topic']}: {fact['value']}")
+                if len(facts_to_sync) > 10:
+                    console.print(f"  ... and {len(facts_to_sync) - 10} more")
+            return
+        
+        if not facts_to_sync:
+            console.print("[green]✓ All vault facts are already indexed![/green]")
+            return
+        
+        # Confirm sync
+        if not typer.confirm(f"\nSync {len(facts_to_sync)} facts to database?"):
+            console.print("[yellow]Sync cancelled.[/yellow]")
+            return
+        
+        # Perform sync
+        console.print("\n[cyan]Syncing facts to database...[/cyan]")
+        embeddings_model = get_embeddings()
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        synced = 0
+        for fact in facts_to_sync:
+            try:
+                # Generate embedding
+                text = f"{fact['topic']}: {fact['value']}"
+                embedding = embeddings_model.encode(text, normalize=True)
+                embedding_blob = embedding.tobytes()
+                
+                # Insert or update
+                cursor.execute("""
+                    INSERT INTO facts (
+                        topic, value, category, confidence, source,
+                        vault_path, vault_field, vault_section,
+                        embedding, last_synced, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    fact['topic'],
+                    fact['value'],
+                    fact['category'],
+                    1.0,
+                    'vault_sync',
+                    fact['vault_path'],
+                    fact['vault_field'],
+                    fact['vault_section'],
+                    embedding_blob,
+                    datetime.now(BRT).isoformat(),
+                    datetime.now(BRT).isoformat()
+                ))
+                synced += 1
+                
+            except Exception as e:
+                console.print(f"[red]  ✗ Failed to sync {fact['topic']}: {e}[/red]")
+        
+        conn.commit()
+        conn.close()
+        
+        console.print(f"\n[green]✓ Successfully synced {synced}/{len(facts_to_sync)} facts![/green]")
+        console.print("[dim]Your vault facts are now searchable with semantic search.[/dim]")
+        
+    except Exception as e:
+        console.print(f"[red]Error syncing facts: {e}[/red]")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
 
 
 # =============================================================================

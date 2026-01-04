@@ -59,38 +59,77 @@ Friday uses a tool-based approach for both conversation memory and personal know
 - ✅ Model decides when history is relevant
 - ✅ Supports reliable parallel tool execution
 
-#### Personal Knowledge Graph
+#### Personal Knowledge Graph - Vault Integration
 
-**Storage:** `~/friday_facts.db` - SQLite database storing personal facts about the user
+**Architecture:** Vault-first hybrid storage with semantic search
+
+Friday uses Obsidian vault as the **single source of truth** for personal knowledge:
+
+**Storage Strategy:**
+- **Simple user attributes** → `brain/1. Notes/Artur Gomes.md` frontmatter (favorite_color, favorite_team, etc.)
+- **Facts about people** → Their person notes (`brain/1. Notes/[Name].md`) frontmatter
+- **Complex observations** → `brain/1. Notes/Friday.md` sections (behavioral patterns, preferences)
+- **Facts DB** → Index/cache with embeddings for semantic search
 
 **Knowledge Tools:**
-- `save_fact(topic, value, category)` - Save personal information
-- `get_fact(topic)` - Retrieve specific fact
-- `search_facts(query, category)` - Search within facts
-- `search_knowledge(query)` - Search everywhere (facts + vault)
+- `save_fact(topic, value, category)` - Save to appropriate vault location
+- `get_fact(topic)` - Read from vault (always fresh)
+- `search_facts(query, category)` - Search with semantic fallback
+- `search_knowledge(query)` - Search facts + vault notes
 - `list_fact_categories()` - List all categories
 
+**How Facts Are Routed:**
+
+| Fact Type | Example | Storage Location | Format |
+|-----------|---------|------------------|--------|
+| User attribute | favorite_color: black | Artur Gomes.md | Frontmatter field |
+| Person fact | wife_birthday: 12/12 | Camila Santos.md | Frontmatter field |
+| Observation | workout_preference | Friday.md | Markdown section |
+
 **Auto-save Behavior:**
-The model automatically saves when you share personal information:
-- "My favorite color is blue" → Saves as fact
-- "I was born in June" → Saves as fact
-- "Actually, I prefer red now" → Updates with new record (keeps history)
+The model automatically routes facts when you share information:
+- "My favorite color is blue" → `Artur Gomes.md` frontmatter: `favorite_color: blue`
+- "My wife's birthday is June 12" → `[Wife Name].md` frontmatter: `birthday: 1995-06-12`
+- "I prefer morning workouts" → `Friday.md` Health section as bullet point
+
+**Person Notes:**
+- Auto-created using template when referencing new people
+- Follow Obsidian Operating Manual conventions
+- Include tags, relationships, and proper structure
+- Automatically linked with `[[Name]]` syntax
+
+**Vector Search:**
+- Facts indexed with 384-dim embeddings (sentence-transformers)
+- Semantic similarity search with cosine distance
+- Min similarity threshold: 0.20
+- Enables queries like "family" finding wife_name, wife_birthday, best_friend
 
 **Multi-Step Personal Queries:**
-Friday automatically resolves personal references in multi-step queries:
-- "When is my team playing?" → Retrieves "Cruzeiro Esporte Clube" from facts → Searches web for match schedule
-- "What's my favorite restaurant's address?" → Gets restaurant name from facts → Searches web for address
-- This uses **multi-turn tool calling** (up to 3 turns) to complete complex requests
+Friday automatically resolves personal references:
+- "When is my team playing?" → Retrieves "Cruzeiro Esporte Clube" from vault → Searches web
+- "What's my favorite restaurant's address?" → Gets name from vault → Searches web
+- Uses **multi-turn tool calling** (max 3 turns) to complete complex requests
 
 **CLI Management:**
 ```bash
 ./friday facts-list                    # List all facts
-./friday facts-search <query>          # Search for facts
+./friday facts-search <query>          # Search with semantic fallback
+./friday facts-history <topic>         # Show history of changes
 ./friday facts-delete <topic> -y       # Delete specific fact
-./friday facts-delete-date 2026-01-02  # Delete facts from date onwards
+./friday facts-reindex                 # Reindex facts with embeddings
+./friday facts-sync                    # Sync vault facts to DB (makes manual edits searchable)
+./friday facts-sync --dry-run          # Preview what would be synced
 ./friday facts-categories              # Show categories
 ./friday facts-export -o backup.json   # Export to JSON
+
+# Migration (one-time)
+python scripts/migrate_facts_to_vault.py --yes
 ```
+
+**Key Files:**
+- `src/core/vault.py` - Vault integration (frontmatter, sections, person notes)
+- `src/tools/knowledge.py` - Knowledge tools with vault routing
+- `~/friday_facts.db` - Facts index with embeddings and vault references
 
 ### Adding a Tool
 ```python

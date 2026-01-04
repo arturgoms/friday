@@ -98,6 +98,7 @@ from src.tools.knowledge import (
     search_facts,
     search_knowledge,
     list_fact_categories,
+    find_related_info,
 )
 
 logger = logging.getLogger(__name__)
@@ -139,6 +140,7 @@ class FridayAgent:
             search_facts,
             search_knowledge,
             list_fact_categories,
+            find_related_info,
             # Calendar
             get_calendar_events,
             get_today_schedule,
@@ -253,13 +255,18 @@ You have access to tools for:
 
 IMPORTANT MEMORY PATTERNS:
 
-1. **Conversation History** - NOT automatically loaded. If user asks about past messages:
+1. **Conversation History** - NOT automatically loaded. Use memory tools when needed:
    - "What did I say about X?" → call get_conversation_history(query="X")
    - "What was my last message?" → call get_last_user_message()
+   - For ambiguous references ("her", "him", "how about X?") → call get_last_user_message()
 
 2. **Personal Facts** - Store and retrieve long-term information about the user:
    - When user tells you personal info → call save_fact(topic, value, category)
    - When you need to know something about user → call get_fact(topic) or search_knowledge(query)
+   - **CRITICAL INFERENCE PATTERN**: If get_fact() fails OR you need to infer/calculate something:
+     → IMMEDIATELY call find_related_info(question="<the user's question>")
+     → This finds facts you can use to CALCULATE or INFER the answer
+     → Example: "How old is X?" → find_related_info finds birthday → YOU calculate age
    - If you don't know something → call search_knowledge(query) FIRST, then ask user if not found
    
 3. **Auto-save Facts** - Automatically save when user shares personal information:
@@ -281,15 +288,26 @@ IMPORTANT MEMORY PATTERNS:
      → FIRST: search_knowledge(query="team") → finds "Cruzeiro Esporte Clube"
      → THEN: web_search(query="Cruzeiro Esporte Clube next match") → finds match schedule
    
-   - "What's my favorite restaurant address?"
-     → FIRST: get_fact(topic="favorite_restaurant") → finds "Restaurante ABC"
-     → THEN: web_search(query="Restaurante ABC address") → finds address
-   
-   - "Schedule meeting with my wife"
-     → FIRST: get_fact(topic="wife_name") → finds "Sarah"
-     → THEN: add_event(title="Meeting with Sarah", ...) → creates event
-   
-   - NEVER assume or guess personal information - ALWAYS retrieve from facts first, THEN act on it
+    - "What's my favorite restaurant address?"
+      → FIRST: get_fact(topic="favorite_restaurant") → finds "Restaurante ABC"
+      → THEN: web_search(query="Restaurante ABC address") → finds address
+    
+    - "Schedule meeting with my wife"
+      → FIRST: get_fact(topic="wife_name") → finds "Sarah"
+      → THEN: add_event(title="Meeting with Sarah", ...) → creates event
+    
+    - "How old is my wife?" or "How old is X?"
+      → FIRST: get_fact(topic="wife_age") → not found
+      → THEN: find_related_info(question="how old is my wife") → finds wife_name + camila_santos_birthday
+      → FINALLY: Calculate age yourself: 2026 - 1995 = 30 years old (turning 31 in December)
+    
+    - "When is my sister's birthday?"
+      → FIRST: get_fact(topic="sister_birthday") → not found
+      → THEN: find_related_info(question="when is my sister's birthday") → finds family members' birthdays
+      → YOU infer which one is the sister and provide the answer
+    
+    - NEVER assume or guess personal information - ALWAYS retrieve from facts first, THEN act on it
+    - If get_fact() returns not found, use find_related_info() to search for facts you can use to INFER the answer
 
 6. **Choosing the Right Tool for Information**:
    - For REAL-TIME/CURRENT information (weather, news, match schedules, scores, etc.) → use web_search()
@@ -309,6 +327,20 @@ IMPORTANT MEMORY PATTERNS:
    - "What did I write about work?" → vault_read_note (personal notes)
    - "How many days until my birthday?" → get_fact("birthday") THEN days_until_date(month=12, day=15)
 
+CRITICAL REASONING PATTERN - When Facts Require Inference:
+
+When get_fact() returns "No direct fact but found related information", you MUST:
+1. READ the related facts carefully
+2. THINK about how to answer the original question using those facts
+3. DO THE CALCULATION/INFERENCE yourself (age from birthday, etc.)
+4. PROVIDE THE ANSWER directly
+
+Example:
+- User: "How old is my wife?"
+- get_fact("wife_age") returns: "No direct fact, but found: wife_name: Camila Santos, camila_santos_birthday: 1995-12-12"
+- YOU MUST: Calculate 2026 - 1995 = 30 years old, then answer "Your wife is 30 years old"
+- DO NOT say "I found birthday info" - CALCULATE and give the age!
+
 CRITICAL: When the user requests an action that requires a tool, you MUST call the tool using function calling.
 DO NOT describe what the tool would do or show JSON examples - ACTUALLY CALL THE TOOL.
 NEVER return JSON in markdown blocks - use native function calling instead.
@@ -326,6 +358,7 @@ Examples:
 - User: "What's the score of my team's last game?" → FIRST call search_knowledge(query="team"), THEN call web_search(query="[team_name] latest result")
 - User: "When is my wife's birthday? How many days left?" → FIRST call get_fact(topic="wife_birthday") which returns "12/12", THEN call days_until_date(month=12, day=12) [parse MM/DD format]
 - User: "What's the difference between my birthday and my wife's birthday?" → FIRST call get_fact(topic="birthday") and get_fact(topic="wife_birthday"), THEN call days_between_dates(month1=3, day1=30, month2=12, day2=12)
+- User: "How old is my wife?" → FIRST call get_fact(topic="wife_age") returns not found, THEN call find_related_info(question="how old is my wife") which returns wife_name and camila_santos_birthday: 1995-12-12, FINALLY calculate 2026 - 1995 = 30 years old
 - User: "convert this to speech: hello" → CALL generate_speech(text="hello", lang="en")
 - User asks in Portuguese or wants Portuguese audio → use lang="pt"
 
@@ -436,74 +469,9 @@ Use this context to inform your responses when relevant."""
         # Update NPC directive
         self.npc.primary_directive = enhanced_prompt
         
-        # Conversation history is now a TOOL, not loaded into context
-        # This prevents history from interfering with function calling
-        # The model can access history via get_conversation_history() tool when needed
+        # Conversation history is NOT loaded automatically - it breaks tool calling
+        # History is available via get_conversation_history() and get_last_user_message() tools
         messages_history = []
-        
-        # DISABLED: Old history loading approach
-        if False:
-            try:
-                conversations = self.npc.command_history.get_conversations_by_id(session_id)
-                # Convert to OpenAI message format and limit to most recent messages
-                all_messages = []
-                for conv in conversations:
-                    content = conv.get("content", "")
-                    role = conv.get("role", "user")
-                    
-                    # FILTER STRATEGY: Only keep truly conversational messages
-                    # Skip both tool results AND tool-request questions
-                    
-                    # Skip user messages that are clearly tool requests (contain "what", "show", "get", etc.)
-                    if role == "user":
-                        tool_request_indicators = [
-                            "what's the", "what is the", "show me", "get ",
-                            "check ", "how was my", "do i have", "will it"
-                        ]
-                        if any(indicator in content.lower() for indicator in tool_request_indicators):
-                            logger.info(f"[AGENT] Filtered tool-request user message from history")
-                            continue
-                    
-                    # Skip assistant messages that look like tool results or tool calls
-                    if role == "assistant":
-                        # Skip if contains tool call XML
-                        if "<tool_call>" in content or "```json" in content:
-                            logger.info(f"[AGENT] Filtered tool call XML/JSON from history")
-                            continue
-                        
-                        # Skip if contains tool result patterns
-                        skip_patterns = [
-                            "Weather in ", "Your sleep", "Your next", "========",
-                            "get_current_weather:", "get_next_event:", "get_sleep_summary:",
-                            "The weather", "The disk usage", "currently", "temperature"
-                        ]
-                        if any(pattern in content for pattern in skip_patterns):
-                            logger.info(f"[AGENT] Filtered tool result from history")
-                            continue
-                    
-                    all_messages.append({
-                        "role": role,
-                        "content": content
-                    })
-                
-                # Keep only the most recent messages
-                if len(all_messages) > MAX_HISTORY_MESSAGES:
-                    messages_history = all_messages[-MAX_HISTORY_MESSAGES:]
-                    logger.info(f"[AGENT] Loaded {len(messages_history)} messages from history (limited from {len(all_messages)}, with filtering)")
-                else:
-                    messages_history = all_messages
-                    if messages_history:
-                        logger.info(f"[AGENT] Loaded {len(messages_history)} messages from history (with filtering)")
-            except Exception as e:
-                logger.warning(f"[AGENT] Failed to load conversation history: {e}")
-
-        
-        # DEBUG: Log history content to understand what breaks tool calling
-        if messages_history:
-            logger.info(f"[AGENT] DEBUG: Sending {len(messages_history)} history messages:")
-            for i, msg in enumerate(messages_history):
-                content_preview = msg['content'][:100] if msg['content'] else ''
-                logger.info(f"[AGENT] DEBUG:   [{i}] {msg['role']}: {content_preview}...")
         
         try:
             # Multi-turn tool calling: Keep calling LLM until it stops making tool calls
