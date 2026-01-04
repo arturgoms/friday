@@ -10,6 +10,7 @@ Endpoints:
     GET /tools - List registered tools
 """
 
+import asyncio
 import logging
 import os
 import sys
@@ -23,11 +24,29 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 
-from src.core.npc_agent import get_agent
+from src.core.agent import FridayAgent
 from src.core.config import get_config
 from src.core.loader import load_extensions
 from src.core.registry import get_sensor_registry, get_tool_registry
 from src.core.vector_store import BrainIndexer, get_vector_store
+
+# =============================================================================
+# Global Agent Instance
+# =============================================================================
+
+_agent_instance: Optional[FridayAgent] = None
+
+
+def get_agent() -> FridayAgent:
+    """Get or create the global Friday agent instance."""
+    global _agent_instance
+    if _agent_instance is None:
+        # Collect all registered tools
+        tool_registry = get_tool_registry()
+        tools = [entry.func for entry in tool_registry.values()]
+        _agent_instance = FridayAgent(tools=tools)
+    return _agent_instance
+
 
 # Configure logging with timezone-aware timestamps (UTC-3 / America/Sao_Paulo)
 class BRTFormatter(logging.Formatter):
@@ -160,7 +179,8 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Friday 3.0 Core...")
     
     # Load extensions (tools and sensors)
-    load_extensions()
+    # For testing: only load people and memory tools
+    load_extensions(only_tool_modules=['people', 'memory'])
     tool_count = len(get_tool_registry())
     sensor_count = len(get_sensor_registry())
     logger.info(f"Loaded {tool_count} tools, {sensor_count} sensors")
@@ -186,9 +206,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Vector store initialization failed: {e}")
     
-    # Initialize agent (npcpy-based)
+    # Initialize agent
     agent = get_agent()
-    logger.info("npcpy agent initialized")
+    logger.info(f"Agent initialized with {len(agent.tools)} tools")
     
     yield
     
@@ -314,11 +334,10 @@ async def chat(request: ChatRequest, authorized: bool = Depends(verify_api_key))
             logger.warning("[CHAT] Streaming not yet supported with npcpy agent")
             raise HTTPException(status_code=501, detail="Streaming not yet implemented")
         
-        # Get response from npcpy agent
-        response = agent.chat(
+        # Get response from agent
+        response = await agent.chat(
             message=request.text,
             session_id=request.session_id or request.user_id,
-            user_id=request.user_id,
             enable_rag=True
         )
         

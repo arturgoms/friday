@@ -16,16 +16,18 @@ from typing import Optional
 from sqlalchemy import create_engine, text
 
 from src.core.constants import BRT
+from src.core.registry import friday_tool
 
 logger = logging.getLogger(__name__)
 
-# Access to thread-local session context (set by npc_agent)
+# Access to session context
+# TODO: Improve session tracking without thread-local storage
 def _get_session_id() -> str:
-    """Get current session ID from thread-local storage."""
-    from src.core.npc_agent import _session_context
-    return getattr(_session_context, 'session_id', 'default')
+    """Get current session ID."""
+    return 'default'  # For now, use default session
 
 
+@friday_tool(name="get_conversation_history")
 def get_conversation_history(
     query: Optional[str] = None,
     limit: int = 10
@@ -121,6 +123,7 @@ def get_conversation_history(
         return f"Error accessing conversation history: {str(e)}"
 
 
+@friday_tool(name="get_last_user_message")
 def get_last_user_message() -> str:
     """Get the user's last message in the conversation.
     
@@ -169,6 +172,7 @@ def get_last_user_message() -> str:
         return f"Error: {str(e)}"
 
 
+@friday_tool(name="summarize_conversation")
 def summarize_conversation(messages: int = 20) -> str:
     """Get a summary of recent conversation topics.
     

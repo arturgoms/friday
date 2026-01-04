@@ -319,9 +319,53 @@ def chat():
                     continue
 
             # Display response
-            console.print("[bold green]Friday > [/bold green]")
-
             text = response.get("text", "")
+            tool_results = response.get("tool_results", [])
+            plan_text = response.get("plan", "")  # Get plan from response if available
+            
+            # Extract and display thinking/plan if present
+            import re
+            thinking_pattern = r'<think>(.*?)</think>'
+            
+            # Try to extract plan from text first
+            thinking_matches = re.findall(thinking_pattern, text, re.DOTALL)
+            
+            # Also check if plan was sent separately in response
+            if plan_text:
+                thinking_matches.insert(0, plan_text)
+            
+            if thinking_matches:
+                # Show plan first (before tool execution)
+                console.print("\n[bold yellow]Plan:[/bold yellow]")
+                for think_content in thinking_matches:
+                    console.print(f"[dim]{think_content.strip()}[/dim]\n")
+            
+            # Show tool execution if any tools were called
+            if tool_results:
+                console.print("[dim]→ Executing plan...[/dim]")
+                for tool_result in tool_results:
+                    tool_name = tool_result.get("tool_name", "unknown")
+                    arguments = tool_result.get("arguments", {})
+                    result = tool_result.get("result", "")
+                    
+                    # Show tool call
+                    args_str = ", ".join(f"{k}={v}" for k, v in arguments.items()) if arguments else "(no args)"
+                    console.print(f"[dim]  • {tool_name}({args_str})[/dim]")
+                    
+                    # Show result preview
+                    result_preview = result[:100]
+                    if len(result) > 100:
+                        result_preview += "..."
+                    console.print(f"[dim]    → {result_preview}[/dim]")
+                console.print()
+            
+            # Remove thinking tags from final response
+            if thinking_matches:
+                clean_text = re.sub(thinking_pattern, '', text, flags=re.DOTALL).strip()
+                text = clean_text
+            
+            console.print("[bold green]Friday > [/bold green]")
+            
             if text:
                 # Render as markdown for nice formatting
                 md = Markdown(text)

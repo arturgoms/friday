@@ -78,11 +78,12 @@ def _import_module_safe(module_name: str) -> Tuple[bool, str]:
         return False, error_msg
 
 
-def load_tools(base_path: Path | None = None) -> List[str]:
+def load_tools(base_path: Path | None = None, only_modules: List[str] | None = None) -> List[str]:
     """Load all tool modules from src/tools.
     
     Args:
         base_path: Optional base path (defaults to project root)
+        only_modules: Optional list of specific modules to load (e.g., ['people', 'memory'])
         
     Returns:
         List of successfully loaded module names
@@ -95,6 +96,17 @@ def load_tools(base_path: Path | None = None) -> List[str]:
     package_name = "src.tools"
     
     modules = _discover_modules(tools_path, package_name)
+    
+    # Filter if only_modules is specified
+    if only_modules:
+        filtered = []
+        for module in modules:
+            module_name = module.split('.')[-1]  # Get last part (e.g., 'people' from 'src.tools.people')
+            if module_name in only_modules:
+                filtered.append(module)
+        modules = filtered
+        logger.info(f"Filtered to {len(modules)} modules: {only_modules}")
+    
     loaded = []
     
     for module_name in modules:
@@ -138,7 +150,7 @@ def load_sensors(base_path: Path | None = None) -> List[str]:
     return loaded
 
 
-def load_extensions(base_path: Path | None = None) -> dict:
+def load_extensions(base_path: Path | None = None, only_tool_modules: List[str] | None = None) -> dict:
     """Load all extensions (tools and sensors).
     
     This should be called at application startup before using any
@@ -147,13 +159,14 @@ def load_extensions(base_path: Path | None = None) -> dict:
     
     Args:
         base_path: Optional base path (defaults to project root)
+        only_tool_modules: Optional list of specific tool modules to load (e.g., ['people', 'memory'])
         
     Returns:
         Dictionary with 'tools' and 'sensors' lists of loaded modules
     """
     logger.info("Loading Friday extensions...")
     
-    tool_modules = load_tools(base_path)
+    tool_modules = load_tools(base_path, only_modules=only_tool_modules)
     sensor_modules = load_sensors(base_path)
     
     # Get actual counts from registries
