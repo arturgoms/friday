@@ -159,7 +159,11 @@ async def chat_completions(request: ChatRequest) -> ChatResponse:
 
 Current time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}
 
-Use tools to answer user questions. After getting the information from tools, provide a clear answer. Do NOT call unnecessary tools."""
+When answering questions:
+1. Call the necessary tools to get information
+2. Once you have the information, respond directly to the user
+3. DO NOT call tools repeatedly
+4. DO NOT call tools after you already have the answer"""
         
         messages.insert(0, {
             "role": "system",
@@ -167,10 +171,13 @@ Use tools to answer user questions. After getting the information from tools, pr
         })
     
     # Multi-turn tool execution loop
-    max_turns = 10
+    max_turns = 5
     turn = 0
     
     while turn < max_turns:
+        # Allow tool calls but with lower max_turns to prevent infinite loops
+        tool_choice = "auto"
+        
         # Build vLLM request
         vllm_request = {
             "model": request.model,
@@ -178,7 +185,7 @@ Use tools to answer user questions. After getting the information from tools, pr
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
             "tools": tool_definitions,
-            "tool_choice": "auto"
+            "tool_choice": tool_choice
         }
         
         # Call vLLM
@@ -297,20 +304,40 @@ Use tools to answer user questions. After getting the information from tools, pr
 class LegacyChatRequest(BaseModel):
     """Legacy chat request format."""
     text: str
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
 
 
 @app.post("/chat")
 async def legacy_chat(request: LegacyChatRequest):
-    """Legacy chat endpoint for Friday CLI compatibility.
+    """Legacy chat endpoint for Friday CLI/Telegram compatibility.
     
-    This wraps the OpenAI-compatible endpoint for easier CLI usage.
+    This wraps the OpenAI-compatible endpoint for easier usage.
+    Supports session history and user context.
     """
+    session_id = request.session_id or request.user_id or "default"
+    
+    # Get conversation history for this session
+    if history:
+        conv_history = history.get_conversation(session_id, limit=10)
+        # Convert history to messages format
+        history_messages = []
+        for msg in conv_history[-10:]:  # Last 10 messages
+            history_messages.append(
+                Message(role=msg["role"], content=msg["content"])
+            )
+        
+        # Add current user message
+        history_messages.append(Message(role="user", content=request.text))
+        messages = history_messages
+    else:
+        # No history, just current message
+        messages = [Message(role="user", content=request.text)]
+    
     # Convert to OpenAI format
     openai_request = ChatRequest(
         model="NousResearch/Hermes-4-14B",
-        messages=[
-            Message(role="user", content=request.text)
-        ]
+        messages=messages
     )
     
     # Call OpenAI-compatible endpoint
@@ -318,6 +345,11 @@ async def legacy_chat(request: LegacyChatRequest):
     
     # Extract text from response
     text = response.choices[0]["message"]["content"]
+    
+    # Save to history
+    if history:
+        history.add_message(session_id, "user", request.text, "NousResearch/Hermes-4-14B")
+        history.add_message(session_id, "assistant", text, "NousResearch/Hermes-4-14B")
     
     # Return simple format
     return {
