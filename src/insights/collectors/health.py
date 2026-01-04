@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 
-from src.core.constants import BRT
+from src.core.config import get_brt
 from src.core.influxdb import get_influx_client, query as influx_query
 from src.insights.collectors.base import BaseCollector
 
@@ -51,7 +51,7 @@ class HealthCollector(BaseCollector):
             if not self.initialize():
                 return None
         
-        now = datetime.now(BRT)
+        now = datetime.now(get_brt())
         today_str = now.strftime("%Y-%m-%d")
         
         data = {
@@ -107,7 +107,7 @@ class HealthCollector(BaseCollector):
         current_stress = int(current[0].get("last", 0)) if current else 0
         
         # Daily average
-        today = datetime.now(BRT).strftime("%Y-%m-%dT00:00:00Z")
+        today = datetime.now(get_brt()).strftime("%Y-%m-%dT00:00:00Z")
         daily = self._query(f"""
             SELECT stressAvg, highStressDuration, restStressDuration 
             FROM DailyStats WHERE time >= '{today}' 

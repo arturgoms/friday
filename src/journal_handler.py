@@ -11,7 +11,7 @@ from datetime import datetime, time
 from pathlib import Path
 from typing import Optional
 
-from src.core.constants import BRT
+from src.core.config import get_config, get_brt
 from src.insights.store import InsightsStore
 
 logger = logging.getLogger(__name__)
@@ -39,13 +39,13 @@ class JournalHandler:
         """Check if it's time to send the morning journal thread.
         
         Args:
-            now: Current time. If None, uses datetime.now(BRT).
+            now: Current time. If None, uses datetime.now(get_brt()).
             
         Returns:
             True if within the morning thread window (10:00 AM)
         """
         if now is None:
-            now = datetime.now(BRT)
+            now = datetime.now(get_brt())
         
         # Target time: 10:00 AM
         target_time = time(10, 0)
@@ -70,7 +70,7 @@ class JournalHandler:
             Formatted message text
         """
         if date is None:
-            date = datetime.now(BRT)
+            date = datetime.now(get_brt())
         
         # Format: "Your journal for Sunday, June 15 is ready. Reply to this message to add entries."
         day_name = date.strftime("%A")
@@ -119,7 +119,7 @@ class JournalHandler:
             return False
         
         if date is None:
-            date = datetime.now(BRT).strftime("%Y-%m-%d")
+            date = datetime.now(get_brt()).strftime("%Y-%m-%d")
         
         thread_id = self.store.get_journal_thread(date)
         return thread_id == reply_to_message_id
@@ -139,7 +139,7 @@ class JournalHandler:
             True if saved successfully
         """
         if timestamp is None:
-            timestamp = datetime.now(BRT)
+            timestamp = datetime.now(get_brt())
         
         if date is None:
             date = timestamp.strftime("%Y-%m-%d")
@@ -178,7 +178,7 @@ class JournalHandler:
         Returns:
             List of entry dicts
         """
-        today = datetime.now(BRT).strftime("%Y-%m-%d")
+        today = datetime.now(get_brt()).strftime("%Y-%m-%d")
         return self.get_entries_for_date(today)
 
 

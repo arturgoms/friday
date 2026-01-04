@@ -20,8 +20,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
+from src.core.config import get_brt
 from src.insights.config import InsightsConfig
-from src.insights.models import Insight, Snapshot, BRT
+from src.insights.models import Insight, Snapshot
 from src.insights.store import InsightsStore
 from src.insights.collectors import (
     HealthCollector, CalendarCollector, HomelabCollector, WeatherCollector
@@ -203,7 +204,7 @@ class InsightsEngine:
                         # Save snapshot for historical analysis
                         snapshot = Snapshot(
                             collector=name,
-                            timestamp=datetime.now(BRT),
+                            timestamp=datetime.now(get_brt()),
                             data=data
                         )
                         self.store.save_snapshot(snapshot)
@@ -274,7 +275,7 @@ class InsightsEngine:
     
     async def _check_scheduled_reports(self):
         """Check if any scheduled reports are due and send them."""
-        now = datetime.now(BRT)
+        now = datetime.now(get_brt())
         today = now.strftime("%Y-%m-%d")
         
         # Morning report

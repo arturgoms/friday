@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, date as date_type
 from typing import Dict, Any, List
 
-from src.core.constants import BRT
+from src.core.config import get_brt
 from src.insights.analyzers.base import ScheduledAnalyzer
 from src.insights.models import Insight, Priority, Category, InsightType
 from src.insights.collectors.journal import JournalCollector
@@ -49,7 +49,7 @@ class DailyJournalAnalyzer(ScheduledAnalyzer):
         if "target_date" in data and isinstance(data["target_date"], date_type):
             today = data["target_date"]
         else:
-            today = datetime.now(BRT).date()
+            today = datetime.now(get_brt()).date()
         
         # Collect all journal data
         logger.info(f"[DAILY_JOURNAL] Processing journal for {today}")

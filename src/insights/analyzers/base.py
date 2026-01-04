@@ -10,9 +10,11 @@ from typing import Dict, Any, Optional, List
 import logging
 import time
 
-from src.insights.models import Insight, AnalyzerResult, BRT
+from src.insights.models import Insight, AnalyzerResult
 from src.insights.config import InsightsConfig
 from src.insights.store import InsightsStore
+
+from src.core.config import get_brt
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +81,7 @@ class BaseAnalyzer(ABC):
             result.error = str(e)
         
         result.duration_ms = (time.time() - start) * 1000
-        result.run_at = datetime.now(BRT)
+        result.run_at = datetime.now(get_brt())
         self._last_run = result.run_at
         
         if result.insights:
@@ -179,7 +181,7 @@ class PeriodicAnalyzer(BaseAnalyzer):
         if self._last_run is None:
             return True
         
-        hours_since = (datetime.now(BRT) - self._last_run).total_seconds() / 3600
+        hours_since = (datetime.now(get_brt()) - self._last_run).total_seconds() / 3600
         return hours_since >= self.interval_hours
 
 

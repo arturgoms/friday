@@ -27,7 +27,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Tuple
 from pathlib import Path
 
-from src.core.constants import BRT
+from src.core.config import get_config, get_brt
 from src.core.embeddings import get_embeddings
 from src.core.vault import (
     is_user_attribute,
@@ -351,7 +351,7 @@ def save_fact(
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             topic, value, category, confidence, notes, embedding_blob,
-            vault_path, vault_field, vault_section, datetime.now(BRT).isoformat()
+            vault_path, vault_field, vault_section, datetime.now(get_brt()).isoformat()
         ))
         
         conn.commit()

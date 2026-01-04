@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from datetime import datetime, timezone, timedelta
 
-from src.core.constants import BRT
+from src.core.config import get_config, get_brt
 from src.core.registry import friday_tool
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,7 @@ def get_current_time(format: str = "%Y-%m-%d %H:%M:%S") -> str:
     Returns:
         Formatted current time string
     """
-    return datetime.now(BRT).strftime(format)
+    return datetime.now(get_brt()).strftime(format)
 
 
 @friday_tool(name="get_system_info")
@@ -361,7 +361,7 @@ def days_until_date(month: int, day: int, year: int = 0) -> str:
         - days_until_date(3, 15, 2026) → Days until March 15, 2026
     """
     try:
-        now = datetime.now(BRT)
+        now = datetime.now(get_brt())
         
         # Determine target year
         if year and year > 0:
@@ -421,7 +421,7 @@ def days_between_dates(month1: int, day1: int, month2: int, day2: int) -> str:
         - days_between_dates(3, 15, 12, 12) → Days between Mar 15 and Dec 12
     """
     try:
-        now = datetime.now(BRT)
+        now = datetime.now(get_brt())
         current_year = now.year
         
         # Create both dates in the same year for comparison

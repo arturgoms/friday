@@ -9,7 +9,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
 
-from src.core.constants import BRT
+from src.core.config import get_brt
 from src.insights.collectors.base import BaseCollector
 
 logger = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ class WeatherCollector(BaseCollector):
         
         import httpx
         
-        now = datetime.now(BRT)
+        now = datetime.now(get_brt())
         
         try:
             # Current weather
@@ -97,7 +97,7 @@ class WeatherCollector(BaseCollector):
                     rain_probability = max(rain_probability, pop)
                     if not rain_time:
                         dt = datetime.fromtimestamp(item.get("dt", 0), tz=timezone.utc)
-                        rain_time = dt.astimezone(BRT).strftime("%H:%M")
+                        rain_time = dt.astimezone(get_brt()).strftime("%H:%M")
                     break
             
             return {

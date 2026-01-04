@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.core.constants import BRT
+from src.core.config import get_config
 from src.core.influxdb import query as _query
 from src.core.registry import friday_tool
 from src.core.utils import format_duration
@@ -513,7 +513,7 @@ def get_morning_report() -> str:
     Returns:
         Formatted morning report string
     """
-    now = datetime.now(BRT)
+    now = datetime.now(get_brt())
     ctx = ReportContext(
         now=now,
         today_str=now.strftime("%Y-%m-%d"),
@@ -541,7 +541,7 @@ def get_evening_report() -> str:
     Returns:
         Formatted evening report string
     """
-    now = datetime.now(BRT)
+    now = datetime.now(get_brt())
     ctx = ReportContext(
         now=now,
         today_str=now.strftime("%Y-%m-%d"),

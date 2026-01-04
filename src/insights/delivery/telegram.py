@@ -9,7 +9,7 @@ import logging
 from typing import Optional
 from datetime import datetime
 
-from src.insights.models import Insight, Priority, Category, BRT
+from src.insights.models import Insight, Priority, Category
 
 logger = logging.getLogger(__name__)
 

@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-from src.core.constants import BRT
+from src.core.config import get_config
 from src.core.influxdb import get_influx_client, query_latest, query
 from src.core.registry import friday_sensor
 

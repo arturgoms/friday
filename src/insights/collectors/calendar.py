@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 
-from src.core.constants import BRT
+from src.core.config import get_brt
 from src.insights.collectors.base import BaseCollector
 
 logger = logging.getLogger(__name__)
@@ -47,7 +47,7 @@ class CalendarCollector(BaseCollector):
             if not self.initialize():
                 return None
         
-        now = datetime.now(BRT)
+        now = datetime.now(get_brt())
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start + timedelta(days=1)
         tomorrow_end = today_start + timedelta(days=2)

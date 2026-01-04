@@ -1,417 +1,268 @@
 """
-Vault integration for Friday knowledge management.
+Vault utilities for reading/writing Obsidian markdown files.
 
-This module handles reading and writing to the Obsidian vault following
-the hybrid approach:
-- Simple user attributes → Artur Gomes.md frontmatter
-- Complex observations → Friday.md sections
-- Facts about others → Their person notes
+All paths are configured via config.yml (paths.brain).
 """
 
 import re
-import yaml
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
-from datetime import datetime
-import logging
+from typing import Any, Dict, Optional
 
-from src.core.constants import BRT
+import yaml
 
-logger = logging.getLogger(__name__)
-
-# Vault base path
-VAULT_PATH = Path("/home/artur/friday/brain")
-
-# Key file paths
-USER_NOTE = VAULT_PATH / "1. Notes" / "Artur Gomes.md"
-FRIDAY_NOTE = VAULT_PATH / "1. Notes" / "Friday.md"
-NOTES_DIR = VAULT_PATH / "1. Notes"
-
-# User attributes that go in frontmatter (simple facts)
-USER_ATTRIBUTES = {
-    'favorite_color', 'favorite_team', 'favorite_food', 'favorite_drink',
-    'favorite_restaurant', 'favorite_movie', 'favorite_book', 'favorite_game',
-    'occupation', 'location', 'timezone', 'language', 'height', 'weight',
-    'blood_type', 'allergies', 'dietary_restrictions'
-}
-
-# Categories that indicate person-related facts
-PERSON_CATEGORIES = {'family', 'friends', 'colleagues', 'contacts'}
-
-# Patterns for detecting person-related facts
-PERSON_PATTERNS = [
-    r'(?:wife|husband|spouse|partner)(?:_name)?',
-    r'(?:mother|father|parent|mom|dad)(?:_name)?',
-    r'(?:sister|brother|sibling)(?:_name)?',
-    r'(?:friend|colleague|boss|manager)(?:_name)?',
-    r'.*_(?:birthday|phone|email|address)$'
-]
+from src.core.config import get_config
 
 
-def parse_frontmatter(content: str) -> Tuple[Dict[str, Any], str]:
-    """
-    Parse YAML frontmatter from markdown content.
+def get_notes_dir() -> Path:
+    """Get the notes directory from config.
     
     Returns:
-        (frontmatter_dict, body_content)
+        Path to notes directory (brain/1. Notes)
     """
-    if not content.startswith('---'):
+    config = get_config()
+    return Path(config.paths.brain) / "1. Notes"
+
+
+# Common note paths
+def get_user_note() -> Path:
+    """Get user note path (configured user profile)."""
+    config = get_config()
+    notes_dir = get_notes_dir()
+    return notes_dir / f"{config.user.name}.md"
+
+
+def get_friday_note() -> Path:
+    """Get Friday note path."""
+    return get_notes_dir() / "Friday.md"
+
+
+# Backwards compatibility constants
+USER_NOTE = get_user_note()
+FRIDAY_NOTE = get_friday_note()
+
+
+def read_vault_file(file_path: Path) -> str:
+    """Read a vault file.
+    
+    Args:
+        file_path: Path to file
+        
+    Returns:
+        File content as string
+    """
+    return file_path.read_text(encoding="utf-8")
+
+
+def parse_frontmatter(content: str) -> tuple[Dict[str, Any], str]:
+    """Parse frontmatter from markdown content.
+    
+    Args:
+        content: Markdown file content
+        
+    Returns:
+        Tuple of (frontmatter_dict, body_content)
+    """
+    if not content.startswith("---"):
         return {}, content
     
-    parts = content.split('---', 2)
+    parts = content.split("---", 2)
     if len(parts) < 3:
         return {}, content
     
     try:
         frontmatter = yaml.safe_load(parts[1]) or {}
-        body = parts[2].lstrip('\n')
-        return frontmatter, body
-    except yaml.YAMLError as e:
-        logger.error(f"[VAULT] Failed to parse frontmatter: {e}")
-        return {}, content
+    except yaml.YAMLError:
+        frontmatter = {}
+    
+    body = parts[2].strip()
+    
+    return frontmatter, body
 
 
-def serialize_frontmatter(frontmatter: Dict[str, Any], body: str) -> str:
-    """
-    Serialize frontmatter dict and body back to markdown.
-    """
-    yaml_str = yaml.dump(frontmatter, default_flow_style=False, allow_unicode=True, sort_keys=False)
-    return f"---\n{yaml_str}---\n{body}"
-
-
-def read_vault_file(filepath: Path) -> str:
-    """Read content from vault file."""
-    try:
-        return filepath.read_text(encoding='utf-8')
-    except FileNotFoundError:
-        logger.error(f"[VAULT] File not found: {filepath}")
-        return ""
-    except Exception as e:
-        logger.error(f"[VAULT] Failed to read {filepath}: {e}")
-        return ""
-
-
-def write_vault_file(filepath: Path, content: str) -> bool:
-    """Write content to vault file."""
-    try:
-        filepath.parent.mkdir(parents=True, exist_ok=True)
-        filepath.write_text(content, encoding='utf-8')
-        logger.info(f"[VAULT] Updated: {filepath}")
-        return True
-    except Exception as e:
-        logger.error(f"[VAULT] Failed to write {filepath}: {e}")
-        return False
-
-
-def update_frontmatter_field(filepath: Path, field: str, value: Any) -> bool:
-    """
-    Update a single field in file's frontmatter.
+def get_frontmatter_field(file_path: Path, field: str) -> Any:
+    """Get a field from a file's frontmatter.
     
     Args:
-        filepath: Path to the markdown file
-        field: Field name to update
-        value: New value
-    
-    Returns:
-        True if successful
-    """
-    content = read_vault_file(filepath)
-    if not content:
-        return False
-    
-    frontmatter, body = parse_frontmatter(content)
-    frontmatter[field] = value
-    
-    # Update last_updated if it exists
-    if 'last_updated' in frontmatter:
-        frontmatter['last_updated'] = datetime.now(BRT).strftime('%Y-%m-%d')
-    
-    new_content = serialize_frontmatter(frontmatter, body)
-    return write_vault_file(filepath, new_content)
-
-
-def get_frontmatter_field(filepath: Path, field: str) -> Optional[Any]:
-    """
-    Get a single field from file's frontmatter.
-    
+        file_path: Path to file
+        field: Field name
+        
     Returns:
         Field value or None if not found
     """
-    content = read_vault_file(filepath)
-    if not content:
-        return None
-    
+    content = read_vault_file(file_path)
     frontmatter, _ = parse_frontmatter(content)
     return frontmatter.get(field)
 
 
-def parse_section(content: str, section_path: list[str]) -> Optional[str]:
-    """
-    Parse a specific section from markdown content.
-    
-    Args:
-        content: Markdown content
-        section_path: List of section headings (e.g., ['Learned Memories', 'Preferences'])
-    
-    Returns:
-        Section content or None
-    """
-    lines = content.split('\n')
-    current_level = 0
-    target_level = len(section_path)
-    matched_levels = 0
-    section_start = None
-    
-    for i, line in enumerate(lines):
-        # Check if this is a heading
-        heading_match = re.match(r'^(#{1,6})\s+(.+)$', line)
-        if not heading_match:
-            continue
-        
-        level = len(heading_match.group(1))
-        heading_text = heading_match.group(2).strip()
-        
-        # Check if we're in the right section
-        if matched_levels < target_level and level == matched_levels + 2:  # +2 because main title is #
-            if heading_text == section_path[matched_levels]:
-                matched_levels += 1
-                if matched_levels == target_level:
-                    section_start = i + 1
-                    current_level = level
-        elif section_start is not None and level <= current_level:
-            # Found next section at same or higher level, extract content
-            return '\n'.join(lines[section_start:i]).strip()
-    
-    # If we matched and reached end of file
-    if section_start is not None:
-        return '\n'.join(lines[section_start:]).strip()
-    
-    return None
-
-
-def update_section_item(filepath: Path, section_path: list[str], item_key: str, item_value: str) -> bool:
-    """
-    Update or add an item in a markdown section (bullet list format).
-    
-    Args:
-        filepath: Path to markdown file
-        section_path: Section hierarchy (e.g., ['Learned Memories', 'Preferences'])
-        item_key: Item identifier (e.g., 'Favorite color')
-        item_value: New value
-    
-    Returns:
-        True if successful
-    """
-    content = read_vault_file(filepath)
-    if not content:
-        return False
-    
-    frontmatter, body = parse_frontmatter(content)
-    lines = body.split('\n')
-    
-    # Find the section
-    section_level = len(section_path)
-    matched_levels = 0
-    section_start = None
-    section_end = None
-    current_level = 0
-    
-    for i, line in enumerate(lines):
-        heading_match = re.match(r'^(#{1,6})\s+(.+)$', line)
-        if not heading_match:
-            continue
-        
-        level = len(heading_match.group(1))
-        heading_text = heading_match.group(2).strip()
-        
-        if matched_levels < section_level and level == matched_levels + 2:
-            if heading_text == section_path[matched_levels]:
-                matched_levels += 1
-                if matched_levels == section_level:
-                    section_start = i + 1
-                    current_level = level
-        elif section_start is not None and level <= current_level:
-            section_end = i
-            break
-    
-    if section_start is None:
-        logger.error(f"[VAULT] Section not found: {' > '.join(section_path)}")
-        return False
-    
-    if section_end is None:
-        section_end = len(lines)
-    
-    # Find and update the item
-    item_pattern = re.compile(rf'^-\s+{re.escape(item_key)}:\s+(.+)$', re.IGNORECASE)
-    item_found = False
-    
-    for i in range(section_start, section_end):
-        if item_pattern.match(lines[i]):
-            lines[i] = f"- {item_key}: {item_value}"
-            item_found = True
-            break
-    
-    # If not found, add it
-    if not item_found:
-        # Find the last bullet point in the section
-        last_bullet = section_start
-        for i in range(section_start, section_end):
-            if lines[i].strip().startswith('-'):
-                last_bullet = i
-        
-        lines.insert(last_bullet + 1, f"- {item_key}: {item_value}")
-    
-    # Reconstruct content
-    new_body = '\n'.join(lines)
-    new_content = serialize_frontmatter(frontmatter, new_body)
-    
-    return write_vault_file(filepath, new_content)
-
-
 def find_person_note(name: str) -> Optional[Path]:
-    """
-    Find a person note by name (supports aliases).
+    """Find a person note by name.
+    
+    Searches for notes with person/* tags.
     
     Args:
-        name: Person's name to search for
-    
+        name: Person name (e.g., "Camila Santos")
+        
     Returns:
-        Path to person note or None
+        Path to person note or None if not found
     """
-    if not NOTES_DIR.exists():
+    notes_dir = get_notes_dir()
+    
+    if not notes_dir.exists():
         return None
     
-    # Check for exact filename match first
-    exact_match = NOTES_DIR / f"{name}.md"
+    # Try exact match first
+    exact_match = notes_dir / f"{name}.md"
     if exact_match.exists():
         return exact_match
     
-    # Search through all person notes
-    for note_file in NOTES_DIR.glob("*.md"):
-        if note_file.stem in ['Friday', 'Artur Gomes']:  # Skip these
-            continue
-        
-        content = read_vault_file(note_file)
-        frontmatter, _ = parse_frontmatter(content)
-        
-        # Check tags for person
-        tags = frontmatter.get('tags', [])
-        if not any('person/' in str(tag) for tag in tags):
-            continue
-        
-        # Check aliases
-        aliases = frontmatter.get('aliases', [])
-        if name.lower() in [a.lower() for a in aliases]:
-            return note_file
-        
-        # Check if name matches filename
-        if name.lower() in note_file.stem.lower():
-            return note_file
+    # Try case-insensitive search
+    name_lower = name.lower()
+    for note_file in notes_dir.glob("*.md"):
+        if note_file.stem.lower() == name_lower:
+            # Verify it's a person note
+            tags = get_frontmatter_field(note_file, "tags")
+            if tags:
+                if isinstance(tags, list):
+                    if any("person/" in str(tag) for tag in tags):
+                        return note_file
+                elif isinstance(tags, str) and "person/" in tags:
+                    return note_file
     
     return None
 
 
-def create_person_note(name: str, relationship: str = 'friend', **kwargs) -> Optional[Path]:
-    """
-    Create a new person note from template.
+def update_frontmatter_field(file_path: Path, field: str, value: Any) -> bool:
+    """Update a field in a file's frontmatter.
     
     Args:
-        name: Person's name
-        relationship: Relationship type (family, friend, colleague, client)
-        **kwargs: Additional frontmatter fields (birthday, email, phone, etc.)
-    
+        file_path: Path to file
+        field: Field name
+        value: New value
+        
     Returns:
-        Path to created note or None
+        True if updated successfully
     """
-    filepath = NOTES_DIR / f"{name}.md"
+    content = read_vault_file(file_path)
+    frontmatter, body = parse_frontmatter(content)
     
-    if filepath.exists():
-        logger.warning(f"[VAULT] Person note already exists: {name}")
-        return filepath
+    # Update field
+    frontmatter[field] = value
     
-    # Generate unique ID (timestamp-based)
-    note_id = datetime.now(BRT).strftime('%Y%m%d%H%M%S')
+    # Write back
+    new_content = "---\n"
+    new_content += yaml.dump(frontmatter, default_flow_style=False, allow_unicode=True)
+    new_content += "---\n"
+    new_content += body
     
-    # Build frontmatter
-    frontmatter = {
-        'tags': [f'person/{relationship}', 'extra/memory'],
-        'id': note_id,
-        'created': datetime.now(BRT).strftime('%Y-%m-%d'),
-        'created_by': 'friday'
-    }
+    file_path.write_text(new_content, encoding="utf-8")
+    return True
+
+
+def update_section_item(file_path: Path, section: str, item: str) -> bool:
+    """Update or add an item to a markdown section.
     
-    # Add optional fields
-    for key, value in kwargs.items():
-        if value:
-            frontmatter[key] = value
+    Args:
+        file_path: Path to file
+        section: Section name (e.g., "## Notes")
+        item: Item to add (markdown list item)
+        
+    Returns:
+        True if updated successfully
+    """
+    content = read_vault_file(file_path)
     
-    # Build note body
-    body = f"""# [[{name}]]
+    # Find or create section
+    if section in content:
+        # Append to existing section
+        lines = content.split("\n")
+        for i, line in enumerate(lines):
+            if line.strip() == section:
+                # Insert after section header
+                lines.insert(i + 1, item)
+                break
+    else:
+        # Add section at end
+        content += f"\n\n{section}\n{item}"
+        lines = content.split("\n")
+    
+    new_content = "\n".join(lines)
+    file_path.write_text(new_content, encoding="utf-8")
+    return True
+
+
+def create_person_note(name: str, relationship: str = "contact") -> Path:
+    """Create a new person note.
+    
+    Args:
+        name: Person name
+        relationship: Relationship type (default: contact)
+        
+    Returns:
+        Path to created note
+    """
+    notes_dir = get_notes_dir()
+    note_path = notes_dir / f"{name}.md"
+    
+    if note_path.exists():
+        return note_path
+    
+    # Create minimal person note
+    content = f"""---
+tags:
+  - person/{relationship}
+---
 
 ## Biography
-<!-- Notes about {name} -->
+
 
 ## Links
-<!-- External links, social media, etc. -->
+
 
 ## Notes
-<!-- Additional observations and memories -->
-
-## Meetings
-<!-- Meeting notes will appear here -->
 """
     
-    content = serialize_frontmatter(frontmatter, body)
+    note_path.write_text(content, encoding="utf-8")
+    return note_path
+
+
+def is_user_attribute(field: str) -> bool:
+    """Check if a field is a user attribute.
     
-    if write_vault_file(filepath, content):
-        logger.info(f"[VAULT] Created person note: {name} (id: {note_id})")
-        return filepath
-    
-    return None
-
-
-def is_user_attribute(topic: str) -> bool:
-    """Check if topic is a simple user attribute."""
-    return topic.lower() in USER_ATTRIBUTES
-
-
-def is_person_fact(topic: str, category: str) -> bool:
-    """Check if fact is about a person."""
-    if category.lower() in PERSON_CATEGORIES:
-        return True
-    
-    for pattern in PERSON_PATTERNS:
-        if re.match(pattern, topic.lower()):
-            return True
-    
-    return False
-
-
-def extract_person_name(topic: str, value: str) -> Optional[str]:
+    Args:
+        field: Field name
+        
+    Returns:
+        True if it's a user attribute
     """
-    Extract person name from topic or value.
+    user_fields = ["name", "email", "phone", "birthday", "location", "timezone"]
+    return field.lower() in user_fields or field.startswith("favorite_")
+
+
+def is_person_fact(topic: str) -> bool:
+    """Check if a topic is about a person.
     
-    Examples:
-        wife_name, "Camila Santos" -> "Camila Santos"
-        wife_birthday, "12/12" -> None (need context)
-        best_friend, "Ron" -> "Ron"
+    Args:
+        topic: Fact topic
+        
+    Returns:
+        True if it's a person fact
     """
-    # Check if value looks like a name (not a date, number, etc.)
-    if re.match(r'^\d', value) or '/' in value or value.lower() in ['yes', 'no', 'true', 'false']:
-        return None
+    person_fields = ["birthday", "email", "phone", "relationship", "location"]
+    return any(field in topic.lower() for field in person_fields)
+
+
+def extract_person_name(topic: str) -> Optional[str]:
+    """Extract person name from a topic.
     
-    # If topic ends with _name, value is the name
-    if topic.endswith('_name'):
-        return value
-    
-    # If value contains space and capitalized words, likely a name
-    if ' ' in value and all(word[0].isupper() for word in value.split() if word):
-        return value
-    
-    # If it's a relationship topic without _name suffix
-    relationship_topics = ['wife', 'husband', 'spouse', 'partner', 'mother', 'father', 
-                          'sister', 'brother', 'best_friend', 'friend']
-    if any(topic.lower().startswith(rel) for rel in relationship_topics):
-        return value
-    
+    Args:
+        topic: Topic string (e.g., "camila_santos_birthday")
+        
+    Returns:
+        Person name or None
+    """
+    # Simple heuristic: split by underscore and take first parts
+    parts = topic.split("_")
+    if len(parts) >= 2:
+        # Assume first 2 parts are name
+        return " ".join(parts[:2]).title()
     return None

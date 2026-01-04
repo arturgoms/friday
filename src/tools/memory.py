@@ -15,7 +15,7 @@ from typing import Optional
 
 from sqlalchemy import create_engine, text
 
-from src.core.constants import BRT
+from src.core.config import get_config
 from src.core.registry import friday_tool
 
 logger = logging.getLogger(__name__)

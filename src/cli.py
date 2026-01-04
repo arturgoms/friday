@@ -496,7 +496,7 @@ def journal_thread():
     try:
         from datetime import datetime
 
-        from src.core.constants import BRT
+        from src.core.config import get_config, get_brt
         from src.journal_handler import get_journal_handler
 
         # Get environment variables
@@ -533,7 +533,7 @@ def journal_thread():
             console.print(f"[green]✓[/green] Message sent! Message ID: [cyan]{message_id}[/cyan]")
 
             # Save the thread message ID
-            today = datetime.now(BRT).strftime('%Y-%m-%d')
+            today = datetime.now(get_brt()).strftime('%Y-%m-%d')
             success = handler.save_thread_message(today, message_id)
 
             if success:
@@ -564,7 +564,7 @@ def journal_entries(
         import time
         from datetime import datetime
 
-        from src.core.constants import BRT
+        from src.core.config import get_config, get_brt
         from src.journal_handler import get_journal_handler
 
         # Parse date
@@ -576,7 +576,7 @@ def journal_entries(
                 console.print(f"[red]Error: Invalid date format. Use YYYY-MM-DD[/red]")
                 raise typer.Exit(1)
         else:
-            target_date = datetime.now(BRT).strftime('%Y-%m-%d')
+            target_date = datetime.now(get_brt()).strftime('%Y-%m-%d')
 
         handler = get_journal_handler()
 
@@ -646,7 +646,7 @@ def journal_note(
         from datetime import date as date_type
         from datetime import datetime
 
-        from src.core.constants import BRT
+        from src.core.config import get_config, get_brt
         from src.insights.analyzers.daily_journal import DailyJournalAnalyzer
         from src.insights.config import InsightsConfig
         from src.insights.store import InsightsStore
@@ -659,7 +659,7 @@ def journal_note(
                 console.print(f"[red]Error: Invalid date format. Use YYYY-MM-DD[/red]")
                 raise typer.Exit(1)
         else:
-            target_date = datetime.now(BRT).date()
+            target_date = datetime.now(get_brt()).date()
 
         console.print(f"[cyan]Generating daily journal note for {target_date}...[/cyan]\n")
 
@@ -1275,7 +1275,7 @@ def facts_sync(
         from datetime import datetime
         from pathlib import Path
 
-        from src.core.constants import BRT
+        from src.core.config import get_config, get_brt
         from src.core.embeddings import get_embeddings
         from src.core.vault import (
             FRIDAY_NOTE,
@@ -1420,8 +1420,8 @@ def facts_sync(
                     fact['vault_field'],
                     fact['vault_section'],
                     embedding_blob,
-                    datetime.now(BRT).isoformat(),
-                    datetime.now(BRT).isoformat()
+                    datetime.now(get_brt()).isoformat(),
+                    datetime.now(get_brt()).isoformat()
                 ))
                 synced += 1
 
@@ -1451,7 +1451,7 @@ def get_vllm_tool_definitions():
             "type": "function",
             "function": {
                 "name": "get_current_time",
-                "description": "Get the current date and time in a specific timezone. Defaults to Brazil/Sao_Paulo (BRT, UTC-3) if no timezone is specified.",
+                "description": "Get the current date and time in a specific timezone. Defaults to Brazil/Sao_Paulo ( UTC-3) if no timezone is specified.",
                 "parameters": {
                     "type": "object",
                     "properties": {

@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from src.core.constants import BRT
+from src.core.config import get_config, get_brt
 from src.core.influxdb import query as _query
 from src.core.registry import friday_tool
 from src.core.utils import format_duration, format_pace
@@ -32,7 +32,7 @@ def get_recent_runs(limit: int = 10, days: int = 30) -> str:
     Returns:
         Recent running activities with details
     """
-    start = datetime.now(BRT) - timedelta(days=days)
+    start = datetime.now(get_brt()) - timedelta(days=days)
     start_str = start.strftime('%Y-%m-%dT%H:%M:%SZ')
     
     query = f"""
@@ -82,8 +82,8 @@ def get_training_load(weeks: int = 4) -> str:
     total_runs = 0
     
     for week in range(weeks):
-        week_start = datetime.now(BRT) - timedelta(weeks=week+1)
-        week_end = datetime.now(BRT) - timedelta(weeks=week)
+        week_start = datetime.now(get_brt()) - timedelta(weeks=week+1)
+        week_end = datetime.now(get_brt()) - timedelta(weeks=week)
         
         start_str = week_start.strftime('%Y-%m-%dT%H:%M:%SZ')
         end_str = week_end.strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -134,7 +134,7 @@ def get_vo2max() -> str:
     current = round(points[0].get("vo2Max", 0), 1)
     
     # Get trend (last 30 days)
-    start = datetime.now(BRT) - timedelta(days=30)
+    start = datetime.now(get_brt()) - timedelta(days=30)
     start_str = start.strftime('%Y-%m-%dT%H:%M:%SZ')
     query = f"""
     SELECT vo2Max FROM DailyStats 
@@ -327,8 +327,8 @@ def get_weekly_health(weeks_ago: int = 0) -> str:
     Returns:
         Weekly health digest including activity, sleep, stress, and recovery
     """
-    week_start = datetime.now(BRT) - timedelta(weeks=weeks_ago+1)
-    week_end = datetime.now(BRT) - timedelta(weeks=weeks_ago)
+    week_start = datetime.now(get_brt()) - timedelta(weeks=weeks_ago+1)
+    week_end = datetime.now(get_brt()) - timedelta(weeks=weeks_ago)
     
     lines = [
         f"Weekly Health Digest",
@@ -509,7 +509,7 @@ def get_activity_summary(days: int = 7) -> str:
     Returns:
         Activity summary with steps, workouts, and calories
     """
-    start = datetime.now(BRT) - timedelta(days=days)
+    start = datetime.now(get_brt()) - timedelta(days=days)
     
     lines = [f"Activity Summary (Last {days} Days):", "=" * 50]
     

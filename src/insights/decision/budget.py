@@ -8,9 +8,11 @@ from datetime import datetime, time
 from typing import Optional
 import logging
 
-from src.insights.models import BRT, Priority, Insight
+from src.insights.models import Priority, Insight
 from src.insights.config import InsightsConfig
 from src.insights.store import InsightsStore
+
+from src.core.config import get_brt
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +63,7 @@ class BudgetManager:
     
     def is_quiet_hours(self) -> bool:
         """Check if we're currently in quiet hours."""
-        now = datetime.now(BRT).time()
+        now = datetime.now(get_brt()).time()
         start = self.config.decision.quiet_hours_start
         end = self.config.decision.quiet_hours_end
         
@@ -103,7 +105,7 @@ class BudgetManager:
         if not self.is_quiet_hours():
             return None
         
-        now = datetime.now(BRT)
+        now = datetime.now(get_brt())
         end_time = self.config.decision.quiet_hours_end
         
         # Build end datetime

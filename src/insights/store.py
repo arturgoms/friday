@@ -14,8 +14,9 @@ from typing import List, Optional, Dict, Any
 
 from src.insights.models import (
     Insight, Snapshot, Delivery, ReachOutBudget,
-    InsightType, Priority, Category, DeliveryChannel, BRT
-)
+    InsightType, Priority, Category, DeliveryChannel)
+
+from src.core.config import get_brt
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +176,7 @@ class InsightsStore:
         """
         # Convert hours to since if provided
         if hours is not None and since is None:
-            since = datetime.now(BRT) - timedelta(hours=hours)
+            since = datetime.now(get_brt()) - timedelta(hours=hours)
         
         conn = self._get_conn()
         try:
@@ -212,7 +213,7 @@ class InsightsStore:
     
     def cleanup_old_snapshots(self, retention_days: int = 90):
         """Delete snapshots older than retention period."""
-        cutoff = datetime.now(BRT) - timedelta(days=retention_days)
+        cutoff = datetime.now(get_brt()) - timedelta(days=retention_days)
         conn = self._get_conn()
         try:
             result = conn.execute(
@@ -273,7 +274,7 @@ class InsightsStore:
         category: Optional[Category] = None
     ) -> List[Insight]:
         """Get insights from the last N hours."""
-        since = datetime.now(BRT) - timedelta(hours=hours)
+        since = datetime.now(get_brt()) - timedelta(hours=hours)
         conn = self._get_conn()
         try:
             query = "SELECT * FROM insights WHERE created_at >= ?"
@@ -292,7 +293,7 @@ class InsightsStore:
     
     def check_duplicate(self, dedupe_key: str, hours: int = 4) -> bool:
         """Check if a similar insight was recently created."""
-        since = datetime.now(BRT) - timedelta(hours=hours)
+        since = datetime.now(get_brt()) - timedelta(hours=hours)
         conn = self._get_conn()
         try:
             row = conn.execute(
@@ -355,7 +356,7 @@ class InsightsStore:
     
     def get_deliveries_today(self) -> List[Delivery]:
         """Get all deliveries from today."""
-        today = datetime.now(BRT).strftime("%Y-%m-%d")
+        today = datetime.now(get_brt()).strftime("%Y-%m-%d")
         conn = self._get_conn()
         try:
             rows = conn.execute(
@@ -384,7 +385,7 @@ class InsightsStore:
     
     def get_today_budget(self, max_per_day: int = 5) -> ReachOutBudget:
         """Get or create today's reach-out budget."""
-        today = datetime.now(BRT).strftime("%Y-%m-%d")
+        today = datetime.now(get_brt()).strftime("%Y-%m-%d")
         conn = self._get_conn()
         try:
             row = conn.execute(
@@ -415,7 +416,7 @@ class InsightsStore:
     
     def increment_budget(self, insight_id: str):
         """Increment today's reach-out count."""
-        today = datetime.now(BRT).strftime("%Y-%m-%d")
+        today = datetime.now(get_brt()).strftime("%Y-%m-%d")
         conn = self._get_conn()
         try:
             # Get current deliveries
@@ -456,7 +457,7 @@ class InsightsStore:
             conn.execute(
                 """INSERT INTO journal_threads (date, message_id, created_at)
                    VALUES (?, ?, ?)""",
-                (date, message_id, datetime.now(BRT).isoformat())
+                (date, message_id, datetime.now(get_brt()).isoformat())
             )
             conn.commit()
             return True

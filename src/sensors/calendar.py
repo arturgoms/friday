@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
-from src.core.constants import BRT
+from src.core.config import get_config, get_brt
 from src.core.registry import friday_sensor
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ def check_upcoming_events() -> Dict[str, Any]:
         from src.tools.calendar import get_calendar_manager
         
         manager = get_calendar_manager()
-        now = datetime.now(BRT)
+        now = datetime.now(get_brt())
         
         # Look ahead 30 minutes
         end = now + timedelta(minutes=30)
@@ -101,7 +101,7 @@ def check_daily_agenda() -> Dict[str, Any]:
         from src.tools.calendar import get_calendar_manager
         
         manager = get_calendar_manager()
-        now = datetime.now(BRT)
+        now = datetime.now(get_brt())
         
         # Get events for rest of today
         end = now.replace(hour=23, minute=59, second=59)

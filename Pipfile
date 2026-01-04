@@ -4,7 +4,6 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-vllm = ">=0.5.0"
 transformers = "*"
 accelerate = "*"
 openai = "*"
@@ -30,6 +29,7 @@ google-auth-oauthlib = "*"
 vobject = "*"
 npcpy = {extras = ["all"], version = "*"}
 gtts = "*"
+vllm = "==0.13.0"
 
 [dev-packages]
 pytest = "*"

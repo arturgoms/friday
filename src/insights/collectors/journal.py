@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, date as date_type
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, asdict
 
-from src.core.constants import BRT
+from src.core.config import get_brt
 from src.insights.collectors.base import BaseCollector
 from src.insights.store import InsightsStore
 
@@ -91,7 +91,7 @@ class JournalCollector(BaseCollector):
             Dict with journal snapshot data
         """
         if target_date is None:
-            target_date = datetime.now(BRT).date()
+            target_date = datetime.now(get_brt()).date()
         
         date_str = target_date.strftime("%Y-%m-%d")
         logger.info(f"[JOURNAL_COLLECTOR] Collecting data for {date_str}")

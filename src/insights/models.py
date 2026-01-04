@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Optional, Dict, Any, List
 import uuid
 
-from src.core.constants import BRT
+from src.core.config import get_brt
 
 
 class InsightType(Enum):
@@ -69,7 +69,7 @@ class Insight:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     confidence: float = 1.0  # 0-1, for correlations/predictions
     data: Dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=lambda: datetime.now(BRT))
+    created_at: datetime = field(default_factory=lambda: datetime.now(get_brt()))
     expires_at: Optional[datetime] = None  # When insight becomes stale
     source_analyzer: str = ""
     dedupe_key: Optional[str] = None  # For deduplication (e.g., "stress_high")
@@ -78,7 +78,7 @@ class Insight:
         """Check if this insight has expired."""
         if self.expires_at is None:
             return False
-        return datetime.now(BRT) > self.expires_at
+        return datetime.now(get_brt()) > self.expires_at
     
     def __str__(self) -> str:
         return f"[{self.priority.value.upper()}] {self.title}: {self.message}"
@@ -112,7 +112,7 @@ class Delivery:
     """
     insight_id: str
     channel: DeliveryChannel
-    delivered_at: datetime = field(default_factory=lambda: datetime.now(BRT))
+    delivered_at: datetime = field(default_factory=lambda: datetime.now(get_brt()))
     success: bool = True
     error: Optional[str] = None
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -149,7 +149,7 @@ class AnalyzerResult:
     """
     analyzer_name: str
     insights: List[Insight] = field(default_factory=list)
-    run_at: datetime = field(default_factory=lambda: datetime.now(BRT))
+    run_at: datetime = field(default_factory=lambda: datetime.now(get_brt()))
     duration_ms: float = 0
     error: Optional[str] = None
     

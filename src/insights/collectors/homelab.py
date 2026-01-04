@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
-from src.core.constants import BRT
+from src.core.config import get_brt
 from src.insights.collectors.base import BaseCollector
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ class HomelabCollector(BaseCollector):
             if not self.initialize():
                 return None
         
-        now = datetime.now(BRT)
+        now = datetime.now(get_brt())
         
         # Run async collection - handle both running and new event loops
         try:

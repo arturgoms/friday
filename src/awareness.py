@@ -26,8 +26,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 import httpx
 
-from src.core.config import get_config
-from src.core.constants import BRT
+from src.core.config import get_config, get_brt
+from src.core.config import get_config, get_brt
 from src.core.registry import get_sensor_registry, SensorFunction
 
 logger = logging.getLogger(__name__)
@@ -306,7 +306,7 @@ class ScheduleRunner:
         if not time_str:
             return False
         
-        now = datetime.now(BRT)
+        now = datetime.now(get_brt())
         today_str = now.strftime("%Y-%m-%d")
         
         # Check if already ran today
@@ -360,7 +360,7 @@ class ScheduleRunner:
             result = tool_entry.func()
             
             # Mark as run
-            today_str = datetime.now(BRT).strftime("%Y-%m-%d")
+            today_str = datetime.now(get_brt()).strftime("%Y-%m-%d")
             self._last_runs[name] = today_str
             self._save_state()
             

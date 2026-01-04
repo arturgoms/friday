@@ -35,7 +35,7 @@ from telegram.ext import (
     filters,
 )
 
-from src.core.constants import BRT
+from src.core.config import get_config, get_brt
 from src.journal_handler import get_journal_handler
 
 # Configure logging
@@ -53,7 +53,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 # Configuration
 # =============================================================================
 
-def get_config():
+def get_telegram_config():
     """Load configuration from environment."""
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
@@ -79,7 +79,7 @@ def get_config():
     }
 
 
-CONFIG = get_config()
+CONFIG = get_telegram_config()
 
 
 # =============================================================================
@@ -564,7 +564,7 @@ async def check_and_send_journal_thread(context: ContextTypes.DEFAULT_TYPE) -> N
     try:
         # Generate and send the message
         message_text = journal.get_morning_thread_message()
-        today = datetime.now(BRT).strftime("%Y-%m-%d")
+        today = datetime.now(get_brt()).strftime("%Y-%m-%d")
         
         # Send the message
         sent_message = await context.bot.send_message(

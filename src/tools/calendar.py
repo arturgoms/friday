@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.core.constants import BRT
+from src.core.config import get_config, get_brt
 from src.core.registry import friday_tool
 
 logger = logging.getLogger(__name__)
@@ -159,13 +159,13 @@ class NextcloudCalendar:
                     all_day = not isinstance(dtstart, datetime)
                     
                     if all_day:
-                        dtstart = datetime.combine(dtstart, datetime.min.time()).replace(tzinfo=BRT)
-                        dtend = datetime.combine(dtend, datetime.min.time()).replace(tzinfo=BRT)
+                        dtstart = datetime.combine(dtstart, datetime.min.time()).replace(tzinfo=get_brt())
+                        dtend = datetime.combine(dtend, datetime.min.time()).replace(tzinfo=get_brt())
                     else:
                         if dtstart.tzinfo is None:
-                            dtstart = dtstart.replace(tzinfo=BRT)
+                            dtstart = dtstart.replace(tzinfo=get_brt())
                         if dtend.tzinfo is None:
-                            dtend = dtend.replace(tzinfo=BRT)
+                            dtend = dtend.replace(tzinfo=get_brt())
                     
                     result.append(CalendarEvent(
                         id=str(event.url),
@@ -317,9 +317,9 @@ class GoogleCalendar:
                     
                     if all_day:
                         dtstart = datetime.fromisoformat(start_data['date'])
-                        dtstart = datetime.combine(dtstart.date(), datetime.min.time()).replace(tzinfo=BRT)
+                        dtstart = datetime.combine(dtstart.date(), datetime.min.time()).replace(tzinfo=get_brt())
                         dtend = datetime.fromisoformat(end_data['date'])
-                        dtend = datetime.combine(dtend.date(), datetime.min.time()).replace(tzinfo=BRT)
+                        dtend = datetime.combine(dtend.date(), datetime.min.time()).replace(tzinfo=get_brt())
                     else:
                         dtstart = datetime.fromisoformat(start_data['dateTime'].replace('Z', '+00:00'))
                         dtend = datetime.fromisoformat(end_data['dateTime'].replace('Z', '+00:00'))
@@ -518,7 +518,7 @@ def get_calendar_events(days: int = 7, calendar: str = "both") -> str:
     try:
         manager = get_calendar_manager()
         
-        now = datetime.now(BRT)
+        now = datetime.now(get_brt())
         start = now
         end = now + timedelta(days=days)
         
@@ -565,7 +565,7 @@ def get_today_schedule() -> str:
     try:
         manager = get_calendar_manager()
         
-        now = datetime.now(BRT)
+        now = datetime.now(get_brt())
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1)
         
@@ -615,21 +615,21 @@ def add_calendar_event(title: str, start_time: str, end_time: str,
             return "❌ Work calendar is read-only. Please add events to personal calendar or use Google Calendar directly."
         
         manager = get_calendar_manager()
-        now = datetime.now(BRT)
+        now = datetime.now(get_brt())
         
         # Parse start time
         if len(start_time) <= 5:  # Just time, assume today
             start = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {start_time}", "%Y-%m-%d %H:%M")
         else:
             start = datetime.strptime(start_time, "%Y-%m-%d %H:%M")
-        start = start.replace(tzinfo=BRT)
+        start = start.replace(tzinfo=get_brt())
         
         # Parse end time
         if len(end_time) <= 5:
             end = datetime.strptime(f"{start.strftime('%Y-%m-%d')} {end_time}", "%Y-%m-%d %H:%M")
         else:
             end = datetime.strptime(end_time, "%Y-%m-%d %H:%M")
-        end = end.replace(tzinfo=BRT)
+        end = end.replace(tzinfo=get_brt())
         
         # Add to personal calendar only
         event_id = manager.nextcloud.add_event(title, start, end, description, location)
@@ -663,9 +663,9 @@ def find_free_time(date: str = "", min_duration: int = 30) -> str:
         manager = get_calendar_manager()
         
         if date:
-            check_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=BRT)
+            check_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=get_brt())
         else:
-            check_date = datetime.now(BRT)
+            check_date = datetime.now(get_brt())
         
         slots = manager.find_free_slots(check_date, min_duration)
         
@@ -694,7 +694,7 @@ def get_next_event() -> str:
     try:
         manager = get_calendar_manager()
         
-        now = datetime.now(BRT)
+        now = datetime.now(get_brt())
         end = now + timedelta(days=7)
         
         events = manager.get_all_events(now, end)

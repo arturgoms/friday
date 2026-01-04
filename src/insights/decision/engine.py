@@ -10,7 +10,7 @@ from enum import Enum
 import logging
 
 from src.insights.models import (
-    Insight, Priority, BRT, DeliveryChannel
+    Insight, Priority, DeliveryChannel
 )
 from src.insights.config import InsightsConfig
 from src.insights.store import InsightsStore
