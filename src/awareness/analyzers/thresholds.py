@@ -67,7 +67,7 @@ class ThresholdAnalyzer(RealTimeAnalyzer):
         sync_info = health.get("sync", {})
         if sync_info.get("status") == "stale":
             hours_ago = sync_info.get("hours_ago", 0)
-            stale_threshold = self.config.thresholds.get("garmin_sync_stale_hours", 12)
+            stale_threshold = self.config.get("thresholds", {}).get("garmin_sync_stale_hours", 12)
 
             if hours_ago >= stale_threshold:
                 dedupe_key = "garmin_sync_stale"
@@ -143,7 +143,7 @@ class ThresholdAnalyzer(RealTimeAnalyzer):
             services = services_data
             down_services = [s for s in services if s.get("status") != "running"]
         if down_services:
-            svc_threshold = self.config.thresholds.get("services_down", {})
+            svc_threshold = self.config.get("thresholds", {}).get("services_down", {})
             warning = svc_threshold.get("warning", 1)
             critical = svc_threshold.get("critical", 3)
 
@@ -324,7 +324,7 @@ class ThresholdAnalyzer(RealTimeAnalyzer):
         Returns:
             Insight if threshold violated, None otherwise
         """
-        threshold_config = self.config.thresholds.get(threshold_name, {})
+        threshold_config = self.config.get("thresholds", {}).get(threshold_name, {})
 
         if isinstance(threshold_config, dict):
             warning = threshold_config.get("warning")

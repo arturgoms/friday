@@ -177,7 +177,7 @@ class DailyJournalAnalyzer(ScheduledAnalyzer):
         events = journal_data.get("calendar_events", [])
         weather = journal_data.get("weather")
         health = journal_data.get("health")
-        habits = self.config.journal.habits
+        habits = self.config.get("journal", {}).get("habits", [])
         
         # Format entries - keep it concise
         entries_text = ""
@@ -297,7 +297,7 @@ class DailyJournalAnalyzer(ScheduledAnalyzer):
         
         # Habits
         lines.append("## Habits")
-        habits = self.config.journal.habits
+        habits = self.config.get("journal", {}).get("habits", [])
         for habit in habits:
             lines.append(f"- [ ] {habit}")
         lines.append("")
@@ -351,7 +351,7 @@ class DailyJournalAnalyzer(ScheduledAnalyzer):
                 sleep_str = f"{health['sleep_hours']:.1f}h"
             
             # Detect checked habits from content
-            habits = self.config.journal.habits
+            habits = self.config.get("journal", {}).get("habits", [])
             checked_habits = []
             for habit in habits:
                 if f"- [x] {habit}" in content:

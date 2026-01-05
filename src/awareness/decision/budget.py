@@ -66,8 +66,13 @@ class BudgetManager:
     def is_quiet_hours(self) -> bool:
         """Check if we're currently in quiet hours."""
         now = datetime.now(get_brt()).time()
-        start = self.config.decision.quiet_hours_start
-        end = self.config.decision.quiet_hours_end
+        decision_config = self.config.get("decision", {})
+        start = decision_config.get("quiet_hours_start")
+        end = decision_config.get("quiet_hours_end")
+        
+        # If quiet hours not configured, assume no quiet hours
+        if start is None or end is None:
+            return False
         
         # Handle overnight quiet hours (e.g., 22:00 - 08:00)
         if start > end:
@@ -79,9 +84,8 @@ class BudgetManager:
     
     def has_budget(self) -> bool:
         """Check if we have remaining reach-out budget for today."""
-        budget = self.store.get_today_budget(
-            max_per_day=self.config.decision.max_reach_outs_per_day
-        )
+        max_per_day = self.config.get("decision", {}).get("max_reach_outs_per_day", 5)
+        budget = self.store.get_today_budget(max_per_day=max_per_day)
         return budget.can_reach_out()
     
     def consume_budget(self, insight_id: str):
@@ -91,9 +95,8 @@ class BudgetManager:
     
     def get_budget_status(self) -> dict:
         """Get current budget status."""
-        budget = self.store.get_today_budget(
-            max_per_day=self.config.decision.max_reach_outs_per_day
-        )
+        max_per_day = self.config.get("decision", {}).get("max_reach_outs_per_day", 5)
+        budget = self.store.get_today_budget(max_per_day=max_per_day)
         return {
             "date": budget.date,
             "used": budget.count,
@@ -108,7 +111,10 @@ class BudgetManager:
             return None
         
         now = datetime.now(get_brt())
-        end_time = self.config.decision.quiet_hours_end
+        end_time = self.config.get("decision", {}).get("quiet_hours_end")
+        
+        if end_time is None:
+            return None
         
         # Build end datetime
         end_dt = now.replace(

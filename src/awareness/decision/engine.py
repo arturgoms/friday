@@ -82,11 +82,13 @@ class DecisionEngine:
             return DeliveryAction.SKIP, "expired"
         
         # Check for duplicates
-        if insight.dedupe_key and self.store.check_duplicate(
-            insight.dedupe_key, 
-            hours=int(self.config.decision.cooldown_minutes / 60) or 1
-        ):
-            return DeliveryAction.SKIP, "duplicate"
+        if insight.dedupe_key:
+            cooldown_minutes = self.config.get("decision", {}).get("cooldown_minutes", 240)
+            if self.store.check_duplicate(
+                insight.dedupe_key, 
+                hours=int(cooldown_minutes / 60) or 1
+            ):
+                return DeliveryAction.SKIP, "duplicate"
         
         # Route based on priority
         if insight.priority == Priority.URGENT:

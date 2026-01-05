@@ -117,16 +117,15 @@ class InsightsStore:
         """Delete snapshots older than retention period."""
         cutoff = datetime.now(get_brt()) - timedelta(days=retention_days)
         
-        with self.db.get_connection() as conn:
-            result = conn.execute(
-                self.db.engine.dialect.preparer(self.db.engine.dialect).format_column(
-                    "DELETE FROM snapshots WHERE timestamp < :cutoff"
-                ),
-                {"cutoff": cutoff.isoformat()}
-            )
-            conn.commit()
-            if result.rowcount > 0:
-                logger.info(f"[STORE] Cleaned up {result.rowcount} old snapshots (retention={retention_days} days)")
+        # Use the delete method from database
+        deleted = self.db.delete(
+            'snapshots',
+            'timestamp < :cutoff',
+            {'cutoff': cutoff.isoformat()}
+        )
+        
+        if deleted > 0:
+            logger.info(f"[STORE] Cleaned up {deleted} old snapshots (retention={retention_days} days)")
     
     # =========================================================================
     # Insight Operations
@@ -273,8 +272,8 @@ class InsightsStore:
         if row:
             return ReachOutBudget(
                 date=row[0],
-                count=row[1],
-                max_per_day=row[2],
+                count=int(row[1]),
+                max_per_day=int(row[2]),
                 deliveries=json.loads(row[3])
             )
         else:
@@ -301,11 +300,10 @@ class InsightsStore:
         deliveries = json.loads(row[0]) if row else []
         deliveries.append(insight_id)
         
-        self.db.update(
-            'reach_out_budget',
-            {'count': 'count + 1', 'deliveries': json.dumps(deliveries)},
-            'date = :date',
-            {'date': today}
+        # Use raw SQL for increment since we need SQL expression, not literal value
+        self.db.execute(
+            "UPDATE reach_out_budget SET count = count + 1, deliveries = :deliveries WHERE date = :date",
+            {'deliveries': json.dumps(deliveries), 'date': today}
         )
     
     # =========================================================================

@@ -218,11 +218,12 @@ class DeliveryManager:
 
     def should_send_morning_report(self) -> bool:
         """Check if it's time for morning report."""
-        if not self.config.delivery.morning_report_enabled:
+        delivery_config = self.config.get("delivery", {})
+        if not delivery_config.get("morning_report_enabled", False):
             return False
 
         now = datetime.now(get_brt())
-        target = self.config.delivery.morning_report_time
+        target = delivery_config.get("morning_report_time")
 
         # Check if within 5 minute window of target time
         now_minutes = now.hour * 60 + now.minute
@@ -232,11 +233,12 @@ class DeliveryManager:
 
     def should_send_evening_report(self) -> bool:
         """Check if it's time for evening report."""
-        if not self.config.delivery.evening_report_enabled:
+        delivery_config = self.config.get("delivery", {})
+        if not delivery_config.get("evening_report_enabled", False):
             return False
 
         now = datetime.now(get_brt())
-        target = self.config.delivery.evening_report_time
+        target = delivery_config.get("evening_report_time")
 
         now_minutes = now.hour * 60 + now.minute
         target_minutes = target.hour * 60 + target.minute
@@ -245,12 +247,13 @@ class DeliveryManager:
 
     def should_send_weekly_report(self) -> bool:
         """Check if it's time for weekly report."""
-        if not self.config.delivery.weekly_report_enabled:
+        delivery_config = self.config.get("delivery", {})
+        if not delivery_config.get("weekly_report_enabled", False):
             return False
 
         now = datetime.now(get_brt())
-        target_day = self.config.delivery.weekly_report_day.lower()
-        target_time = self.config.delivery.weekly_report_time
+        target_day = delivery_config.get("weekly_report_day", "").lower()
+        target_time = delivery_config.get("weekly_report_time")
 
         # Check day
         days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
