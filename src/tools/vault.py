@@ -5,6 +5,17 @@ Tools for managing the Obsidian vault (brain folder).
 Provides read/write/search operations on markdown notes.
 """
 
+import sys
+from pathlib import Path
+
+# Add parent directory to path to import agent
+_parent_dir = Path(__file__).parent.parent.parent
+if str(_parent_dir) not in sys.path:
+    sys.path.insert(0, str(_parent_dir))
+
+from src.core.agent import agent
+from settings import settings
+
 import logging
 import os
 import re
@@ -14,12 +25,11 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
-from src.core.registry import friday_tool
 
 logger = logging.getLogger(__name__)
 
-# Get vault path from environment or default
-VAULT_PATH = Path(os.getenv("VAULT_PATH", "/home/artur/friday/brain"))
+# Get vault path from settings
+VAULT_PATH = settings.VAULT_PATH
 
 
 def _get_vault_path() -> Path:
@@ -84,7 +94,7 @@ def _serialize_frontmatter(frontmatter: Dict[str, Any], content: str) -> str:
 # Vault Tools
 # =============================================================================
 
-@friday_tool(name="vault_read_note")
+@agent.tool_plain
 def vault_read_note(path: str) -> str:
     """Read a note from the Obsidian vault.
     
@@ -125,7 +135,7 @@ def vault_read_note(path: str) -> str:
         return f"Error reading note: {e}"
 
 
-@friday_tool(name="vault_write_note")
+@agent.tool_plain
 def vault_write_note(
     path: str,
     content: str,
@@ -174,7 +184,7 @@ def vault_write_note(
         return f"Error writing note: {e}"
 
 
-@friday_tool(name="vault_list_directory")
+@agent.tool_plain
 def vault_list_directory(path: str = "") -> str:
     """List files and folders in a vault directory.
     
@@ -226,7 +236,7 @@ def vault_list_directory(path: str = "") -> str:
         return f"Error listing directory: {e}"
 
 
-@friday_tool(name="vault_search_notes")
+@agent.tool_plain
 def vault_search_notes(
     query: str,
     search_content: bool = True,
@@ -342,7 +352,7 @@ def vault_search_notes(
         return f"Error searching: {e}"
 
 
-@friday_tool(name="vault_get_frontmatter")
+@agent.tool_plain
 def vault_get_frontmatter(path: str) -> str:
     """Get only the frontmatter from a note.
     
@@ -379,7 +389,7 @@ def vault_get_frontmatter(path: str) -> str:
         return f"Error reading frontmatter: {e}"
 
 
-@friday_tool(name="vault_update_frontmatter")
+@agent.tool_plain
 def vault_update_frontmatter(
     path: str,
     updates: Dict[str, Any],
@@ -418,7 +428,7 @@ def vault_update_frontmatter(
         return f"Error updating frontmatter: {e}"
 
 
-@friday_tool(name="vault_manage_tags")
+@agent.tool_plain
 def vault_manage_tags(
     path: str,
     operation: str = "list",
@@ -479,7 +489,7 @@ def vault_manage_tags(
         return f"Error managing tags: {e}"
 
 
-@friday_tool(name="vault_create_daily_note")
+@agent.tool_plain
 def vault_create_daily_note(
     content: str = "",
     folder: str = "2. Time/Daily"
@@ -528,7 +538,7 @@ def vault_create_daily_note(
         return f"Error creating daily note: {e}"
 
 
-@friday_tool(name="vault_rename_note")
+@agent.tool_plain
 def vault_rename_note(old_path: str, new_name: str) -> str:
     """Rename a note in the Obsidian vault.
     
@@ -575,7 +585,7 @@ def vault_rename_note(old_path: str, new_name: str) -> str:
         return f"Error renaming note: {e}"
 
 
-@friday_tool(name="vault_move_note")
+@agent.tool_plain
 def vault_move_note(old_path: str, new_folder: str) -> str:
     """Move a note to a different folder in the Obsidian vault.
     
@@ -621,7 +631,7 @@ def vault_move_note(old_path: str, new_folder: str) -> str:
         return f"Error moving note: {e}"
 
 
-@friday_tool(name="vault_delete_note")
+@agent.tool_plain
 def vault_delete_note(path: str, confirm: bool = False) -> str:
     """Delete a note from the Obsidian vault.
     

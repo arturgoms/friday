@@ -1,34 +1,38 @@
 """
 Vault utilities for reading/writing Obsidian markdown files.
 
-All paths are configured via config.yml (paths.brain).
+All paths are configured via settings.py (PATHS["brain"]).
 """
 
 import re
+import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
 
-from src.core.config import get_config
+# Add parent directory to path to import settings
+_parent_dir = Path(__file__).parent.parent.parent
+if str(_parent_dir) not in sys.path:
+    sys.path.insert(0, str(_parent_dir))
+
+from settings import settings
 
 
 def get_notes_dir() -> Path:
-    """Get the notes directory from config.
+    """Get the notes directory from settings.
     
     Returns:
         Path to notes directory (brain/1. Notes)
     """
-    config = get_config()
-    return Path(config.paths.brain) / "1. Notes"
+    return settings.PATHS["brain"] / "1. Notes"
 
 
 # Common note paths
 def get_user_note() -> Path:
     """Get user note path (configured user profile)."""
-    config = get_config()
     notes_dir = get_notes_dir()
-    return notes_dir / f"{config.user.name}.md"
+    return notes_dir / f"{settings.USER['name']}.md"
 
 
 def get_friday_note() -> Path:

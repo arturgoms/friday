@@ -5,18 +5,27 @@ Tools for managing information about people and their relationships to the user.
 Reads data from Obsidian vault person notes.
 """
 
+import sys
+from pathlib import Path
+
+# Add parent directory to path to import agent
+_parent_dir = Path(__file__).parent.parent.parent
+if str(_parent_dir) not in sys.path:
+    sys.path.insert(0, str(_parent_dir))
+
+from src.core.agent import agent
+
 import json
 import logging
 from pathlib import Path
 
-from src.core.registry import friday_tool
 from src.core.vault import get_frontmatter_field, find_person_note
-from src.core.config import get_config
+from settings import settings
 
 logger = logging.getLogger(__name__)
 
 
-@friday_tool(name="list_people")
+@agent.tool_plain
 def list_people() -> str:
     """List all people in the vault with their names and relationship to the user.
     
@@ -27,8 +36,7 @@ def list_people() -> str:
         JSON string with list of people (name and relationship)
     """
     try:
-        config = get_config()
-        notes_dir = Path(config.paths.brain) / "1. Notes"
+        notes_dir = settings.PATHS["brain"] / "1. Notes"
         
         if not notes_dir.exists():
             logger.warning(f"[PEOPLE] Notes directory not found: {notes_dir}")
@@ -87,7 +95,7 @@ def list_people() -> str:
         return json.dumps({"error": str(e)})
 
 
-@friday_tool(name="person_data")
+@agent.tool_plain
 def person_data(name: str) -> str:
     """Get detailed information about a specific person by name.
     
@@ -142,7 +150,7 @@ def person_data(name: str) -> str:
         return json.dumps({"error": str(e)})
 
 
-@friday_tool(name="calculate_age")
+@agent.tool_plain
 def calculate_age(birthday: str) -> str:
     """Calculate someone's current age from their birthday.
     

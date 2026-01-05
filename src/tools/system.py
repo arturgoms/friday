@@ -4,13 +4,22 @@ Friday 3.0 System Tools
 Tools for system administration and monitoring.
 """
 
+import sys
+from pathlib import Path
+
+# Add parent directory to path to import agent
+_parent_dir = Path(__file__).parent.parent.parent
+if str(_parent_dir) not in sys.path:
+    sys.path.insert(0, str(_parent_dir))
+
+from src.core.agent import agent
+
 import logging
 import shutil
 import subprocess
 from datetime import datetime, timezone, timedelta
 
-from src.core.config import get_config, get_brt
-from src.core.registry import friday_tool
+from settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +27,7 @@ logger = logging.getLogger(__name__)
 FRIDAY_SERVICES = ["friday-vllm", "friday-core", "friday-awareness", "friday-telegram"]
 
 
-@friday_tool(name="get_disk_usage")
+@agent.tool_plain
 def get_disk_usage(path: str = "/") -> str:
     """Get disk usage for a path.
     
@@ -47,7 +56,7 @@ def get_disk_usage(path: str = "/") -> str:
         return f"Error getting disk usage: {e}"
 
 
-@friday_tool(name="get_current_time")
+@agent.tool_plain
 def get_current_time(format: str = "%Y-%m-%d %H:%M:%S") -> str:
     """Get the current date and time in local timezone (UTC-3).
     
@@ -57,10 +66,10 @@ def get_current_time(format: str = "%Y-%m-%d %H:%M:%S") -> str:
     Returns:
         Formatted current time string
     """
-    return datetime.now(get_brt()).strftime(format)
+    return datetime.now(settings.TIMEZONE).strftime(format)
 
 
-@friday_tool(name="get_system_info")
+@agent.tool_plain
 def get_system_info() -> str:
     """Get basic system information.
     
@@ -83,7 +92,7 @@ def get_system_info() -> str:
     return "\n".join(info_lines)
 
 
-@friday_tool(name="get_uptime")
+@agent.tool_plain
 def get_uptime() -> str:
     """Get system uptime.
     
@@ -111,7 +120,7 @@ def get_uptime() -> str:
         return f"Error getting uptime: {e}"
 
 
-@friday_tool(name="get_memory_usage")
+@agent.tool_plain
 def get_memory_usage() -> str:
     """Get system memory usage.
     
@@ -145,7 +154,7 @@ def get_memory_usage() -> str:
         return f"Error getting memory usage: {e}"
 
 
-@friday_tool(name="get_friday_logs")
+@agent.tool_plain
 def get_friday_logs(service: str = "all", lines: int = 50) -> str:
     """Get Friday service logs from journalctl.
     
@@ -185,7 +194,7 @@ def get_friday_logs(service: str = "all", lines: int = 50) -> str:
         return f"Error getting logs: {e}"
 
 
-@friday_tool(name="get_homelab_status")
+@agent.tool_plain
 def get_homelab_status() -> str:
     """Get full monitoring status of all homelab services and servers.
     
@@ -286,7 +295,7 @@ def get_homelab_status() -> str:
     return "\n".join(lines)
 
 
-@friday_tool(name="get_friday_status")
+@agent.tool_plain
 def get_friday_status() -> str:
     """Get status of all Friday services.
     
@@ -341,7 +350,7 @@ def get_friday_status() -> str:
         return f"Error getting status: {e}"
 
 
-@friday_tool(name="days_until_date")
+@agent.tool_plain
 def days_until_date(month: int, day: int, year: int = 0) -> str:
     """Calculate how many days until a specific date.
     
@@ -361,7 +370,7 @@ def days_until_date(month: int, day: int, year: int = 0) -> str:
         - days_until_date(3, 15, 2026) → Days until March 15, 2026
     """
     try:
-        now = datetime.now(get_brt())
+        now = datetime.now(settings.TIMEZONE)
         
         # Determine target year
         if year and year > 0:
@@ -369,14 +378,14 @@ def days_until_date(month: int, day: int, year: int = 0) -> str:
         else:
             # Try current year first
             target_year = now.year
-            target_date = datetime(target_year, month, day, tzinfo=BRT)
+            target_date = datetime(target_year, month, day, tzinfo=settings.TIMEZONE)
             
             # If date has already passed this year, use next year
             if target_date < now:
                 target_year = now.year + 1
         
         # Create target date
-        target_date = datetime(target_year, month, day, tzinfo=BRT)
+        target_date = datetime(target_year, month, day, tzinfo=settings.TIMEZONE)
         
         # Calculate difference
         delta = target_date - now
@@ -400,7 +409,7 @@ def days_until_date(month: int, day: int, year: int = 0) -> str:
         return f"❌ Error: Invalid date - month={month}, day={day}, year={year}: {e}"
 
 
-@friday_tool(name="days_between_dates")
+@agent.tool_plain
 def days_between_dates(month1: int, day1: int, month2: int, day2: int) -> str:
     """Calculate the difference in days between two dates (same year).
     
@@ -421,12 +430,12 @@ def days_between_dates(month1: int, day1: int, month2: int, day2: int) -> str:
         - days_between_dates(3, 15, 12, 12) → Days between Mar 15 and Dec 12
     """
     try:
-        now = datetime.now(get_brt())
+        now = datetime.now(settings.TIMEZONE)
         current_year = now.year
         
         # Create both dates in the same year for comparison
-        date1 = datetime(current_year, month1, day1, tzinfo=BRT)
-        date2 = datetime(current_year, month2, day2, tzinfo=BRT)
+        date1 = datetime(current_year, month1, day1, tzinfo=settings.TIMEZONE)
+        date2 = datetime(current_year, month2, day2, tzinfo=settings.TIMEZONE)
         
         # Calculate absolute difference
         delta = abs((date2 - date1).days)

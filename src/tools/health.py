@@ -5,13 +5,22 @@ Garmin health data tools using InfluxDB.
 Provides access to running, sleep, recovery, and wellness metrics.
 """
 
+import sys
+from pathlib import Path
+
+# Add parent directory to path to import agent
+_parent_dir = Path(__file__).parent.parent.parent
+if str(_parent_dir) not in sys.path:
+    sys.path.insert(0, str(_parent_dir))
+
+from src.core.agent import agent
+
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from src.core.config import get_config, get_brt
+from settings import settings
 from src.core.influxdb import query as _query
-from src.core.registry import friday_tool
 from src.core.utils import format_duration, format_pace
 
 logger = logging.getLogger(__name__)
@@ -21,7 +30,7 @@ logger = logging.getLogger(__name__)
 # Running & Training Tools
 # =============================================================================
 
-@friday_tool(name="get_recent_runs")
+@agent.tool_plain
 def get_recent_runs(limit: int = 10, days: int = 30) -> str:
     """Get recent running activities with pace, HR, distance, and duration.
     
@@ -32,7 +41,7 @@ def get_recent_runs(limit: int = 10, days: int = 30) -> str:
     Returns:
         Recent running activities with details
     """
-    start = datetime.now(get_brt()) - timedelta(days=days)
+    start = datetime.now(settings.TIMEZONE) - timedelta(days=days)
     start_str = start.strftime('%Y-%m-%dT%H:%M:%SZ')
     
     query = f"""
@@ -67,7 +76,7 @@ def get_recent_runs(limit: int = 10, days: int = 30) -> str:
     return "\n".join(lines)
 
 
-@friday_tool(name="get_training_load")
+@agent.tool_plain
 def get_training_load(weeks: int = 4) -> str:
     """Analyze weekly training load: mileage, time, and intensity.
     
@@ -82,8 +91,8 @@ def get_training_load(weeks: int = 4) -> str:
     total_runs = 0
     
     for week in range(weeks):
-        week_start = datetime.now(get_brt()) - timedelta(weeks=week+1)
-        week_end = datetime.now(get_brt()) - timedelta(weeks=week)
+        week_start = datetime.now(settings.TIMEZONE) - timedelta(weeks=week+1)
+        week_end = datetime.now(settings.TIMEZONE) - timedelta(weeks=week)
         
         start_str = week_start.strftime('%Y-%m-%dT%H:%M:%SZ')
         end_str = week_end.strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -117,7 +126,7 @@ def get_training_load(weeks: int = 4) -> str:
     return "\n".join(lines)
 
 
-@friday_tool(name="get_vo2max")
+@agent.tool_plain
 def get_vo2max() -> str:
     """Get current VO2 Max and recent trend.
     
@@ -134,7 +143,7 @@ def get_vo2max() -> str:
     current = round(points[0].get("vo2Max", 0), 1)
     
     # Get trend (last 30 days)
-    start = datetime.now(get_brt()) - timedelta(days=30)
+    start = datetime.now(settings.TIMEZONE) - timedelta(days=30)
     start_str = start.strftime('%Y-%m-%dT%H:%M:%SZ')
     query = f"""
     SELECT vo2Max FROM DailyStats 
@@ -166,7 +175,7 @@ def get_vo2max() -> str:
 # Sleep & Recovery Tools
 # =============================================================================
 
-@friday_tool(name="get_sleep_summary")
+@agent.tool_plain
 def get_sleep_summary(days: int = 7) -> str:
     """Get sleep analysis including quality, duration, and stages.
     
@@ -211,7 +220,7 @@ def get_sleep_summary(days: int = 7) -> str:
     return "\n".join(lines)
 
 
-@friday_tool(name="get_recovery_status")
+@agent.tool_plain
 def get_recovery_status() -> str:
     """Get current recovery status including body battery, HRV, and training readiness.
     
@@ -254,7 +263,7 @@ def get_recovery_status() -> str:
     return "\n".join(lines)
 
 
-@friday_tool(name="get_hrv_trend")
+@agent.tool_plain
 def get_hrv_trend(days: int = 14) -> str:
     """Analyze heart rate variability patterns for recovery assessment.
     
@@ -317,7 +326,7 @@ def get_hrv_trend(days: int = 14) -> str:
 # Health & Wellness Tools
 # =============================================================================
 
-@friday_tool(name="get_weekly_health")
+@agent.tool_plain
 def get_weekly_health(weeks_ago: int = 0) -> str:
     """Get comprehensive weekly health overview.
     
@@ -327,8 +336,8 @@ def get_weekly_health(weeks_ago: int = 0) -> str:
     Returns:
         Weekly health digest including activity, sleep, stress, and recovery
     """
-    week_start = datetime.now(get_brt()) - timedelta(weeks=weeks_ago+1)
-    week_end = datetime.now(get_brt()) - timedelta(weeks=weeks_ago)
+    week_start = datetime.now(settings.TIMEZONE) - timedelta(weeks=weeks_ago+1)
+    week_end = datetime.now(settings.TIMEZONE) - timedelta(weeks=weeks_ago)
     
     lines = [
         f"Weekly Health Digest",
@@ -394,7 +403,7 @@ def get_weekly_health(weeks_ago: int = 0) -> str:
     return "\n".join(lines)
 
 
-@friday_tool(name="get_stress_levels")
+@agent.tool_plain
 def get_stress_levels(days: int = 7) -> str:
     """Analyze stress patterns.
     
@@ -455,7 +464,7 @@ def get_stress_levels(days: int = 7) -> str:
     return "\n".join(lines)
 
 
-@friday_tool(name="get_heart_rate_summary")
+@agent.tool_plain
 def get_heart_rate_summary(days: int = 14) -> str:
     """Get resting heart rate and cardiovascular health trends.
     
@@ -499,7 +508,7 @@ def get_heart_rate_summary(days: int = 14) -> str:
 # Activity Overview
 # =============================================================================
 
-@friday_tool(name="get_activity_summary")
+@agent.tool_plain
 def get_activity_summary(days: int = 7) -> str:
     """Get all activities, steps, and calories for a period.
     
@@ -509,7 +518,7 @@ def get_activity_summary(days: int = 7) -> str:
     Returns:
         Activity summary with steps, workouts, and calories
     """
-    start = datetime.now(get_brt()) - timedelta(days=days)
+    start = datetime.now(settings.TIMEZONE) - timedelta(days=days)
     
     lines = [f"Activity Summary (Last {days} Days):", "=" * 50]
     
@@ -551,7 +560,7 @@ def get_activity_summary(days: int = 7) -> str:
     return "\n".join(lines)
 
 
-@friday_tool(name="get_garmin_sync_status")
+@agent.tool_plain
 def get_garmin_sync_status() -> str:
     """Check when Garmin data was last synced to InfluxDB.
     

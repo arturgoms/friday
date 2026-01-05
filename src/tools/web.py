@@ -4,19 +4,29 @@ Friday 3.0 Web Tools
 Tools for web search and fetching using SearXNG.
 """
 
+import sys
+from pathlib import Path
+
+# Add parent directory to path to import agent
+_parent_dir = Path(__file__).parent.parent.parent
+if str(_parent_dir) not in sys.path:
+    sys.path.insert(0, str(_parent_dir))
+
+from src.core.agent import agent
+from settings import settings
+
 import os
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
 import httpx
 
-from src.core.registry import friday_tool
 
-# Get SearXNG URL from environment
-SEARXNG_URL = os.getenv("SEARXNG_URL", "https://searxng.arturgomes.com")
+# Get SearXNG URL from settings
+SEARXNG_URL = settings.SEARXNG_URL
 
 
-@friday_tool(name="web_search")
+@agent.tool_plain
 def web_search(
     query: str,
     num_results: int = 5,
@@ -79,7 +89,7 @@ def web_search(
         return f"Search error: {e}"
 
 
-@friday_tool(name="web_fetch")
+@agent.tool_plain
 def web_fetch(url: str, max_length: int = 5000) -> str:
     """Fetch and extract text content from a web page.
     
@@ -163,7 +173,7 @@ def _html_to_text(html: str) -> str:
     return '\n'.join(lines)
 
 
-@friday_tool(name="web_news")
+@agent.tool_plain
 def web_news(query: str, num_results: int = 5) -> str:
     """Search for recent news articles.
     

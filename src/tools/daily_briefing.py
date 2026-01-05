@@ -4,14 +4,23 @@ Friday 3.0 Daily Briefing Tools
 Morning and evening reports with personalized insights.
 """
 
+import sys
+from pathlib import Path
+
+# Add parent directory to path to import agent
+_parent_dir = Path(__file__).parent.parent.parent
+if str(_parent_dir) not in sys.path:
+    sys.path.insert(0, str(_parent_dir))
+
+from src.core.agent import agent
+
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.core.config import get_config
+from settings import settings
 from src.core.influxdb import query as _query
-from src.core.registry import friday_tool
 from src.core.utils import format_duration
 
 logger = logging.getLogger(__name__)
@@ -506,14 +515,14 @@ def _build_sleep_recommendation(ctx: ReportContext, factors: SleepFactors):
 # Main Report Functions
 # =============================================================================
 
-@friday_tool(name="get_morning_report")
+@agent.tool_plain
 def get_morning_report() -> str:
     """Get morning briefing with sleep, energy, calendar, and weather.
     
     Returns:
         Formatted morning report string
     """
-    now = datetime.now(get_brt())
+    now = datetime.now(settings.TIMEZONE)
     ctx = ReportContext(
         now=now,
         today_str=now.strftime("%Y-%m-%d"),
@@ -534,14 +543,14 @@ def get_morning_report() -> str:
     return "\n".join(ctx.lines)
 
 
-@friday_tool(name="get_evening_report")
+@agent.tool_plain
 def get_evening_report() -> str:
     """Get evening report with activity summary and sleep recommendations.
     
     Returns:
         Formatted evening report string
     """
-    now = datetime.now(get_brt())
+    now = datetime.now(settings.TIMEZONE)
     ctx = ReportContext(
         now=now,
         today_str=now.strftime("%Y-%m-%d"),

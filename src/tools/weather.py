@@ -4,17 +4,27 @@ Friday 3.0 Weather Tools
 Tools for getting weather information using OpenWeatherMap API.
 """
 
+import sys
+from pathlib import Path
+
+# Add parent directory to path to import agent
+_parent_dir = Path(__file__).parent.parent.parent
+if str(_parent_dir) not in sys.path:
+    sys.path.insert(0, str(_parent_dir))
+
+from src.core.agent import agent
+from settings import settings
+
 import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import httpx
 
-from src.core.registry import friday_tool
 
-# Get config from environment
-WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "")
-WEATHER_CITY = os.getenv("WEATHER_CITY", "London")
+# Get config from settings
+WEATHER_API_KEY = settings.OPENWEATHERMAP_API_KEY or settings.WEATHER_API_KEY
+WEATHER_CITY = settings.WEATHER_CITY
 OPENWEATHER_BASE = "https://api.openweathermap.org/data/2.5"
 
 
@@ -43,7 +53,7 @@ def _format_temp(temp: float) -> str:
     return f"{temp:.1f}°C"
 
 
-@friday_tool(name="get_current_weather")
+@agent.tool_plain
 def get_current_weather(city: str = "") -> str:
     """Get current weather conditions for Artur's city (Curitiba).
     
@@ -111,7 +121,7 @@ def get_current_weather(city: str = "") -> str:
         return f"Error getting weather: {e}"
 
 
-@friday_tool(name="get_weather_forecast")
+@agent.tool_plain
 def get_weather_forecast(city: str = "", hours: int = 24) -> str:
     """Get weather forecast for Artur's city (Curitiba).
     
@@ -183,7 +193,7 @@ def get_weather_forecast(city: str = "", hours: int = 24) -> str:
         return f"Error getting forecast: {e}"
 
 
-@friday_tool(name="will_it_rain")
+@agent.tool_plain
 def will_it_rain(city: str = "", hours: int = 12) -> str:
     """Check if rain is expected in Artur's city (Curitiba).
     

@@ -26,3 +26,21 @@ def format_duration(seconds: int) -> str:
         return f"{hours}h"
     
     return f"{hours}h {remaining_minutes}m"
+
+
+def format_pace(seconds_per_km: float) -> str:
+    """Format pace in min/km.
+    
+    Args:
+        seconds_per_km: Pace in seconds per kilometer
+        
+    Returns:
+        Formatted string like "5:30 min/km"
+    """
+    if seconds_per_km <= 0:
+        return "N/A"
+    
+    minutes = int(seconds_per_km // 60)
+    seconds = int(seconds_per_km % 60)
+    
+    return f"{minutes}:{seconds:02d} min/km"

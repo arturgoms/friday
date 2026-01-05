@@ -12,6 +12,16 @@ Features:
 - Cross-calendar availability check
 """
 
+import sys
+from pathlib import Path
+
+# Add parent directory to path to import agent
+_parent_dir = Path(__file__).parent.parent.parent
+if str(_parent_dir) not in sys.path:
+    sys.path.insert(0, str(_parent_dir))
+
+from src.core.agent import agent
+
 import json
 import logging
 import os
@@ -22,8 +32,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.core.config import get_config, get_brt
-from src.core.registry import friday_tool
+from settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -31,17 +40,17 @@ logger = logging.getLogger(__name__)
 # Configuration
 # =============================================================================
 
-DATA_DIR = Path(__file__).parent.parent.parent / "data"
+DATA_DIR = settings.PATHS["data"]
 
 # Nextcloud CalDAV config
-NEXTCLOUD_CALDAV_URL = os.getenv("NEXTCLOUD_CALDAV_URL", "")
-NEXTCLOUD_USERNAME = os.getenv("NEXTCLOUD_USERNAME", "")
-NEXTCLOUD_PASSWORD = os.getenv("NEXTCLOUD_PASSWORD", "")
+NEXTCLOUD_CALDAV_URL = settings.NEXTCLOUD_CALDAV_URL
+NEXTCLOUD_USERNAME = settings.NEXTCLOUD_USERNAME
+NEXTCLOUD_PASSWORD = settings.NEXTCLOUD_PASSWORD
 
 # Google Calendar config
 GOOGLE_CREDENTIALS_FILE = DATA_DIR / "google_credentials.json"
 GOOGLE_TOKEN_FILE = DATA_DIR / "google_token.pickle"
-GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
+GOOGLE_CALENDAR_ID = settings.GOOGLE_CALENDAR_ID
 
 # =============================================================================
 # Data Classes
@@ -159,13 +168,13 @@ class NextcloudCalendar:
                     all_day = not isinstance(dtstart, datetime)
                     
                     if all_day:
-                        dtstart = datetime.combine(dtstart, datetime.min.time()).replace(tzinfo=get_brt())
-                        dtend = datetime.combine(dtend, datetime.min.time()).replace(tzinfo=get_brt())
+                        dtstart = datetime.combine(dtstart, datetime.min.time()).replace(tzinfo=settings.TIMEZONE)
+                        dtend = datetime.combine(dtend, datetime.min.time()).replace(tzinfo=settings.TIMEZONE)
                     else:
                         if dtstart.tzinfo is None:
-                            dtstart = dtstart.replace(tzinfo=get_brt())
+                            dtstart = dtstart.replace(tzinfo=settings.TIMEZONE)
                         if dtend.tzinfo is None:
-                            dtend = dtend.replace(tzinfo=get_brt())
+                            dtend = dtend.replace(tzinfo=settings.TIMEZONE)
                     
                     result.append(CalendarEvent(
                         id=str(event.url),
@@ -317,9 +326,9 @@ class GoogleCalendar:
                     
                     if all_day:
                         dtstart = datetime.fromisoformat(start_data['date'])
-                        dtstart = datetime.combine(dtstart.date(), datetime.min.time()).replace(tzinfo=get_brt())
+                        dtstart = datetime.combine(dtstart.date(), datetime.min.time()).replace(tzinfo=settings.TIMEZONE)
                         dtend = datetime.fromisoformat(end_data['date'])
-                        dtend = datetime.combine(dtend.date(), datetime.min.time()).replace(tzinfo=get_brt())
+                        dtend = datetime.combine(dtend.date(), datetime.min.time()).replace(tzinfo=settings.TIMEZONE)
                     else:
                         dtstart = datetime.fromisoformat(start_data['dateTime'].replace('Z', '+00:00'))
                         dtend = datetime.fromisoformat(end_data['dateTime'].replace('Z', '+00:00'))
@@ -504,7 +513,7 @@ def get_calendar_manager() -> CalendarManager:
 # Tools
 # =============================================================================
 
-@friday_tool(name="get_calendar_events")
+@agent.tool_plain
 def get_calendar_events(days: int = 7, calendar: str = "both") -> str:
     """Get upcoming calendar events.
     
@@ -518,7 +527,7 @@ def get_calendar_events(days: int = 7, calendar: str = "both") -> str:
     try:
         manager = get_calendar_manager()
         
-        now = datetime.now(get_brt())
+        now = datetime.now(settings.TIMEZONE)
         start = now
         end = now + timedelta(days=days)
         
@@ -555,7 +564,7 @@ def get_calendar_events(days: int = 7, calendar: str = "both") -> str:
         return f"Error getting events: {e}"
 
 
-@friday_tool(name="get_today_schedule")
+@agent.tool_plain
 def get_today_schedule() -> str:
     """Get today's complete schedule from both calendars.
     
@@ -565,7 +574,7 @@ def get_today_schedule() -> str:
     try:
         manager = get_calendar_manager()
         
-        now = datetime.now(get_brt())
+        now = datetime.now(settings.TIMEZONE)
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1)
         
@@ -590,7 +599,7 @@ def get_today_schedule() -> str:
         return f"Error getting schedule: {e}"
 
 
-@friday_tool(name="add_calendar_event")
+@agent.tool_plain
 def add_calendar_event(title: str, start_time: str, end_time: str,
                        calendar: str = "personal", description: str = "",
                        location: str = "") -> str:
@@ -615,21 +624,21 @@ def add_calendar_event(title: str, start_time: str, end_time: str,
             return "❌ Work calendar is read-only. Please add events to personal calendar or use Google Calendar directly."
         
         manager = get_calendar_manager()
-        now = datetime.now(get_brt())
+        now = datetime.now(settings.TIMEZONE)
         
         # Parse start time
         if len(start_time) <= 5:  # Just time, assume today
             start = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {start_time}", "%Y-%m-%d %H:%M")
         else:
             start = datetime.strptime(start_time, "%Y-%m-%d %H:%M")
-        start = start.replace(tzinfo=get_brt())
+        start = start.replace(tzinfo=settings.TIMEZONE)
         
         # Parse end time
         if len(end_time) <= 5:
             end = datetime.strptime(f"{start.strftime('%Y-%m-%d')} {end_time}", "%Y-%m-%d %H:%M")
         else:
             end = datetime.strptime(end_time, "%Y-%m-%d %H:%M")
-        end = end.replace(tzinfo=get_brt())
+        end = end.replace(tzinfo=settings.TIMEZONE)
         
         # Add to personal calendar only
         event_id = manager.nextcloud.add_event(title, start, end, description, location)
@@ -648,7 +657,7 @@ def add_calendar_event(title: str, start_time: str, end_time: str,
         return f"Error adding event: {e}"
 
 
-@friday_tool(name="find_free_time")
+@agent.tool_plain
 def find_free_time(date: str = "", min_duration: int = 30) -> str:
     """Find free time slots on a given date.
     
@@ -663,9 +672,9 @@ def find_free_time(date: str = "", min_duration: int = 30) -> str:
         manager = get_calendar_manager()
         
         if date:
-            check_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=get_brt())
+            check_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=settings.TIMEZONE)
         else:
-            check_date = datetime.now(get_brt())
+            check_date = datetime.now(settings.TIMEZONE)
         
         slots = manager.find_free_slots(check_date, min_duration)
         
@@ -684,7 +693,7 @@ def find_free_time(date: str = "", min_duration: int = 30) -> str:
         return f"Error finding free time: {e}"
 
 
-@friday_tool(name="get_next_event")
+@agent.tool_plain
 def get_next_event() -> str:
     """Get the next upcoming event from either calendar.
     
@@ -694,7 +703,7 @@ def get_next_event() -> str:
     try:
         manager = get_calendar_manager()
         
-        now = datetime.now(get_brt())
+        now = datetime.now(settings.TIMEZONE)
         end = now + timedelta(days=7)
         
         events = manager.get_all_events(now, end)
@@ -722,7 +731,7 @@ def get_next_event() -> str:
         return f"Error getting next event: {e}"
 
 
-@friday_tool(name="delete_calendar_event")
+@agent.tool_plain
 def delete_calendar_event(event_id: str, calendar: str) -> str:
     """Delete an event from a calendar.
     

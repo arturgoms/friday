@@ -27,7 +27,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Tuple
 from pathlib import Path
 
-from src.core.config import get_config, get_brt
+from settings import settings
 from src.core.embeddings import get_embeddings
 from src.core.vault import (
     is_user_attribute,

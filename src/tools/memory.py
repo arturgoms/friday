@@ -7,16 +7,22 @@ with function calling, but makes it available as a tool when the user
 asks about past conversations.
 """
 
+import sys
+from pathlib import Path
+
+# Add parent directory to path to import agent
+_parent_dir = Path(__file__).parent.parent.parent
+if str(_parent_dir) not in sys.path:
+    sys.path.insert(0, str(_parent_dir))
+
+from src.core.agent import agent
+
 import logging
-import os
-import threading
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import create_engine, text
-
-from src.core.config import get_config
-from src.core.registry import friday_tool
+from settings import settings
+from src.core.database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +33,7 @@ def _get_session_id() -> str:
     return 'default'  # For now, use default session
 
 
-@friday_tool(name="get_conversation_history")
+@agent.tool_plain
 def get_conversation_history(
     query: Optional[str] = None,
     limit: int = 10
@@ -57,12 +63,8 @@ def get_conversation_history(
         # Limit sanity check
         limit = min(limit, 50)
         
-        # Access the command history database
-        db_path = os.path.expanduser("~/friday_history.db")
-        if not os.path.exists(db_path):
-            return "No conversation history found."
-        
-        engine = create_engine(f"sqlite:///{db_path}")
+        # Get database instance
+        db = get_db()
         
         # Query conversations
         if query:
@@ -84,9 +86,7 @@ def get_conversation_history(
             """
             params = {"session_id": session_id, "limit": limit}
         
-        with engine.connect() as conn:
-            result = conn.execute(text(sql), params)
-            rows = result.fetchall()
+        rows = db.fetchall(sql, params)
         
         if not rows:
             if query:
@@ -123,7 +123,7 @@ def get_conversation_history(
         return f"Error accessing conversation history: {str(e)}"
 
 
-@friday_tool(name="get_last_user_message")
+@agent.tool_plain
 def get_last_user_message() -> str:
     """Get the user's last message in the conversation.
     
@@ -137,11 +137,7 @@ def get_last_user_message() -> str:
     """
     try:
         session_id = _get_session_id()
-        db_path = os.path.expanduser("~/friday_history.db")
-        if not os.path.exists(db_path):
-            return "No conversation history found."
-        
-        engine = create_engine(f"sqlite:///{db_path}")
+        db = get_db()
         
         sql = """
             SELECT timestamp, content 
@@ -151,9 +147,7 @@ def get_last_user_message() -> str:
             LIMIT 1
         """
         
-        with engine.connect() as conn:
-            result = conn.execute(text(sql), {"session_id": session_id})
-            row = result.fetchone()
+        row = db.fetchone(sql, {"session_id": session_id})
         
         if not row:
             return "No previous user messages found."
@@ -172,7 +166,7 @@ def get_last_user_message() -> str:
         return f"Error: {str(e)}"
 
 
-@friday_tool(name="summarize_conversation")
+@agent.tool_plain
 def summarize_conversation(messages: int = 20) -> str:
     """Get a summary of recent conversation topics.
     
@@ -189,11 +183,7 @@ def summarize_conversation(messages: int = 20) -> str:
     """
     try:
         session_id = _get_session_id()
-        db_path = os.path.expanduser("~/friday_history.db")
-        if not os.path.exists(db_path):
-            return "No conversation history found."
-        
-        engine = create_engine(f"sqlite:///{db_path}")
+        db = get_db()
         
         sql = """
             SELECT role, content 
@@ -203,9 +193,7 @@ def summarize_conversation(messages: int = 20) -> str:
             LIMIT :limit
         """
         
-        with engine.connect() as conn:
-            result = conn.execute(text(sql), {"session_id": session_id, "limit": messages})
-            rows = result.fetchall()
+        rows = db.fetchall(sql, {"session_id": session_id, "limit": messages})
         
         if not rows:
             return "No conversation history found."

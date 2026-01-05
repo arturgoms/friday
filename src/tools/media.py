@@ -4,21 +4,31 @@ Friday 3.0 Media Tools
 Tools for generating images and audio using npcpy.
 """
 
+import sys
+from pathlib import Path
+
+# Add parent directory to path to import agent
+_parent_dir = Path(__file__).parent.parent.parent
+if str(_parent_dir) not in sys.path:
+    sys.path.insert(0, str(_parent_dir))
+
+from src.core.agent import agent
+from settings import settings
+
 import logging
 import os
 from pathlib import Path
 from typing import Optional
 
-from src.core.registry import friday_tool
 
 logger = logging.getLogger(__name__)
 
 # Media output directory
-MEDIA_DIR = Path(__file__).parent.parent.parent / "data" / "media"
+MEDIA_DIR = settings.PATHS["data"] / "media"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
 
-@friday_tool(name="generate_image")
+@agent.tool_plain
 def generate_image(
     prompt: str,
     style: str = "realistic",
@@ -41,8 +51,8 @@ def generate_image(
         generate_image("a serene mountain landscape at sunset")
         generate_image("a cute robot reading a book", style="cartoon")
     """
-    # Get Stable Diffusion service URL from environment
-    sd_service_url = os.getenv("STABLE_DIFFUSION_URL", "")
+    # Get Stable Diffusion service URL from settings
+    sd_service_url = settings.STABLE_DIFFUSION_URL
     
     if not sd_service_url:
         logger.warning("[MEDIA] STABLE_DIFFUSION_URL not configured")
@@ -132,7 +142,7 @@ def generate_image(
         return f"Failed to generate image: {str(e)}"
 
 
-@friday_tool(name="generate_speech")
+@agent.tool_plain
 def generate_speech(
     text: str,
     lang: str = "en"

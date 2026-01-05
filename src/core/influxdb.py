@@ -20,18 +20,23 @@ Usage:
 import json
 import logging
 import os
+import sys
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+# Add parent directory to path to import settings
+_parent_dir = Path(__file__).parent.parent.parent
+if str(_parent_dir) not in sys.path:
+    sys.path.insert(0, str(_parent_dir))
+
+from settings import settings
 
 logger = logging.getLogger(__name__)
 
 # Thread-safe singleton
 _influx_client = None
 _influx_client_lock = threading.Lock()
-
-# Config path relative to project root
-CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "influxdb_mcp.json"
 
 
 def get_influx_client():
@@ -53,18 +58,14 @@ def get_influx_client():
         try:
             from influxdb import InfluxDBClient
             
-            if not CONFIG_PATH.exists():
-                logger.warning(f"[INFLUXDB] Config not found at {CONFIG_PATH}")
-                return None
-            
-            with open(CONFIG_PATH) as f:
-                config = json.load(f)
+            # Get config from settings
+            config = settings.INFLUXDB
             
             client = InfluxDBClient(
                 host=config.get("host", "localhost"),
                 port=config.get("port", 8086),
                 username=config.get("username", ""),
-                password=os.getenv("INFLUXDB_PASSWORD", ""),
+                password=config.get("password", ""),
                 database=config.get("database", "health")
             )
             
