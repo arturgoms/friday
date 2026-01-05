@@ -5,6 +5,7 @@ Main AI agent using pydantic-ai with local LLM configuration.
 """
 
 import asyncio
+import logging
 import sys
 import zoneinfo
 from datetime import date, datetime
@@ -15,6 +16,8 @@ import logfire
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
+
+logger = logging.getLogger(__name__)
 
 # Add parent directory to path to import settings
 _parent_dir = Path(__file__).parent.parent.parent
@@ -61,6 +64,12 @@ def create_model(provider: Optional[OpenAIProvider] = None) -> OpenAIChatModel:
 # ==========================================
 
 
+class AgentDeps:
+    """Dependencies injected into agent tools."""
+    def __init__(self, session_id: str = "default"):
+        self.session_id = session_id
+
+
 def create_agent(
     model: Optional[OpenAIChatModel] = None,
     temperature: Optional[float] = None,
@@ -103,7 +112,10 @@ def create_agent(
         )
 
     return Agent(
-        model, model_settings={"temperature": temperature}, system_prompt=system_prompt
+        model, 
+        model_settings={"temperature": temperature}, 
+        system_prompt=system_prompt,
+        deps_type=AgentDeps
     )
 
 
@@ -113,6 +125,29 @@ def create_agent(
 
 # Create default agent instance for convenience
 agent = create_agent()
+
+
+# ==========================================
+# REGISTER TOOLS
+# ==========================================
+
+# Import all tools to register them with the agent
+# Tools use @agent.tool_plain decorator and auto-register on import
+try:
+    from src.tools import calendar
+    from src.tools import daily_briefing
+    from src.tools import health
+    # from src.tools import knowledge  # TODO: Needs vault integration update
+    from src.tools import media
+    from src.tools import memory
+    from src.tools import people
+    from src.tools import system
+    from src.tools import vault
+    from src.tools import weather
+    from src.tools import web
+    logger.info("Tools loaded successfully")
+except Exception as e:
+    logger.warning(f"Error loading tools: {e}")
 
 
 # ==========================================

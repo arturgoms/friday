@@ -28,19 +28,12 @@ from typing import Optional, List, Dict, Tuple
 from pathlib import Path
 
 from settings import settings
+from src.utils.time import get_brt
 from src.core.embeddings import get_embeddings
-from src.core.vault import (
-    is_user_attribute,
-    is_person_fact,
-    extract_person_name,
-    update_frontmatter_field,
-    get_frontmatter_field,
-    update_section_item,
-    find_person_note,
-    create_person_note,
-    USER_NOTE,
-    FRIDAY_NOTE,
-)
+
+# Vault integration temporarily disabled - needs to be updated for new structure
+# Will use database-only mode for now
+VAULT_ENABLED = False
 
 logger = logging.getLogger(__name__)
 

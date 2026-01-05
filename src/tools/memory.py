@@ -26,15 +26,13 @@ from src.core.database import get_db
 
 logger = logging.getLogger(__name__)
 
-# Access to session context
-# TODO: Improve session tracking without thread-local storage
-def _get_session_id() -> str:
-    """Get current session ID."""
-    return 'default'  # For now, use default session
+# Session context is now passed via agent dependencies
+# No need for _get_session_id() function anymore
 
 
-@agent.tool_plain
+@agent.tool
 def get_conversation_history(
+    ctx,
     query: Optional[str] = None,
     limit: int = 10
 ) -> str:
@@ -59,11 +57,7 @@ def get_conversation_history(
         Call: get_conversation_history(query="weather", limit=5)
     """
     try:
-        session_id = _get_session_id()
-        # Limit sanity check
-        limit = min(limit, 50)
-        
-        # Get database instance
+        session_id = ctx.deps.session_id
         db = get_db()
         
         # Query conversations
@@ -123,8 +117,8 @@ def get_conversation_history(
         return f"Error accessing conversation history: {str(e)}"
 
 
-@agent.tool_plain
-def get_last_user_message() -> str:
+@agent.tool
+def get_last_user_message(ctx) -> str:
     """Get the user's last message in the conversation.
     
     Useful when the user asks:
@@ -136,7 +130,7 @@ def get_last_user_message() -> str:
         The user's last message with timestamp
     """
     try:
-        session_id = _get_session_id()
+        session_id = ctx.deps.session_id
         db = get_db()
         
         sql = """
@@ -166,8 +160,8 @@ def get_last_user_message() -> str:
         return f"Error: {str(e)}"
 
 
-@agent.tool_plain
-def summarize_conversation(messages: int = 20) -> str:
+@agent.tool
+def summarize_conversation(ctx, messages: int = 20) -> str:
     """Get a summary of recent conversation topics.
     
     Useful when the user asks:
@@ -182,7 +176,7 @@ def summarize_conversation(messages: int = 20) -> str:
         Summary of recent conversation topics
     """
     try:
-        session_id = _get_session_id()
+        session_id = ctx.deps.session_id
         db = get_db()
         
         sql = """

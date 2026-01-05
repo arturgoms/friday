@@ -16,7 +16,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 from src.interfaces.base import Message, MessageType
 from src.interfaces.manager import ChannelManager
 from src.interfaces.telegram.channel import TelegramChannel
-from src.core.agent import agent
+from src.core.agent import agent, AgentDeps
+from src.core.conversation import get_conversation_manager
 from settings import settings
 
 # Configure logging
@@ -36,6 +37,7 @@ class FridayTelegramBot:
     def __init__(self):
         self.manager = ChannelManager()
         self.telegram = TelegramChannel()
+        self.conversation_manager = get_conversation_manager()
         
     async def handle_incoming_message(self, message: Message):
         """
@@ -47,8 +49,22 @@ class FridayTelegramBot:
         logger.info(f"Processing message from {message.sender_name}: {message.content[:50]}...")
         
         try:
-            # Run the AI agent with the user's message (use async run, not run_sync)
-            result = await agent.run(message.content)
+            # Use sender_id as session_id (channel-agnostic)
+            session_id = message.sender_id
+            
+            # Get conversation history for this session
+            history = self.conversation_manager.get_history(session_id)
+            logger.info(f"Loaded {len(history)} messages from history for session {session_id}")
+            
+            # Create dependencies with session_id for tools
+            deps = AgentDeps(session_id=session_id)
+            
+            # Run the AI agent with the user's message, history, and dependencies
+            result = await agent.run(message.content, message_history=history, deps=deps)
+            
+            # Update conversation history with the complete message list
+            # result.all_messages() contains: old history + user message + assistant response
+            self.conversation_manager.update_history(session_id, result.all_messages())
             
             # Send the response back (pydantic-ai returns result.output, not result.data)
             response = Message(
@@ -65,7 +81,7 @@ class FridayTelegramBot:
                 logger.error(f"✗ Failed to send response: {delivery_result.error}")
             
         except Exception as e:
-            logger.error(f"Error processing message: {e}")
+            logger.error(f"Error processing message: {e}", exc_info=True)
             
             # Send error message to user
             error_response = Message(
