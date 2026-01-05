@@ -15,6 +15,7 @@ if str(_parent_dir) not in sys.path:
 from src.core.agent import agent
 
 import logging
+import zoneinfo
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -24,6 +25,9 @@ from src.core.influxdb import query as _query
 from src.core.utils import format_duration
 
 logger = logging.getLogger(__name__)
+
+# Get user timezone
+USER_TZ = zoneinfo.ZoneInfo(settings.USER["timezone"])
 
 
 # =============================================================================
@@ -82,9 +86,9 @@ def _check_garmin_sync_freshness() -> Tuple[bool, Optional[float], Optional[str]
         now_utc = datetime.now(timezone.utc)
         hours_ago = (now_utc - last_time).total_seconds() / 3600
         
-        # Convert to BRT for display
-        last_time_brt = last_time.astimezone(BRT)
-        time_str = last_time_brt.strftime("%H:%M")
+        # Convert to user timezone for display
+        last_time_local = last_time.astimezone(USER_TZ)
+        time_str = last_time_local.strftime("%H:%M")
         
         # Consider fresh if synced within last 6 hours
         is_fresh = hours_ago < 6
@@ -105,13 +109,13 @@ def _add_sync_warning(ctx: ReportContext, hours_ago: Optional[float],
     
     if not garmin_fresh:
         if hours_ago is not None:
-            ctx.add_line(f"⚠️ GARMIN DATA STALE (last sync: {hours_ago:.1f}h ago at {last_sync_time})")
-            ctx.add_line("Health metrics below may be outdated. Sync your watch!")
+            ctx.add_line(f"⚠️ **GARMIN LAST SYNCED**: {hours_ago:.1f}h ago (at {last_sync_time})")
+            ctx.add_line("Some metrics may be outdated. Sync your watch for latest data.")
             ctx.add_line("")
-            ctx.add_warning("Garmin data is stale - sync your watch.")
+            if hours_ago > 12:
+                ctx.add_warning("Garmin hasn't synced in over 12 hours.")
         else:
-            ctx.add_line("⚠️ GARMIN SYNC UNAVAILABLE")
-            ctx.add_line("Could not verify data freshness.")
+            ctx.add_line("⚠️ **GARMIN SYNC UNAVAILABLE**: Could not verify data freshness.")
             ctx.add_line("")
     
     return garmin_fresh
@@ -129,10 +133,7 @@ def _build_sleep_section(ctx: ReportContext, garmin_fresh: bool) -> int:
     """
     ctx.add_section("🛏️ LAST NIGHT'S SLEEP")
     
-    if not garmin_fresh:
-        ctx.add_line("Data unavailable (Garmin not synced)", indent=True)
-        return 0
-    
+    # Try to fetch data regardless of sync freshness
     sleep_data = _query("""
         SELECT sleepScore, deepSleepSeconds, lightSleepSeconds, remSleepSeconds,
                avgOvernightHrv, restingHeartRate, time
@@ -185,10 +186,7 @@ def _build_energy_section(ctx: ReportContext, garmin_fresh: bool):
     """Build energy/recovery section for morning report."""
     ctx.add_section("🔋 ENERGY")
     
-    if not garmin_fresh:
-        ctx.add_line("Data unavailable (Garmin not synced)", indent=True)
-        return
-    
+    # Try to fetch data regardless of sync freshness
     # Body battery
     bb_data = _query("SELECT bodyBatteryAtWakeTime, time FROM DailyStats ORDER BY time DESC LIMIT 1")
     
@@ -211,6 +209,8 @@ def _build_energy_section(ctx: ReportContext, garmin_fresh: bool):
             ctx.add_line(f"Body Battery: {body_battery}/100 ({bb_desc})")
         else:
             ctx.add_line(f"Data from {bb_date} (not today)", indent=True)
+    else:
+        ctx.add_line("Body Battery data not available", indent=True)
     
     # Training readiness
     tr_data = _query("SELECT score, level, time FROM TrainingReadiness ORDER BY time DESC LIMIT 1")
