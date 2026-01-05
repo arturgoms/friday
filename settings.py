@@ -11,11 +11,10 @@ Usage:
 
 import os
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
-from dotenv import load_dotenv
 import pytz
-
+from dotenv import load_dotenv
 
 # ==============================================================================
 # Base Configuration
@@ -76,7 +75,7 @@ TIMEZONE = pytz.timezone(USER["timezone"])
 LLM = {
     "model_name": os.getenv("LLM_MODEL_NAME", "NousResearch/Hermes-4-14B"),
     "base_url": os.getenv("LLM_BASE_URL", "http://localhost:8000/v1"),
-    "temperature": float(os.getenv("LLM_TEMPERATURE", "0.6")),
+    "temperature": float(os.getenv("LLM_TEMPERATURE", "0.2")),
     "max_tokens": int(os.getenv("LLM_MAX_TOKENS", "4096")),
 }
 
@@ -154,31 +153,25 @@ VAULT_PATH = Path(os.getenv("VAULT_PATH", BASE_DIR / "brain"))
 # ==============================================================================
 
 DELIVERY_CHANNELS = {
-    "channels": [
-        {
-            "type": "telegram",
-            "enabled": True,
-            "config": {}
-        }
-    ],
+    "channels": [{"type": "telegram", "enabled": True, "config": {}}],
     "routing": {
         "insights": {
             "urgent": ["telegram"],
             "high": ["telegram"],
             "medium": ["telegram"],
-            "low": ["telegram"]
+            "low": ["telegram"],
         },
         "alerts": {
             "critical": ["telegram"],
             "warning": ["telegram"],
-            "info": ["telegram"]
+            "info": ["telegram"],
         },
         "reports": {
             "morning": ["telegram"],
             "evening": ["telegram"],
-            "weekly": ["telegram"]
-        }
-    }
+            "weekly": ["telegram"],
+        },
+    },
 }
 
 
@@ -192,120 +185,120 @@ EXTERNAL_SERVICES = [
         "url": "http://192.168.1.16:9000",
         "type": "http",
         "timeout": 5,
-        "check_interval": 300
+        "check_interval": 300,
     },
     {
         "name": "Traefik",
         "url": "http://192.168.1.16:80",
         "type": "http",
         "timeout": 5,
-        "check_interval": 300
+        "check_interval": 300,
     },
     {
         "name": "Home Assistant",
         "url": "http://192.168.1.16:8123",
         "type": "http",
         "timeout": 5,
-        "check_interval": 300
+        "check_interval": 300,
     },
     {
         "name": "Immich",
         "url": "http://192.168.1.16:3001",
         "type": "http",
         "timeout": 5,
-        "check_interval": 300
+        "check_interval": 300,
     },
     {
         "name": "n8n",
         "url": "http://192.168.1.16:5678",
         "type": "http",
         "timeout": 5,
-        "check_interval": 300
+        "check_interval": 300,
     },
     {
         "name": "Grafana",
         "url": "http://192.168.1.16:8087",
         "type": "http",
         "timeout": 5,
-        "check_interval": 300
+        "check_interval": 300,
     },
     {
         "name": "InfluxDB",
         "url": "http://192.168.1.16:8086/health",
         "type": "http",
         "timeout": 5,
-        "check_interval": 300
+        "check_interval": 300,
     },
     {
         "name": "InfluxDB 1.x",
         "url": "http://192.168.1.16:8088/ping",
         "type": "http",
         "timeout": 5,
-        "check_interval": 300
+        "check_interval": 300,
     },
     {
         "name": "Prometheus",
         "url": "http://192.168.1.16:9090",
         "type": "http",
         "timeout": 5,
-        "check_interval": 300
+        "check_interval": 300,
     },
     {
         "name": "Graphite",
         "url": "http://192.168.1.16:8050",
         "type": "http",
         "timeout": 5,
-        "check_interval": 300
+        "check_interval": 300,
     },
     {
         "name": "Whisper ASR",
         "url": "http://192.168.1.16:8001",
         "type": "http",
         "timeout": 10,
-        "check_interval": 300
+        "check_interval": 300,
     },
     {
         "name": "Stable Diffusion",
         "url": "http://192.168.1.16:8002",
         "type": "http",
         "timeout": 10,
-        "check_interval": 300
+        "check_interval": 300,
     },
     {
         "name": "Open WebUI",
         "url": "http://192.168.1.16:8010",
         "type": "http",
         "timeout": 5,
-        "check_interval": 300
+        "check_interval": 300,
     },
     {
         "name": "SearXNG",
         "url": "http://192.168.1.16:8888",
         "type": "http",
         "timeout": 5,
-        "check_interval": 300
+        "check_interval": 300,
     },
     {
         "name": "Syncthing",
         "url": "http://192.168.1.16:8384",
         "type": "http",
         "timeout": 5,
-        "check_interval": 300
+        "check_interval": 300,
     },
     {
         "name": "Glances",
         "url": "http://192.168.1.16:61208",
         "type": "http",
         "timeout": 5,
-        "check_interval": 300
+        "check_interval": 300,
     },
     {
         "name": "CrowdSec",
         "url": "http://192.168.1.16:6060",
         "type": "http",
         "timeout": 5,
-        "check_interval": 300
-    }
+        "check_interval": 300,
+    },
 ]
 
 
@@ -318,9 +311,8 @@ INSIGHTS = {
         "health": {"interval_seconds": 300, "enabled": True},
         "calendar": {"interval_seconds": 120, "enabled": True},
         "homelab": {"interval_seconds": 120, "enabled": True},
-        "weather": {"interval_seconds": 600, "enabled": True}
+        "weather": {"interval_seconds": 600, "enabled": True},
     },
-    
     "thresholds": {
         "disk_percent": {"warning": 85, "critical": 95},
         "memory_percent": {"warning": 90, "critical": 95},
@@ -329,9 +321,8 @@ INSIGHTS = {
         "body_battery": {"warning": 30, "critical": 20},
         "sleep_score": {"warning": 50, "critical": 40},
         "garmin_sync_stale_hours": 12,
-        "services_down": {"warning": 1, "critical": 3}
+        "services_down": {"warning": 1, "critical": 3},
     },
-    
     "analyzers": {
         "threshold": {"enabled": True},
         "stress_monitor": {"enabled": True},
@@ -339,25 +330,22 @@ INSIGHTS = {
         "sleep_correlator": {"enabled": True, "min_days": 7},
         "exercise_impact": {"enabled": True, "min_samples": 5},
         "resource_trend": {"enabled": True, "alert_days": 30},
-        "weekly_digest": {"enabled": True}
+        "weekly_digest": {"enabled": True},
     },
-    
     "decision": {
         "max_reach_outs_per_day": 5,
         "quiet_hours": {"start": "22:00", "end": "08:00"},
         "cooldown_minutes": 60,
         "batch_low_priority": True,
-        "min_confidence": 0.7
+        "min_confidence": 0.7,
     },
-    
     "delivery": {
         "morning_report": {"enabled": True, "time": "10:00"},
         "evening_report": {"enabled": True, "time": "21:00"},
         "weekly_report": {"enabled": True, "day": "sunday", "time": "20:00"},
         "journal_thread": {"enabled": True, "time": "10:00"},
-        "daily_note": {"enabled": True, "time": "23:59"}
+        "daily_note": {"enabled": True, "time": "23:59"},
     },
-    
     "journal": {
         "habits": [
             "Read",
@@ -365,17 +353,12 @@ INSIGHTS = {
             "Quality time with wife",
             "Quality time with pets",
             "Play games",
-            "Meditation"
+            "Meditation",
         ],
-        "health_targets": {
-            "sleep_hours": 7,
-            "stress_avg": 40,
-            "steps": 8000
-        }
+        "health_targets": {"sleep_hours": 7, "stress_avg": 40, "steps": 8000},
     },
-    
     "timezone": "America/Sao_Paulo",
-    "snapshot_retention_days": 90
+    "snapshot_retention_days": 90,
 }
 
 
@@ -389,15 +372,15 @@ SCHEDULES = [
         "time": "10:00",
         "tool": "get_morning_report",
         "enabled": True,
-        "description": "Daily morning briefing"
+        "description": "Daily morning briefing",
     },
     {
         "name": "evening_report",
         "time": "21:00",
         "tool": "get_evening_report",
         "enabled": True,
-        "description": "Daily evening report with sleep recommendation"
-    }
+        "description": "Daily evening report with sleep recommendation",
+    },
 ]
 
 
@@ -408,160 +391,358 @@ SCHEDULES = [
 CALIBRATION = {
     "_description": "Calibration tables for LLM interpretation of metrics. Adjust based on personal baselines.",
     "_updated": "2024-12-02",
-    
     "health": {
         "sleep": {
             "score": {
-                "excellent": {"min": 80, "max": 100, "description": "Excellent sleep, well recovered"},
-                "good": {"min": 70, "max": 79, "description": "Good sleep, adequate recovery"},
-                "fair": {"min": 60, "max": 69, "description": "Fair sleep, may feel somewhat tired"},
-                "poor": {"min": 0, "max": 59, "description": "Poor sleep, likely to feel fatigued"}
+                "excellent": {
+                    "min": 80,
+                    "max": 100,
+                    "description": "Excellent sleep, well recovered",
+                },
+                "good": {
+                    "min": 70,
+                    "max": 79,
+                    "description": "Good sleep, adequate recovery",
+                },
+                "fair": {
+                    "min": 60,
+                    "max": 69,
+                    "description": "Fair sleep, may feel somewhat tired",
+                },
+                "poor": {
+                    "min": 0,
+                    "max": 59,
+                    "description": "Poor sleep, likely to feel fatigued",
+                },
             },
             "duration_hours": {
-                "optimal": {"min": 7, "max": 9, "description": "Optimal sleep duration"},
+                "optimal": {
+                    "min": 7,
+                    "max": 9,
+                    "description": "Optimal sleep duration",
+                },
                 "adequate": {"min": 6, "max": 7, "description": "Minimally adequate"},
-                "short": {"min": 0, "max": 6, "description": "Sleep deprived, affects recovery and performance"}
+                "short": {
+                    "min": 0,
+                    "max": 6,
+                    "description": "Sleep deprived, affects recovery and performance",
+                },
             },
             "deep_sleep_percent": {
-                "excellent": {"min": 20, "max": 100, "description": "Excellent deep sleep for physical recovery"},
+                "excellent": {
+                    "min": 20,
+                    "max": 100,
+                    "description": "Excellent deep sleep for physical recovery",
+                },
                 "good": {"min": 15, "max": 20, "description": "Good deep sleep"},
-                "low": {"min": 0, "max": 15, "description": "Low deep sleep, may affect physical recovery"}
+                "low": {
+                    "min": 0,
+                    "max": 15,
+                    "description": "Low deep sleep, may affect physical recovery",
+                },
             },
             "rem_sleep_percent": {
-                "excellent": {"min": 20, "max": 100, "description": "Excellent REM for cognitive recovery"},
+                "excellent": {
+                    "min": 20,
+                    "max": 100,
+                    "description": "Excellent REM for cognitive recovery",
+                },
                 "good": {"min": 15, "max": 20, "description": "Good REM sleep"},
-                "low": {"min": 0, "max": 15, "description": "Low REM, may affect memory and mood"}
+                "low": {
+                    "min": 0,
+                    "max": 15,
+                    "description": "Low REM, may affect memory and mood",
+                },
             },
             "awake_count": {
                 "good": {"min": 0, "max": 2, "description": "Minimal disruptions"},
-                "moderate": {"min": 3, "max": 4, "description": "Some disruptions, normal range"},
-                "high": {"min": 5, "max": 100, "description": "Frequent awakenings, fragmented sleep"}
+                "moderate": {
+                    "min": 3,
+                    "max": 4,
+                    "description": "Some disruptions, normal range",
+                },
+                "high": {
+                    "min": 5,
+                    "max": 100,
+                    "description": "Frequent awakenings, fragmented sleep",
+                },
             },
             "awake_time_min": {
                 "good": {"min": 0, "max": 20, "description": "Minimal time awake"},
-                "moderate": {"min": 21, "max": 40, "description": "Moderate time awake"},
-                "high": {"min": 41, "max": 1000, "description": "Significant time awake, reduces sleep quality"}
+                "moderate": {
+                    "min": 21,
+                    "max": 40,
+                    "description": "Moderate time awake",
+                },
+                "high": {
+                    "min": 41,
+                    "max": 1000,
+                    "description": "Significant time awake, reduces sleep quality",
+                },
             },
             "restless_moments": {
                 "low": {"min": 0, "max": 30, "description": "Calm sleep"},
                 "moderate": {"min": 31, "max": 60, "description": "Some restlessness"},
-                "high": {"min": 61, "max": 1000, "description": "Very restless, may indicate discomfort or stress"}
-            }
+                "high": {
+                    "min": 61,
+                    "max": 1000,
+                    "description": "Very restless, may indicate discomfort or stress",
+                },
+            },
         },
-        
         "recovery": {
             "training_readiness": {
-                "prime": {"min": 80, "max": 100, "description": "Ready for high intensity training"},
-                "ready": {"min": 60, "max": 79, "description": "Ready for moderate training"},
-                "fair": {"min": 40, "max": 59, "description": "Consider lighter training"},
-                "low": {"min": 0, "max": 39, "description": "Focus on recovery, avoid intense training"}
+                "prime": {
+                    "min": 80,
+                    "max": 100,
+                    "description": "Ready for high intensity training",
+                },
+                "ready": {
+                    "min": 60,
+                    "max": 79,
+                    "description": "Ready for moderate training",
+                },
+                "fair": {
+                    "min": 40,
+                    "max": 59,
+                    "description": "Consider lighter training",
+                },
+                "low": {
+                    "min": 0,
+                    "max": 39,
+                    "description": "Focus on recovery, avoid intense training",
+                },
             },
             "body_battery": {
                 "high": {"min": 70, "max": 100, "description": "High energy reserves"},
                 "moderate": {"min": 40, "max": 69, "description": "Moderate energy"},
-                "low": {"min": 20, "max": 39, "description": "Low energy, consider rest"},
-                "depleted": {"min": 0, "max": 19, "description": "Very low, prioritize rest"}
+                "low": {
+                    "min": 20,
+                    "max": 39,
+                    "description": "Low energy, consider rest",
+                },
+                "depleted": {
+                    "min": 0,
+                    "max": 19,
+                    "description": "Very low, prioritize rest",
+                },
             },
             "body_battery_wake": {
-                "excellent": {"min": 80, "max": 100, "description": "Excellent overnight recovery"},
+                "excellent": {
+                    "min": 80,
+                    "max": 100,
+                    "description": "Excellent overnight recovery",
+                },
                 "good": {"min": 60, "max": 79, "description": "Good recovery"},
                 "fair": {"min": 40, "max": 59, "description": "Incomplete recovery"},
-                "poor": {"min": 0, "max": 39, "description": "Poor recovery, may need rest day"}
+                "poor": {
+                    "min": 0,
+                    "max": 39,
+                    "description": "Poor recovery, may need rest day",
+                },
             },
             "hrv_ms": {
                 "_note": "HRV is highly individual. These are general ranges. User baseline: ~50ms",
-                "high": {"min": 60, "max": 200, "description": "High HRV, good recovery state"},
+                "high": {
+                    "min": 60,
+                    "max": 200,
+                    "description": "High HRV, good recovery state",
+                },
                 "normal": {"min": 40, "max": 59, "description": "Normal HRV range"},
-                "low": {"min": 0, "max": 39, "description": "Low HRV, may indicate stress or fatigue"}
+                "low": {
+                    "min": 0,
+                    "max": 39,
+                    "description": "Low HRV, may indicate stress or fatigue",
+                },
             },
             "resting_hr_bpm": {
                 "_note": "Lower is generally better for trained individuals. User baseline: ~49bpm",
-                "excellent": {"min": 0, "max": 50, "description": "Excellent cardiovascular fitness"},
+                "excellent": {
+                    "min": 0,
+                    "max": 50,
+                    "description": "Excellent cardiovascular fitness",
+                },
                 "good": {"min": 51, "max": 60, "description": "Good fitness level"},
                 "average": {"min": 61, "max": 70, "description": "Average fitness"},
-                "elevated": {"min": 71, "max": 200, "description": "Elevated, may indicate stress or illness"}
+                "elevated": {
+                    "min": 71,
+                    "max": 200,
+                    "description": "Elevated, may indicate stress or illness",
+                },
             },
             "recovery_time_hours": {
                 "recovered": {"min": 0, "max": 0, "description": "Fully recovered"},
                 "short": {"min": 1, "max": 24, "description": "Minor recovery needed"},
-                "moderate": {"min": 25, "max": 48, "description": "Moderate recovery period"},
-                "extended": {"min": 49, "max": 1000, "description": "Extended recovery, avoid hard training"}
-            }
+                "moderate": {
+                    "min": 25,
+                    "max": 48,
+                    "description": "Moderate recovery period",
+                },
+                "extended": {
+                    "min": 49,
+                    "max": 1000,
+                    "description": "Extended recovery, avoid hard training",
+                },
+            },
         },
-        
         "stress": {
             "average": {
                 "low": {"min": 0, "max": 25, "description": "Low stress, well managed"},
-                "moderate": {"min": 26, "max": 50, "description": "Moderate stress levels"},
-                "high": {"min": 51, "max": 75, "description": "High stress, consider relaxation"},
-                "very_high": {"min": 76, "max": 100, "description": "Very high stress, take action to reduce"}
+                "moderate": {
+                    "min": 26,
+                    "max": 50,
+                    "description": "Moderate stress levels",
+                },
+                "high": {
+                    "min": 51,
+                    "max": 75,
+                    "description": "High stress, consider relaxation",
+                },
+                "very_high": {
+                    "min": 76,
+                    "max": 100,
+                    "description": "Very high stress, take action to reduce",
+                },
             },
             "sleep_stress": {
                 "restful": {"min": 0, "max": 15, "description": "Very restful sleep"},
                 "calm": {"min": 16, "max": 25, "description": "Calm sleep"},
-                "moderate": {"min": 26, "max": 40, "description": "Some stress during sleep"},
-                "high": {"min": 41, "max": 100, "description": "High stress during sleep, affects recovery"}
-            }
+                "moderate": {
+                    "min": 26,
+                    "max": 40,
+                    "description": "Some stress during sleep",
+                },
+                "high": {
+                    "min": 41,
+                    "max": 100,
+                    "description": "High stress during sleep, affects recovery",
+                },
+            },
         },
-        
         "breathing": {
             "spo2_avg_percent": {
-                "normal": {"min": 95, "max": 100, "description": "Normal oxygen saturation"},
+                "normal": {
+                    "min": 95,
+                    "max": 100,
+                    "description": "Normal oxygen saturation",
+                },
                 "low": {"min": 90, "max": 94, "description": "Slightly low, monitor"},
-                "concerning": {"min": 0, "max": 89, "description": "Low SpO2, may need medical attention"}
+                "concerning": {
+                    "min": 0,
+                    "max": 89,
+                    "description": "Low SpO2, may need medical attention",
+                },
             },
             "spo2_lowest_percent": {
                 "normal": {"min": 90, "max": 100, "description": "Normal dips"},
-                "low": {"min": 85, "max": 89, "description": "Low dips, may indicate sleep apnea"},
-                "concerning": {"min": 0, "max": 84, "description": "Significant desaturation, consult doctor"}
+                "low": {
+                    "min": 85,
+                    "max": 89,
+                    "description": "Low dips, may indicate sleep apnea",
+                },
+                "concerning": {
+                    "min": 0,
+                    "max": 84,
+                    "description": "Significant desaturation, consult doctor",
+                },
             },
             "respiration_rate": {
-                "normal": {"min": 12, "max": 20, "description": "Normal breathing rate"},
+                "normal": {
+                    "min": 12,
+                    "max": 20,
+                    "description": "Normal breathing rate",
+                },
                 "low": {"min": 0, "max": 11, "description": "Low respiration"},
-                "elevated": {"min": 21, "max": 100, "description": "Elevated, may indicate stress or illness"}
-            }
+                "elevated": {
+                    "min": 21,
+                    "max": 100,
+                    "description": "Elevated, may indicate stress or illness",
+                },
+            },
         },
-        
         "running": {
             "training_effect_aerobic": {
-                "overreaching": {"min": 5.0, "max": 5.0, "description": "Overreaching, extended recovery needed"},
-                "highly_improving": {"min": 4.0, "max": 4.9, "description": "Highly improving fitness"},
-                "improving": {"min": 3.0, "max": 3.9, "description": "Improving fitness"},
-                "maintaining": {"min": 2.0, "max": 2.9, "description": "Maintaining fitness"},
+                "overreaching": {
+                    "min": 5.0,
+                    "max": 5.0,
+                    "description": "Overreaching, extended recovery needed",
+                },
+                "highly_improving": {
+                    "min": 4.0,
+                    "max": 4.9,
+                    "description": "Highly improving fitness",
+                },
+                "improving": {
+                    "min": 3.0,
+                    "max": 3.9,
+                    "description": "Improving fitness",
+                },
+                "maintaining": {
+                    "min": 2.0,
+                    "max": 2.9,
+                    "description": "Maintaining fitness",
+                },
                 "minor": {"min": 1.0, "max": 1.9, "description": "Minor benefit"},
-                "none": {"min": 0, "max": 0.9, "description": "No aerobic benefit"}
+                "none": {"min": 0, "max": 0.9, "description": "No aerobic benefit"},
             },
             "weekly_mileage_km": {
                 "_note": "Depends on training goals. Adjust based on user's typical volume",
                 "high": {"min": 50, "max": 1000, "description": "High volume week"},
                 "moderate": {"min": 30, "max": 49, "description": "Moderate volume"},
                 "light": {"min": 15, "max": 29, "description": "Light training week"},
-                "recovery": {"min": 0, "max": 14, "description": "Recovery/rest week"}
-            }
+                "recovery": {"min": 0, "max": 14, "description": "Recovery/rest week"},
+            },
         },
-        
         "activity": {
             "daily_steps": {
-                "very_active": {"min": 12000, "max": 100000, "description": "Very active day"},
-                "active": {"min": 10000, "max": 11999, "description": "Active day, hit common goal"},
-                "moderate": {"min": 7000, "max": 9999, "description": "Moderately active"},
+                "very_active": {
+                    "min": 12000,
+                    "max": 100000,
+                    "description": "Very active day",
+                },
+                "active": {
+                    "min": 10000,
+                    "max": 11999,
+                    "description": "Active day, hit common goal",
+                },
+                "moderate": {
+                    "min": 7000,
+                    "max": 9999,
+                    "description": "Moderately active",
+                },
                 "light": {"min": 4000, "max": 6999, "description": "Light activity"},
-                "sedentary": {"min": 0, "max": 3999, "description": "Sedentary day"}
+                "sedentary": {"min": 0, "max": 3999, "description": "Sedentary day"},
             }
-        }
+        },
     },
-    
     "response_guidelines": {
         "tone": {
             "style": "direct and concise",
-            "avoid": ["Based on...", "According to the data...", "It appears that...", "I can see that..."],
-            "prefer": ["Your sleep was...", "You slept...", "Sleep score: 68 (fair)..."]
+            "avoid": [
+                "Based on...",
+                "According to the data...",
+                "It appears that...",
+                "I can see that...",
+            ],
+            "prefer": [
+                "Your sleep was...",
+                "You slept...",
+                "Sleep score: 68 (fair)...",
+            ],
         },
         "analysis": {
-            "always_mention": ["The primary metric and its interpretation", "Key issues if any", "Actionable suggestion if relevant"],
-            "avoid": ["Repeating all numbers without analysis", "Generic advice not tied to data", "Overly positive spin on poor metrics"]
-        }
-    }
+            "always_mention": [
+                "The primary metric and its interpretation",
+                "Key issues if any",
+                "Actionable suggestion if relevant",
+            ],
+            "avoid": [
+                "Repeating all numbers without analysis",
+                "Generic advice not tied to data",
+                "Overly positive spin on poor metrics",
+            ],
+        },
+    },
 }
 
 
@@ -569,19 +750,20 @@ CALIBRATION = {
 # Settings Class for Easy Access
 # ==============================================================================
 
+
 class Settings:
     """
     Settings accessor class similar to Django's settings.
     Provides attribute-style access to all configuration values.
     """
-    
+
     def __init__(self):
         # Copy all module-level variables to this instance
         current_module = __import__(__name__)
         for key in dir(current_module):
-            if key.isupper() or key in ['TIMEZONE', 'BASE_DIR']:
+            if key.isupper() or key in ["TIMEZONE", "BASE_DIR"]:
                 setattr(self, key, getattr(current_module, key))
-    
+
     def __repr__(self):
         return f"<Settings module>"
 

@@ -214,3 +214,50 @@ def summarize_conversation(ctx, messages: int = 20) -> str:
     except Exception as e:
         logger.error(f"Error summarizing conversation: {e}")
         return f"Error: {str(e)}"
+
+
+@agent.tool
+def clear_conversation_history(ctx) -> str:
+    """Clear all conversation history for the current session.
+    
+    Use this tool when the user wants to:
+    - Clear their conversation history
+    - Forget previous messages
+    - Start a fresh conversation
+    - Reset the chat
+    
+    This will permanently delete all previous messages for this session.
+    
+    Returns:
+        Confirmation message with count of deleted messages
+    """
+    try:
+        session_id = ctx.deps.session_id
+        db = get_db()
+        
+        # Count messages before deletion
+        count_sql = """
+            SELECT COUNT(*) 
+            FROM conversation_history 
+            WHERE conversation_id = :session_id
+        """
+        result = db.fetchone(count_sql, {"session_id": session_id})
+        message_count = result[0] if result else 0
+        
+        if message_count == 0:
+            return "💭 No conversation history to clear. Starting fresh!"
+        
+        # Delete all messages for this session
+        delete_sql = """
+            DELETE FROM conversation_history 
+            WHERE conversation_id = :session_id
+        """
+        db.execute(delete_sql, {"session_id": session_id})
+        
+        logger.info(f"Cleared {message_count} messages for session {session_id}")
+        
+        return f"✅ History cleared! Deleted {message_count} messages. Starting fresh."
+        
+    except Exception as e:
+        logger.error(f"Error clearing conversation history: {e}")
+        return f"❌ Error clearing history: {str(e)}"
