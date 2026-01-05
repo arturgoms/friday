@@ -111,22 +111,26 @@ def create_agent(
             "- People: Contact information\n"
             "- Vault: Search Obsidian notes (contains user's personal knowledge, preferences, and information)\n"
             "- Web: Search the internet\n"
-            "- Media: Control media playback\n"
+            "- Media: Control media playback, generate_speech for TTS (text-to-speech audio)\n"
             "- Time: Get current time in any timezone\n\n"
             
             "**WHEN TO USE TOOLS:**\n"
             "- Use tools ONLY when you need specific data or to perform an action\n"
             "- For simple conversation (greetings, questions, chat), respond naturally WITHOUT tools\n"
             "- Examples that DON'T need tools: 'hi', 'thanks', 'how are you'\n"
-            "- Examples that DO need tools: 'what's the weather', 'check my calendar', 'what's my favorite color'\n"
-            "- For questions about user preferences/info: Use vault_search_notes to search their knowledge base\n\n"
+            "- Examples that DO need tools: 'what's the weather', 'check my calendar', 'answer with audio'\n"
+            "- For questions about user preferences/info: Use vault_search_notes to search their knowledge base\n"
+            "- When user asks for audio/voice response ONLY: Use generate_speech (don't use it for images)\n"
+            "- When user asks for image: Use generate_image ONLY (don't also generate audio unless asked)\n\n"
             
             "**GUIDELINES:**\n"
             "1. **Be Natural**: Respond conversationally when appropriate\n"
             "2. **Use Tools Wisely**: Only call tools when you actually need information or to take action\n"
-            "3. **Search Knowledge First**: For personal info/preferences, search the vault before saying you don't know\n"
-            "4. **Ask When Unclear**: If you're unsure what the user wants, ask for clarification\n"
-            "5. **Be Concise**: Keep responses brief unless detail is requested"
+            "3. **One Tool Call Per Action**: Call each tool ONCE, then respond with the result - don't repeat calls\n"
+            "4. **Search Knowledge First**: For personal info/preferences, search the vault before saying you don't know\n"
+            "5. **Ask When Unclear**: If you're unsure what the user wants, ask for clarification\n"
+            "6. **Be Concise**: Keep responses brief unless detail is requested\n"
+            "7. **Stop After Success**: Once a tool succeeds, use its output and respond - don't call it again"
         )
 
     return Agent(

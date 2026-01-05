@@ -145,9 +145,45 @@ class ConversationManager:
                     role = msg.get("role", "user")
                     content = msg.get("content", "")
                 else:
-                    # If it's a pydantic-ai ModelMessage object
-                    role = getattr(msg, "role", "user")
-                    content = str(getattr(msg, "content", ""))
+                    # If it's a pydantic-ai ModelMessage object (ModelRequest/ModelResponse)
+                    msg_type = type(msg).__name__
+                    
+                    # Skip system prompts and tool-related messages
+                    if "System" in msg_type or "Tool" in msg_type:
+                        continue
+                    
+                    # Determine role based on message type
+                    if "Request" in msg_type or "UserPrompt" in msg_type:
+                        role = "user"
+                    elif "Response" in msg_type:
+                        role = "assistant"
+                    else:
+                        role = getattr(msg, "role", "user")
+                    
+                    # Extract text content from parts
+                    content = ""
+                    if hasattr(msg, "parts"):
+                        parts = msg.parts
+                        text_parts = []
+                        for part in parts:
+                            part_type = type(part).__name__
+                            # Only save text parts (skip SystemPrompt, ToolCall, ToolReturn, etc.)
+                            if "Text" in part_type or "UserPrompt" in part_type:
+                                if hasattr(part, "content"):
+                                    text_parts.append(str(part.content))
+                                elif hasattr(part, "text"):
+                                    text_parts.append(str(part.text))
+                        content = " ".join(text_parts)
+                    elif hasattr(msg, "content"):
+                        content = str(msg.content)
+                    else:
+                        content = str(msg)
+                    
+                    # Skip if no actual text content
+                    if not content or content.strip() == "":
+                        continue
+                    
+                    logger.debug(f"Saving {msg_type} - Role: {role}, Content length: {len(content)}")
                 
                 self.db.insert("conversation_history", {
                     "conversation_id": session_id,

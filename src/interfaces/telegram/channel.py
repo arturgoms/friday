@@ -128,6 +128,25 @@ class TelegramChannel(Channel):
                     reply_to_message_id=message.reply_to if message.reply_to else None
                 )
             
+            elif message.type == MessageType.AUDIO:
+                # For audio, content should be the file path
+                from pathlib import Path
+                audio_path = Path(message.content)
+                
+                if not audio_path.exists():
+                    return DeliveryResult(
+                        success=False,
+                        error=f"Audio file not found: {audio_path}"
+                    )
+                
+                # Send as voice message (more suitable for TTS)
+                with open(audio_path, 'rb') as audio_file:
+                    sent_message = await self.bot.send_voice(
+                        chat_id=chat_id,
+                        voice=audio_file,
+                        reply_to_message_id=message.reply_to if message.reply_to else None
+                    )
+            
             else:
                 return DeliveryResult(
                     success=False,

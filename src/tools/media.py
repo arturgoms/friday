@@ -152,6 +152,10 @@ def generate_speech(
     This uses local text-to-speech without any external API calls.
     The audio will be saved to the data/media directory.
     
+    IMPORTANT: This tool returns a special [AUDIO:path] marker. You MUST include
+    this marker EXACTLY as returned in your final response to the user so the 
+    audio file can be sent. Example: "[AUDIO:/path/to/file.mp3]\nHello there!"
+    
     Supported languages:
     - en: English (default)
     - pt: Portuguese (Brazilian)
@@ -161,7 +165,7 @@ def generate_speech(
         lang: Language code - "en" for English or "pt" for Portuguese
     
     Returns:
-        str: Path to the generated audio file, or error message
+        str: Response containing [AUDIO:path] marker and text transcript
     
     Examples:
         generate_speech("Hello, this is a test")
@@ -209,3 +213,56 @@ def generate_speech(
     except Exception as e:
         logger.error(f"[MEDIA] Speech generation failed: {e}")
         return f"Failed to generate speech: {str(e)}"
+
+
+def transcribe_audio(audio_file_path: str) -> str:
+    """Transcribe audio to text using Whisper ASR service.
+    
+    This is NOT a tool - it's a utility function used by the Telegram bot
+    to convert voice messages to text before sending to the agent.
+    
+    Args:
+        audio_file_path: Path to audio file (local path or URL)
+    
+    Returns:
+        Transcribed text or error message
+    """
+    try:
+        import httpx
+        from pathlib import Path
+        
+        whisper_url = settings.WHISPER_SERVICE_URL
+        
+        if not whisper_url:
+            logger.error("[MEDIA] WHISPER_SERVICE_URL not configured")
+            return "[Error: Speech-to-text service not configured]"
+        
+        logger.info(f"[MEDIA] Transcribing audio with Whisper: {audio_file_path}")
+        
+        # Check if file exists locally
+        audio_path = Path(audio_file_path)
+        if not audio_path.exists():
+            logger.error(f"[MEDIA] Audio file not found: {audio_path}")
+            return f"[Error: Audio file not found]"
+        
+        # Send to Whisper service
+        with httpx.Client(timeout=60) as client:
+            with open(audio_path, 'rb') as audio_file:
+                files = {'audio_file': (audio_path.name, audio_file, 'audio/ogg')}
+                response = client.post(
+                    f"{whisper_url}/asr",
+                    files=files,
+                    params={'task': 'transcribe', 'output': 'txt'}
+                )
+                
+                if response.status_code == 200:
+                    transcribed_text = response.text.strip()
+                    logger.info(f"[MEDIA] Transcription successful: {transcribed_text[:100]}")
+                    return transcribed_text
+                else:
+                    logger.error(f"[MEDIA] Whisper API error: {response.status_code} - {response.text}")
+                    return f"[Error: Transcription failed - {response.status_code}]"
+                    
+    except Exception as e:
+        logger.error(f"[MEDIA] Transcription failed: {e}")
+        return f"[Error: Failed to transcribe audio - {str(e)}]"
