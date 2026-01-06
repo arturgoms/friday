@@ -303,16 +303,134 @@ EXTERNAL_SERVICES = [
 
 
 # ==============================================================================
-# Insights Configuration
+# Awareness Engine Configuration
 # ==============================================================================
 
-INSIGHTS = {
-    "collection": {
-        "health": {"interval_seconds": 300, "enabled": True},
-        "calendar": {"interval_seconds": 120, "enabled": True},
-        "homelab": {"interval_seconds": 120, "enabled": True},
-        "weather": {"interval_seconds": 600, "enabled": True},
+AWARENESS = {
+    # Data source tools - atomic tools that return dict, saved as snapshots
+    "data_sources": [
+        {
+            "name": "health_monitoring",
+            "tool": "get_current_health_data",
+            "schedule": "*/5 * * * *",  # Every 5 minutes
+            "enabled": True,
+            "analyzers": ["stress_monitor", "threshold"],
+            "description": "Current health metrics from Garmin",
+        },
+        {
+            "name": "sleep_tracking",
+            "tool": "get_sleep_snapshot",
+            "schedule": "0 */2 * * *",  # Every 2 hours
+            "enabled": True,
+            "analyzers": ["sleep_correlator"],
+            "description": "Latest sleep data",
+        },
+        {
+            "name": "calendar_sync",
+            "tool": "get_calendar_snapshot",
+            "schedule": "*/10 * * * *",  # Every 10 minutes
+            "enabled": True,
+            "analyzers": ["calendar_reminder"],
+            "description": "Upcoming calendar events",
+        },
+        {
+            "name": "weather_updates",
+            "tool": "get_weather_data",
+            "schedule": "0 */1 * * *",  # Every hour
+            "enabled": True,
+            "analyzers": [],
+            "description": "Current weather conditions",
+        },
+        {
+            "name": "system_monitoring",
+            "tool": "get_system_resources_data",
+            "schedule": "*/5 * * * *",  # Every 5 minutes
+            "enabled": True,
+            "analyzers": ["threshold", "resource_trend"],
+            "description": "System resources (disk, CPU, memory)",
+        },
+    ],
+    
+    # Scheduled reports - composite tools that return formatted strings
+    "scheduled_reports": [
+        {
+            "name": "morning_briefing",
+            "tool": "get_morning_report",
+            "schedule": "0 10 * * *",  # Daily at 10:00 AM
+            "enabled": True,
+            "channels": ["telegram"],
+            "description": "Daily morning briefing with health, calendar, weather",
+        },
+        {
+            "name": "evening_report",
+            "tool": "get_evening_report",
+            "schedule": "0 21 * * *",  # Daily at 9:00 PM
+            "enabled": True,
+            "channels": ["telegram"],
+            "description": "Evening report with sleep recommendation",
+        },
+        {
+            "name": "journal_thread",
+            "tool": "create_journal_thread",
+            "schedule": "0 10 * * *",  # Daily at 10:00 AM
+            "enabled": True,
+            "channels": ["telegram"],
+            "description": "Create daily journal thread for reflections",
+        },
+        {
+            "name": "daily_note",
+            "tool": "generate_daily_note",
+            "schedule": "59 23 * * *",  # Daily at 11:59 PM
+            "enabled": True,
+            "channels": ["vault"],
+            "description": "Generate daily journal note in Obsidian",
+        },
+    ],
+    
+    # Analyzer configuration
+    "analyzers": {
+        "threshold": {
+            "enabled": True,
+            "description": "Alert when metrics exceed configured thresholds",
+        },
+        "stress_monitor": {
+            "enabled": True,
+            "sustained_minutes": 120,  # Alert if stress high for 2 hours
+            "description": "Monitor sustained high stress periods",
+        },
+        "calendar_reminder": {
+            "enabled": True,
+            "remind_minutes": [60, 15],  # Remind 1 hour and 15 minutes before
+            "description": "Send reminders for upcoming events",
+        },
+        "sleep_correlator": {
+            "enabled": True,
+            "min_days": 7,
+            "description": "Find correlations between activities and sleep quality",
+        },
+        "exercise_impact": {
+            "enabled": True,
+            "min_samples": 5,
+            "description": "Analyze how exercise affects recovery and energy",
+        },
+        "resource_trend": {
+            "enabled": True,
+            "alert_days": 30,
+            "description": "Alert on concerning resource usage trends",
+        },
     },
+    
+    # Decision engine settings
+    "decision": {
+        "max_reach_outs_per_day": 5,
+        "quiet_hours": {"start": "22:00", "end": "08:00"},
+        "cooldown_minutes": 60,
+        "batch_low_priority": True,
+        "min_confidence": 0.7,
+        "scheduled_reports_respect_quiet_hours": False,  # Scheduled reports ignore quiet hours
+    },
+    
+    # Thresholds for alerts
     "thresholds": {
         "disk_percent": {"warning": 85, "critical": 95},
         "memory_percent": {"warning": 90, "critical": 95},
@@ -323,47 +441,14 @@ INSIGHTS = {
         "garmin_sync_stale_hours": 12,
         "services_down": {"warning": 1, "critical": 3},
     },
-    "analyzers": {
-        "threshold": {"enabled": True},
-        "stress_monitor": {"enabled": True},
-        "calendar_reminder": {"enabled": True},
-        "sleep_correlator": {"enabled": True, "min_days": 7},
-        "exercise_impact": {"enabled": True, "min_samples": 5},
-        "resource_trend": {"enabled": True, "alert_days": 30},
-        "weekly_digest": {"enabled": True},
-    },
-    "decision": {
-        "max_reach_outs_per_day": 5,
-        "quiet_hours": {"start": "22:00", "end": "08:00"},
-        "cooldown_minutes": 60,
-        "batch_low_priority": True,
-        "min_confidence": 0.7,
-    },
-    "delivery": {
-        "morning_report": {"enabled": True, "time": "10:00"},
-        "evening_report": {"enabled": True, "time": "21:00"},
-        "weekly_report": {"enabled": True, "day": "sunday", "time": "20:00"},
-        "journal_thread": {"enabled": True, "time": "10:00"},
-        "daily_note": {"enabled": True, "time": "23:59"},
-    },
-    "journal": {
-        "habits": [
-            "Read",
-            "Exercise",
-            "Quality time with wife",
-            "Quality time with pets",
-            "Play games",
-            "Meditation",
-        ],
-        "health_targets": {"sleep_hours": 7, "stress_avg": 40, "steps": 8000},
-    },
-    "timezone": "America/Sao_Paulo",
+    
+    # Storage settings
     "snapshot_retention_days": 90,
 }
 
 
 # ==============================================================================
-# Schedules Configuration
+# Legacy Schedules Configuration (DEPRECATED - use AWARENESS instead)
 # ==============================================================================
 
 SCHEDULES = [

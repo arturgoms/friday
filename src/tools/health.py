@@ -31,22 +31,24 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 @agent.tool_plain
-def get_recent_runs(limit: int = 10, days: int = 30) -> str:
+def get_recent_runs(limit: int = 10, days: int = 30) -> Dict[str, Any]:
     """Get recent running activities with pace, HR, distance, and duration.
+    
+    Atomic data tool that returns structured running activity data.
     
     Args:
         limit: Number of runs to return (default: 10)
         days: Look back period in days (default: 30)
     
     Returns:
-        Recent running activities with details
+        Dict with list of runs and summary statistics
     """
     start = datetime.now(settings.TIMEZONE) - timedelta(days=days)
     start_str = start.strftime('%Y-%m-%dT%H:%M:%SZ')
     
     query = f"""
     SELECT activityName, distance, movingDuration, averageSpeed, 
-           averageHR, maxHR, calories, elevationGain, aerobicTE
+           averageHR, maxHR, calories, elevationGain, aerobicTE, time
     FROM ActivitySummary
     WHERE time >= '{start_str}'
     AND activityType = 'running'
@@ -57,34 +59,42 @@ def get_recent_runs(limit: int = 10, days: int = 30) -> str:
     points = _query(query)
     
     if not points:
-        return "No running data found for this period"
+        return {"error": "No running data found for this period"}
     
-    lines = [f"Recent Runs (last {days} days):", "=" * 50]
-    
+    runs = []
     for p in points:
-        speed = p.get("averageSpeed", 0)
-        distance_km = round(p.get("distance", 0) / 1000, 2)
-        duration = format_duration(p.get("movingDuration", 0))
-        pace = format_pace(speed)
-        avg_hr = int(p.get("averageHR", 0) or 0)
-        
-        lines.append(f"\n{p.get('activityName', 'Run')} - {p.get('time', '').split('T')[0]}")
-        lines.append(f"  Distance: {distance_km} km | Duration: {duration} | Pace: {pace}")
-        lines.append(f"  Avg HR: {avg_hr} bpm | Calories: {int(p.get('calories', 0) or 0)}")
+        runs.append({
+            "name": p.get('activityName', 'Run'),
+            "date": p.get('time', '').split('T')[0],
+            "distance_km": round(p.get("distance", 0) / 1000, 2),
+            "duration_seconds": int(p.get("movingDuration", 0) or 0),
+            "average_speed_mps": round(p.get("averageSpeed", 0), 2),
+            "average_hr_bpm": int(p.get("averageHR", 0) or 0),
+            "max_hr_bpm": int(p.get("maxHR", 0) or 0),
+            "calories": int(p.get('calories', 0) or 0),
+            "elevation_gain_m": int(p.get('elevationGain', 0) or 0),
+            "aerobic_te": round(p.get('aerobicTE', 0) or 0, 1)
+        })
     
-    lines.append(f"\nTotal: {len(points)} runs")
-    return "\n".join(lines)
+    return {
+        "runs": runs,
+        "total_runs": len(runs),
+        "period_days": days,
+        "timestamp": datetime.now(settings.TIMEZONE).isoformat()
+    }
 
 
 @agent.tool_plain
-def get_training_load(weeks: int = 4) -> str:
+def get_training_load_report(weeks: int = 4) -> str:
     """Analyze weekly training load: mileage, time, and intensity.
+    
+    COMPOSITE REPORT: Returns formatted string for display.
     
     Args:
         weeks: Number of weeks to analyze (default: 4)
     
     Returns:
-        Weekly training load breakdown
+        Weekly training load breakdown as formatted string
     """
     lines = [f"Training Load (Last {weeks} Weeks):", "=" * 50]
     total_km = 0
@@ -127,18 +137,20 @@ def get_training_load(weeks: int = 4) -> str:
 
 
 @agent.tool_plain
-def get_vo2max() -> str:
+def get_vo2max() -> Dict[str, Any]:
     """Get current VO2 Max and recent trend.
     
+    Atomic data tool that returns structured VO2 Max data.
+    
     Returns:
-        Current VO2 Max value and trend information
+        Dict with current vo2max, trend, and change over 30 days
     """
     # Get latest VO2 Max
     query = "SELECT vo2Max FROM DailyStats WHERE vo2Max > 0 ORDER BY time DESC LIMIT 1"
     points = _query(query)
     
     if not points:
-        return "No VO2 Max data found"
+        return {"error": "No VO2 Max data found"}
     
     current = round(points[0].get("vo2Max", 0), 1)
     
@@ -155,20 +167,19 @@ def get_vo2max() -> str:
     if len(points) > 1:
         values = [p.get("vo2Max", 0) for p in points if p.get("vo2Max")]
         first = values[0]
-        change = current - first
-        trend = "↑ improving" if change > 0 else "↓ declining" if change < 0 else "→ stable"
+        change = round(current - first, 1)
+        trend = "improving" if change > 0 else "declining" if change < 0 else "stable"
     else:
-        trend = "insufficient data"
+        trend = "insufficient_data"
         change = 0
     
-    lines = [
-        "VO2 Max Status:",
-        "=" * 30,
-        f"Current: {current} ml/kg/min",
-        f"Trend (30 days): {trend} ({'+' if change > 0 else ''}{round(change, 1)})",
-    ]
-    
-    return "\n".join(lines)
+    return {
+        "current": current,
+        "unit": "ml/kg/min",
+        "trend_30d": trend,
+        "change_30d": change,
+        "timestamp": datetime.now(settings.TIMEZONE).isoformat()
+    }
 
 
 # =============================================================================
@@ -176,23 +187,24 @@ def get_vo2max() -> str:
 # =============================================================================
 
 @agent.tool_plain
-def get_sleep_summary(days: int = 7) -> str:
+def get_sleep_summary(days: int = 7) -> Dict[str, Any]:
     """Get sleep analysis including quality, duration, and stages.
+    
+    Atomic data tool that returns structured sleep data.
     
     Args:
         days: Number of days to analyze (default: 7)
     
     Returns:
-        Sleep summary with quality scores and stage breakdown
+        Dict with sleep data including daily breakdown and averages
     """
     query = f"SELECT * FROM SleepSummary ORDER BY time DESC LIMIT {days}"
     points = _query(query)
     
     if not points:
-        return "No sleep data found"
+        return {"error": "No sleep data found"}
     
-    lines = [f"Sleep Summary (Last {days} Days):", "=" * 50]
-    
+    sleep_data = []
     total_hours = []
     scores = []
     
@@ -200,6 +212,7 @@ def get_sleep_summary(days: int = 7) -> str:
         deep = p.get("deepSleepSeconds", 0) or 0
         light = p.get("lightSleepSeconds", 0) or 0
         rem = p.get("remSleepSeconds", 0) or 0
+        awake = p.get("awakeSleepSeconds", 0) or 0
         total = deep + light + rem
         hours = total / 3600
         total_hours.append(hours)
@@ -207,50 +220,64 @@ def get_sleep_summary(days: int = 7) -> str:
         score = p.get("sleepScore", 0) or 0
         scores.append(score)
         
-        date = p.get("time", "").split("T")[0]
-        lines.append(f"\n{date}: {round(hours, 1)}h | Score: {score}")
-        lines.append(f"  Deep: {format_duration(deep)} | Light: {format_duration(light)} | REM: {format_duration(rem)}")
+        sleep_data.append({
+            "date": p.get("time", "").split("T")[0],
+            "total_hours": round(hours, 2),
+            "score": int(score),
+            "deep_seconds": int(deep),
+            "light_seconds": int(light),
+            "rem_seconds": int(rem),
+            "awake_seconds": int(awake)
+        })
     
     avg_hours = sum(total_hours) / len(total_hours) if total_hours else 0
     avg_score = sum(scores) / len(scores) if scores else 0
     
-    lines.append(f"\n{'=' * 50}")
-    lines.append(f"Average: {round(avg_hours, 1)} hours | Score: {round(avg_score, 0)}")
-    
-    return "\n".join(lines)
+    return {
+        "sleep_nights": sleep_data,
+        "period_days": days,
+        "average_hours": round(avg_hours, 2),
+        "average_score": round(avg_score, 0),
+        "timestamp": datetime.now(settings.TIMEZONE).isoformat()
+    }
 
 
 @agent.tool_plain
-def get_recovery_status() -> str:
+def get_recovery_status() -> Dict[str, Any]:
     """Get current recovery status including body battery, HRV, and training readiness.
     
+    Atomic data tool that returns structured recovery metrics.
+    
     Returns:
-        Current recovery metrics and recommendations
+        Dict with recovery metrics: training_readiness, body_battery, hrv, stress
     """
-    lines = ["Recovery Status:", "=" * 50]
+    result = {
+        "timestamp": datetime.now(settings.TIMEZONE).isoformat()
+    }
     
     # Training Readiness
     query = "SELECT score, recoveryTime, hrvFactorPercent, level FROM TrainingReadiness ORDER BY time DESC LIMIT 1"
     points = _query(query)
     if points:
         p = points[0]
-        lines.append(f"\nTraining Readiness: {p.get('level', 'Unknown')} ({int(p.get('score', 0))})")
-        lines.append(f"  Recovery time needed: {int(p.get('recoveryTime', 0))} hours")
-        lines.append(f"  HRV factor: {int(p.get('hrvFactorPercent', 0))}%")
+        result["training_readiness"] = {
+            "score": int(p.get('score', 0) or 0),
+            "level": p.get('level', 'unknown'),
+            "recovery_time_hours": int(p.get('recoveryTime', 0) or 0),
+            "hrv_factor_percent": int(p.get('hrvFactorPercent', 0) or 0)
+        }
     
     # Body Battery
     query = "SELECT bodyBatteryAtWakeTime FROM DailyStats ORDER BY time DESC LIMIT 1"
     points = _query(query)
     if points:
-        bb = int(points[0].get("bodyBatteryAtWakeTime", 0) or 0)
-        lines.append(f"\nBody Battery at Wake: {bb}")
+        result["body_battery_at_wake"] = int(points[0].get("bodyBatteryAtWakeTime", 0) or 0)
     
     # HRV
     query = "SELECT avgOvernightHrv FROM SleepSummary ORDER BY time DESC LIMIT 1"
     points = _query(query)
     if points:
-        hrv = int(points[0].get("avgOvernightHrv", 0) or 0)
-        lines.append(f"Overnight HRV: {hrv} ms")
+        result["overnight_hrv_ms"] = int(points[0].get("avgOvernightHrv", 0) or 0)
     
     # Stress
     query = "SELECT stressAvg FROM DailyStats ORDER BY time DESC LIMIT 1"
@@ -258,26 +285,31 @@ def get_recovery_status() -> str:
     if points:
         stress = int(points[0].get("stressAvg", 0) or 0)
         stress_level = "low" if stress < 30 else "moderate" if stress < 50 else "high"
-        lines.append(f"Stress Level: {stress_level} ({stress})")
+        result["stress"] = {
+            "average": stress,
+            "level": stress_level
+        }
     
-    return "\n".join(lines)
+    return result
 
 
 @agent.tool_plain
-def get_hrv_trend(days: int = 14) -> str:
+def get_hrv_trend(days: int = 14) -> Dict[str, Any]:
     """Analyze heart rate variability patterns for recovery assessment.
+    
+    Atomic data tool that returns structured HRV trend data.
     
     Args:
         days: Number of days to analyze (default: 14)
     
     Returns:
-        HRV trend analysis
+        Dict with HRV readings, average, range, and trend
     """
     query = f"SELECT avgOvernightHrv, time FROM SleepSummary ORDER BY time DESC LIMIT {days}"
     points = _query(query)
     
     if not points:
-        return "No HRV data found"
+        return {"error": "No HRV data found"}
     
     hrv_data = []
     for p in points:
@@ -285,13 +317,13 @@ def get_hrv_trend(days: int = 14) -> str:
         if hrv and hrv > 0:
             hrv_data.append({
                 "date": p.get("time", "").split("T")[0],
-                "hrv": int(hrv)
+                "hrv_ms": int(hrv)
             })
     
     if not hrv_data:
-        return "No valid HRV readings"
+        return {"error": "No valid HRV readings"}
     
-    values = [h["hrv"] for h in hrv_data]
+    values = [h["hrv_ms"] for h in hrv_data]
     avg_hrv = sum(values) / len(values)
     
     # Calculate trend
@@ -299,27 +331,24 @@ def get_hrv_trend(days: int = 14) -> str:
     older_avg = sum(values[7:14]) / max(1, len(values[7:14])) if len(values) > 7 else recent_avg
     
     if recent_avg > older_avg:
-        trend = "↑ improving"
+        trend = "improving"
     elif recent_avg < older_avg:
-        trend = "↓ declining"
+        trend = "declining"
     else:
-        trend = "→ stable"
+        trend = "stable"
     
-    lines = [
-        f"HRV Analysis (Last {days} Days):",
-        "=" * 40,
-        f"Current: {values[0]} ms",
-        f"Average: {round(avg_hrv, 0)} ms",
-        f"Range: {min(values)} - {max(values)} ms",
-        f"Trend: {trend}",
-        "",
-        "Recent readings:"
-    ]
-    
-    for h in hrv_data[:7]:
-        lines.append(f"  {h['date']}: {h['hrv']} ms")
-    
-    return "\n".join(lines)
+    return {
+        "readings": hrv_data,
+        "current_ms": values[0],
+        "average_ms": round(avg_hrv, 0),
+        "min_ms": min(values),
+        "max_ms": max(values),
+        "trend": trend,
+        "recent_avg_ms": round(recent_avg, 0),
+        "older_avg_ms": round(older_avg, 0),
+        "period_days": days,
+        "timestamp": datetime.now(settings.TIMEZONE).isoformat()
+    }
 
 
 # =============================================================================
@@ -327,14 +356,16 @@ def get_hrv_trend(days: int = 14) -> str:
 # =============================================================================
 
 @agent.tool_plain
-def get_weekly_health(weeks_ago: int = 0) -> str:
+def get_weekly_health_report(weeks_ago: int = 0) -> str:
     """Get comprehensive weekly health overview.
+    
+    COMPOSITE REPORT: Returns formatted string for display.
     
     Args:
         weeks_ago: 0 = current week, 1 = last week, etc.
     
     Returns:
-        Weekly health digest including activity, sleep, stress, and recovery
+        Weekly health digest including activity, sleep, stress, and recovery as formatted string
     """
     week_start = datetime.now(settings.TIMEZONE) - timedelta(weeks=weeks_ago+1)
     week_end = datetime.now(settings.TIMEZONE) - timedelta(weeks=weeks_ago)
@@ -404,25 +435,27 @@ def get_weekly_health(weeks_ago: int = 0) -> str:
 
 
 @agent.tool_plain
-def get_stress_levels(days: int = 7) -> str:
+def get_stress_levels(days: int = 7) -> Dict[str, Any]:
     """Analyze stress patterns.
+    
+    Atomic data tool that returns structured stress data.
     
     Args:
         days: Number of days to analyze (default: 7)
     
     Returns:
-        Stress level analysis
+        Dict with daily stress levels, durations, and overall statistics
     """
     # Get daily stress durations
-    query = f"SELECT highStressDuration, mediumStressDuration, lowStressDuration, restStressDuration FROM DailyStats ORDER BY time DESC LIMIT {days}"
+    query = f"SELECT highStressDuration, mediumStressDuration, lowStressDuration, restStressDuration, time FROM DailyStats ORDER BY time DESC LIMIT {days}"
     points = _query(query)
     
     if not points:
-        return "No stress data found"
+        return {"error": "No stress data found"}
     
-    lines = [f"Stress Analysis (Last {days} Days):", "=" * 40]
-    
+    daily_stress = []
     stress_avgs = []
+    
     for p in points:
         date = p.get("time", "").split("T")[0]
         
@@ -431,10 +464,6 @@ def get_stress_levels(days: int = 7) -> str:
         med_sec = p.get("mediumStressDuration", 0) or 0
         low_sec = p.get("lowStressDuration", 0) or 0
         rest_sec = p.get("restStressDuration", 0) or 0
-        
-        # Convert to minutes
-        high_min = int(high_sec / 60)
-        rest_min = int(rest_sec / 60)
         
         # Calculate weighted average stress
         total_sec = high_sec + med_sec + low_sec + rest_sec
@@ -445,44 +474,54 @@ def get_stress_levels(days: int = 7) -> str:
             avg = 0
         stress_avgs.append(avg)
         
-        lines.append(f"\n{date}: Avg {avg}")
-        lines.append(f"  High stress: {high_min}m | Rest: {rest_min}m")
+        daily_stress.append({
+            "date": date,
+            "average": avg,
+            "high_duration_seconds": int(high_sec),
+            "medium_duration_seconds": int(med_sec),
+            "low_duration_seconds": int(low_sec),
+            "rest_duration_seconds": int(rest_sec)
+        })
     
-    if stress_avgs:
-        overall = sum(stress_avgs) / len(stress_avgs)
-        level = "low" if overall < 30 else "moderate" if overall < 50 else "high"
-        lines.append(f"\n{'=' * 40}")
-        lines.append(f"Overall: {level} (avg: {round(overall, 0)})")
+    overall = sum(stress_avgs) / len(stress_avgs) if stress_avgs else 0
+    level = "low" if overall < 30 else "moderate" if overall < 50 else "high"
     
     # Get current stress from intraday
     current_query = "SELECT stressLevel FROM StressIntraday ORDER BY time DESC LIMIT 1"
     current_points = _query(current_query)
-    if current_points:
-        current = current_points[0].get("stressLevel", 0)
-        lines.append(f"Current stress: {current}/100")
+    current_stress = int(current_points[0].get("stressLevel", 0)) if current_points else None
     
-    return "\n".join(lines)
+    return {
+        "daily_stress": daily_stress,
+        "overall_average": round(overall, 0),
+        "overall_level": level,
+        "current_stress": current_stress,
+        "period_days": days,
+        "timestamp": datetime.now(settings.TIMEZONE).isoformat()
+    }
 
 
 @agent.tool_plain
-def get_heart_rate_summary(days: int = 14) -> str:
+def get_heart_rate_summary(days: int = 14) -> Dict[str, Any]:
     """Get resting heart rate and cardiovascular health trends.
+    
+    Atomic data tool that returns structured heart rate data.
     
     Args:
         days: Number of days to analyze (default: 14)
     
     Returns:
-        Heart rate trend analysis
+        Dict with daily RHR readings, averages, and health assessment
     """
-    query = f"SELECT restingHeartRate, avgOvernightHrv FROM SleepSummary ORDER BY time DESC LIMIT {days}"
+    query = f"SELECT restingHeartRate, avgOvernightHrv, time FROM SleepSummary ORDER BY time DESC LIMIT {days}"
     points = _query(query)
     
     if not points:
-        return "No heart rate data found"
+        return {"error": "No heart rate data found"}
     
-    lines = [f"Heart Rate Summary (Last {days} Days):", "=" * 45]
-    
+    daily_readings = []
     rhr_values = []
+    
     for p in points:
         date = p.get("time", "").split("T")[0]
         rhr = int(p.get("restingHeartRate", 0) or 0)
@@ -490,18 +529,27 @@ def get_heart_rate_summary(days: int = 14) -> str:
         
         if rhr > 0:
             rhr_values.append(rhr)
-            lines.append(f"{date}: RHR {rhr} bpm | HRV {hrv} ms")
+            daily_readings.append({
+                "date": date,
+                "resting_hr_bpm": rhr,
+                "hrv_ms": hrv
+            })
     
-    if rhr_values:
-        avg_rhr = sum(rhr_values) / len(rhr_values)
-        health = "excellent ❤️" if avg_rhr < 55 else "good 💚" if avg_rhr < 65 else "average 💛"
-        
-        lines.append(f"\n{'=' * 45}")
-        lines.append(f"Average RHR: {round(avg_rhr, 0)} bpm")
-        lines.append(f"Range: {min(rhr_values)} - {max(rhr_values)} bpm")
-        lines.append(f"Cardiovascular health: {health}")
+    if not rhr_values:
+        return {"error": "No valid heart rate readings"}
     
-    return "\n".join(lines)
+    avg_rhr = sum(rhr_values) / len(rhr_values)
+    health_level = "excellent" if avg_rhr < 55 else "good" if avg_rhr < 65 else "average"
+    
+    return {
+        "readings": daily_readings,
+        "average_rhr_bpm": round(avg_rhr, 0),
+        "min_rhr_bpm": min(rhr_values),
+        "max_rhr_bpm": max(rhr_values),
+        "health_level": health_level,
+        "period_days": days,
+        "timestamp": datetime.now(settings.TIMEZONE).isoformat()
+    }
 
 
 # =============================================================================
@@ -509,18 +557,18 @@ def get_heart_rate_summary(days: int = 14) -> str:
 # =============================================================================
 
 @agent.tool_plain
-def get_activity_summary(days: int = 7) -> str:
+def get_activity_summary(days: int = 7) -> Dict[str, Any]:
     """Get all activities, steps, and calories for a period.
+    
+    Atomic data tool that returns structured activity data.
     
     Args:
         days: Number of days to analyze (default: 7)
     
     Returns:
-        Activity summary with steps, workouts, and calories
+        Dict with steps, workouts, and activity statistics
     """
     start = datetime.now(settings.TIMEZONE) - timedelta(days=days)
-    
-    lines = [f"Activity Summary (Last {days} Days):", "=" * 50]
     
     # Daily stats
     query = f"""
@@ -531,41 +579,52 @@ def get_activity_summary(days: int = 7) -> str:
     """
     points = _query(query)
     
+    steps_data = []
     if points:
-        steps = [p.get("totalSteps", 0) or 0 for p in points]
-        lines.append(f"\n👟 Steps:")
-        lines.append(f"   Total: {sum(steps):,}")
-        lines.append(f"   Average: {round(sum(steps)/len(steps), 0):,}/day")
+        steps_data = [int(p.get("totalSteps", 0) or 0) for p in points]
     
     # Workouts
     query = f"""
-    SELECT activityName, activityType, distance, movingDuration, calories
+    SELECT activityName, activityType, distance, movingDuration, calories, time
     FROM ActivitySummary
     WHERE time >= '{start.strftime('%Y-%m-%dT%H:%M:%SZ')}'
     ORDER BY time DESC
     """
     points = _query(query)
     
+    workouts = []
     if points:
-        lines.append(f"\n🏋️ Workouts ({len(points)} total):")
-        for p in points[:5]:  # Show last 5
-            name = p.get("activityName", "Activity")
-            atype = p.get("activityType", "")
-            dist = round((p.get("distance", 0) or 0) / 1000, 1)
-            dur = format_duration(p.get("movingDuration", 0) or 0)
-            cal = int(p.get("calories", 0) or 0)
-            
-            lines.append(f"   {name} ({atype}): {dist}km | {dur} | {cal} cal")
+        for p in points:
+            workouts.append({
+                "name": p.get("activityName", "Activity"),
+                "type": p.get("activityType", ""),
+                "date": p.get("time", "").split("T")[0],
+                "distance_km": round((p.get("distance", 0) or 0) / 1000, 2),
+                "duration_seconds": int(p.get("movingDuration", 0) or 0),
+                "calories": int(p.get("calories", 0) or 0)
+            })
     
-    return "\n".join(lines)
+    return {
+        "steps": {
+            "total": sum(steps_data) if steps_data else 0,
+            "average_per_day": round(sum(steps_data) / len(steps_data), 0) if steps_data else 0,
+            "daily_values": steps_data
+        },
+        "workouts": workouts,
+        "workout_count": len(workouts),
+        "period_days": days,
+        "timestamp": datetime.now(settings.TIMEZONE).isoformat()
+    }
 
 
 @agent.tool_plain
-def get_garmin_sync_status() -> str:
+def get_garmin_sync_status() -> Dict[str, Any]:
     """Check when Garmin data was last synced to InfluxDB.
     
+    Atomic data tool that returns structured sync status data.
+    
     Returns:
-        Last sync time and status
+        Dict with sync status including last_sync_time, hours_ago, status, last_hr
     """
     # Query for the most recent heart rate data point
     query = 'SELECT last("HeartRate") FROM "HeartRateIntraday"'
@@ -573,14 +632,14 @@ def get_garmin_sync_status() -> str:
     points = _query(query)
     
     if not points:
-        return "No Garmin data found in InfluxDB. Sync may not be configured."
+        return {"error": "No Garmin data found in InfluxDB. Sync may not be configured."}
     
     point = points[0]
     last_time_str = point.get("time", "")
     last_hr = point.get("last", 0)
     
     if not last_time_str:
-        return "Could not determine last sync time."
+        return {"error": "Could not determine last sync time."}
     
     # Parse the timestamp
     try:
@@ -588,24 +647,25 @@ def get_garmin_sync_status() -> str:
         now = datetime.now(timezone.utc)
         hours_ago = (now - last_time).total_seconds() / 3600
         
-        # Convert to BRT for display
-        last_time_brt = last_time.astimezone(BRT)
-        time_str = last_time_brt.strftime("%Y-%m-%d %H:%M BRT")
+        # Convert to local timezone for display
+        last_time_local = last_time.astimezone(settings.TIMEZONE)
         
         if hours_ago < 1:
-            status = "Current"
+            status = "current"
         elif hours_ago < 6:
-            status = "Recent"
+            status = "recent"
         elif hours_ago < 12:
-            status = "Getting stale"
+            status = "stale"
         else:
-            status = "STALE - needs attention"
+            status = "critical"
         
-        return (
-            f"Garmin Sync Status: {status}\n"
-            f"Last sync: {time_str} ({hours_ago:.1f} hours ago)\n"
-            f"Last heart rate: {last_hr} bpm"
-        )
+        return {
+            "status": status,
+            "last_sync_time": last_time_local.isoformat(),
+            "hours_ago": round(hours_ago, 1),
+            "last_heart_rate": int(last_hr),
+            "timestamp": datetime.now(settings.TIMEZONE).isoformat()
+        }
         
     except Exception as e:
-        return f"Error parsing sync time: {e}"
+        return {"error": f"Error parsing sync time: {e}"}

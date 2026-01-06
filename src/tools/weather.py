@@ -54,8 +54,10 @@ def _format_temp(temp: float) -> str:
 
 
 @agent.tool_plain
-def get_current_weather(city: str = "") -> str:
+def get_current_weather(city: str = "") -> Dict[str, Any]:
     """Get current weather conditions for Artur's city (Curitiba).
+    
+    Atomic data tool that returns a dict. Data is automatically saved as snapshot.
     
     Call this with NO arguments to get weather for the default city.
     
@@ -63,11 +65,11 @@ def get_current_weather(city: str = "") -> str:
         city: Optional city name. Leave empty to use default (Curitiba).
     
     Returns:
-        Formatted current weather information
+        Dict with weather data (city, condition, temp, humidity, wind, etc.)
     """
     city = city or None  # Convert empty string to None
     if not WEATHER_API_KEY:
-        return "Weather API key not configured. Set WEATHER_API_KEY in .env"
+        return {"error": "Weather API key not configured"}
     
     city = city or WEATHER_CITY
     
@@ -88,37 +90,33 @@ def get_current_weather(city: str = "") -> str:
         main = data["main"]
         wind = data.get("wind", {})
         
-        condition = weather["main"]
-        description = weather["description"]
-        temp = main["temp"]
-        feels_like = main["feels_like"]
-        humidity = main["humidity"]
-        wind_speed = wind.get("speed", 0)
-        
-        emoji = _get_weather_emoji(condition)
-        
-        lines = [
-            f"Weather in {city} {emoji}",
-            "=" * 40,
-            f"Condition: {description.title()}",
-            f"Temperature: {_format_temp(temp)} (feels like {_format_temp(feels_like)})",
-            f"Humidity: {humidity}%",
-            f"Wind: {wind_speed} m/s",
-        ]
+        result = {
+            "city": city,
+            "condition": weather["main"],
+            "description": weather["description"],
+            "temp": main["temp"],
+            "feels_like": main["feels_like"],
+            "humidity": main["humidity"],
+            "pressure": main.get("pressure", 0),
+            "wind_speed": wind.get("speed", 0),
+            "wind_direction": wind.get("deg", 0),
+            "timestamp": datetime.now(settings.TIMEZONE).isoformat(),
+        }
         
         # Add rain info if present
         if "rain" in data:
-            rain_1h = data["rain"].get("1h", 0)
-            lines.append(f"Rain (1h): {rain_1h} mm")
+            result["rain_1h"] = data["rain"].get("1h", 0)
+        else:
+            result["rain_1h"] = 0
         
-        return "\n".join(lines)
+        return result
         
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
-            return f"City not found: {city}"
-        return f"Weather API error: HTTP {e.response.status_code}"
+            return {"error": f"City not found: {city}"}
+        return {"error": f"Weather API error: HTTP {e.response.status_code}"}
     except Exception as e:
-        return f"Error getting weather: {e}"
+        return {"error": f"Error getting weather: {e}"}
 
 
 @agent.tool_plain

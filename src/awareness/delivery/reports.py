@@ -9,20 +9,19 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from settings import settings
-def get_brt():
-    return settings.TIMEZONE
 from src.awareness.collectors import (
     CalendarCollector,
     HealthCollector,
     HomelabCollector,
     WeatherCollector,
 )
-from settings import settings
 from src.awareness.models import Category, DeliveryChannel, Insight, Priority
 from src.awareness.store import InsightsStore
 
 logger = logging.getLogger(__name__)
 
+def get_brt():
+    return settings.TIMEZONE
 
 class ReportGenerator:
     """

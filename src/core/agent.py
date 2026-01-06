@@ -5,8 +5,10 @@ Main AI agent using pydantic-ai with local LLM configuration.
 """
 
 import asyncio
+import functools
 import logging
 import sys
+import uuid
 import zoneinfo
 from datetime import date, datetime
 from pathlib import Path
@@ -146,7 +148,112 @@ def create_agent(
 # ==========================================
 
 # Create default agent instance for convenience
-agent = create_agent()
+_base_agent = create_agent()
+
+
+# ==========================================
+# ENHANCED TOOL DECORATOR WITH AUTO-SNAPSHOT
+# ==========================================
+
+# Store the original decorator
+_original_tool_plain = _base_agent.tool_plain
+
+
+def enhanced_tool_plain(func):
+    """Enhanced tool_plain decorator that auto-saves snapshots for all tool executions.
+    
+    All tool results are saved as snapshots, EXCEPT tools with '_report' in their name
+    (which are composite reports meant for display, not data storage).
+    
+    Args:
+        func: The function to decorate
+        
+    Returns:
+        Decorated function with auto-snapshot capability
+    """
+    # Check if this is a report tool (skip snapshot saving)
+    is_report = '_report' in func.__name__
+    
+    # Create wrapper FIRST, then register with pydantic-ai
+    @functools.wraps(func)
+    def sync_wrapper(*args, **kwargs):
+        """Sync wrapper for snapshot saving."""
+        result = func(*args, **kwargs)
+        
+        # Auto-save snapshot for all tools EXCEPT reports
+        if not is_report:
+            try:
+                from src.awareness.store import InsightsStore
+                from src.awareness.models import Snapshot
+                
+                # Convert result to dict if it's not already
+                if isinstance(result, dict):
+                    data = result
+                else:
+                    # Wrap non-dict results in a dict
+                    data = {"result": result, "type": type(result).__name__}
+                
+                store = InsightsStore()
+                snapshot = Snapshot(
+                    id=str(uuid.uuid4()),
+                    collector=func.__name__,
+                    timestamp=datetime.now(settings.TIMEZONE),
+                    data=data
+                )
+                store.save_snapshot(snapshot)
+                logger.debug(f"[SNAPSHOT] Auto-saved snapshot for {func.__name__}")
+            except Exception as e:
+                # Don't break the tool if snapshot save fails
+                logger.warning(f"[SNAPSHOT] Failed to save snapshot for {func.__name__}: {e}")
+        
+        return result
+    
+    @functools.wraps(func)
+    async def async_wrapper(*args, **kwargs):
+        """Async wrapper for snapshot saving."""
+        result = await func(*args, **kwargs)
+        
+        # Auto-save snapshot for all tools EXCEPT reports
+        if not is_report:
+            try:
+                from src.awareness.store import InsightsStore
+                from src.awareness.models import Snapshot
+                
+                # Convert result to dict if it's not already
+                if isinstance(result, dict):
+                    data = result
+                else:
+                    # Wrap non-dict results in a dict
+                    data = {"result": result, "type": type(result).__name__}
+                
+                store = InsightsStore()
+                snapshot = Snapshot(
+                    id=str(uuid.uuid4()),
+                    collector=func.__name__,
+                    timestamp=datetime.now(settings.TIMEZONE),
+                    data=data
+                )
+                store.save_snapshot(snapshot)
+                logger.debug(f"[SNAPSHOT] Auto-saved snapshot for {func.__name__}")
+            except Exception as e:
+                # Don't break the tool if snapshot save fails
+                logger.warning(f"[SNAPSHOT] Failed to save snapshot for {func.__name__}: {e}")
+        
+        return result
+    
+    # Choose the appropriate wrapper based on function type
+    if asyncio.iscoroutinefunction(func):
+        wrapper = async_wrapper
+    else:
+        wrapper = sync_wrapper
+    
+    # NOW register the wrapper with pydantic-ai (not the original func)
+    return _original_tool_plain(wrapper)
+
+
+# Replace the agent's tool_plain with our enhanced version
+_base_agent.tool_plain = enhanced_tool_plain
+agent = _base_agent
 
 
 # ==========================================
