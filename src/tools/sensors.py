@@ -16,22 +16,22 @@ if str(_parent_dir) not in sys.path:
 import logging
 import shutil
 import time
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import httpx
 
-from settings import settings
+from settings import EXTERNAL_SERVICES
 from src.core.agent import agent
 
 logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Hardware Sensors
+# Hardware Sensors - Atomic Data Tools
 # =============================================================================
 
 @agent.tool_plain
-def get_detailed_disk_usage(path: str = "/") -> str:
+def get_detailed_disk_usage(path: str = "/") -> Dict[str, Any]:
     """Get detailed disk usage information for a path.
 
     Use this for detailed disk space analysis beyond basic system info.
@@ -40,7 +40,7 @@ def get_detailed_disk_usage(path: str = "/") -> str:
         path: Path to check (default: root /)
 
     Returns:
-        Formatted disk usage information
+        Dict with disk usage metrics and status
     """
     try:
         total, used, free = shutil.disk_usage(path)
@@ -50,35 +50,35 @@ def get_detailed_disk_usage(path: str = "/") -> str:
         free_gb = round(free / (1024**3), 2)
         percent_used = round((used / total) * 100, 1)
 
-        result = [
-            f"💾 Disk Usage for {path}:",
-            f"━━━━━━━━━━━━━━━━━━━━",
-            f"Total:  {total_gb} GB",
-            f"Used:   {used_gb} GB ({percent_used}%)",
-            f"Free:   {free_gb} GB",
-        ]
-
-        # Add warning if usage is high
+        # Determine status
+        status = "normal"
         if percent_used > 90:
-            result.append("\n⚠️ WARNING: Disk usage is critically high!")
+            status = "critical"
         elif percent_used > 80:
-            result.append("\n⚠️ Disk usage is high")
+            status = "warning"
 
-        return "\n".join(result)
+        return {
+            "path": path,
+            "total_gb": total_gb,
+            "used_gb": used_gb,
+            "free_gb": free_gb,
+            "percent_used": percent_used,
+            "status": status,
+        }
 
     except Exception as e:
         logger.error(f"Error checking disk usage: {e}")
-        return f"❌ Error checking disk usage: {str(e)}"
+        return {"error": str(e), "path": path}
 
 
 @agent.tool_plain
-def get_detailed_memory_usage() -> str:
+def get_detailed_memory_usage() -> Dict[str, Any]:
     """Get detailed system memory usage.
 
     Use this for detailed memory analysis beyond basic system info.
 
     Returns:
-        Formatted memory usage information
+        Dict with memory usage metrics and status
     """
     try:
         with open("/proc/meminfo", "r") as f:
@@ -103,40 +103,37 @@ def get_detailed_memory_usage() -> str:
         swap_used_mb = swap_total_mb - swap_free_mb
         swap_percent = (swap_used_mb / swap_total_mb) * 100 if swap_total_mb > 0 else 0
 
-        result = [
-            "🧠 Memory Usage:",
-            "━━━━━━━━━━━━━━━━━━━━",
-            f"Total:     {round(total_mb, 2)} MB",
-            f"Used:      {round(used_mb, 2)} MB ({round(percent_used, 1)}%)",
-            f"Available: {round(available_mb, 2)} MB",
-        ]
-
-        if swap_total_mb > 0:
-            result.append(
-                f"\nSwap:      {round(swap_used_mb, 2)} MB / {round(swap_total_mb, 2)} MB ({round(swap_percent, 1)}%)"
-            )
-
-        # Add warning if usage is high
+        # Determine status
+        status = "normal"
         if percent_used > 90:
-            result.append("\n⚠️ WARNING: Memory usage is critically high!")
+            status = "critical"
         elif percent_used > 80:
-            result.append("\n⚠️ Memory usage is high")
+            status = "warning"
 
-        return "\n".join(result)
+        return {
+            "total_mb": round(total_mb, 2),
+            "used_mb": round(used_mb, 2),
+            "available_mb": round(available_mb, 2),
+            "percent_used": round(percent_used, 1),
+            "swap_total_mb": round(swap_total_mb, 2),
+            "swap_used_mb": round(swap_used_mb, 2),
+            "swap_percent": round(swap_percent, 1),
+            "status": status,
+        }
 
     except Exception as e:
         logger.error(f"Error checking memory usage: {e}")
-        return f"❌ Error checking memory usage: {str(e)}"
+        return {"error": str(e)}
 
 
 @agent.tool_plain
-def get_cpu_load() -> str:
+def get_cpu_load() -> Dict[str, Any]:
     """Get CPU load averages.
 
     Returns 1, 5, and 15 minute load averages.
 
     Returns:
-        Formatted CPU load information
+        Dict with CPU load metrics and status
     """
     try:
         with open("/proc/loadavg", "r") as f:
@@ -146,40 +143,39 @@ def get_cpu_load() -> str:
         load_5 = float(load_data[1])
         load_15 = float(load_data[2])
 
-        result = [
-            "⚙️ CPU Load Averages:",
-            "━━━━━━━━━━━━━━━━━━━━",
-            f"1 min:  {load_1}",
-            f"5 min:  {load_5}",
-            f"15 min: {load_15}",
-        ]
-
         # Get CPU core count for context
+        cpu_cores = 1
         try:
             with open("/proc/cpuinfo", "r") as f:
                 cpu_cores = len([line for line in f if "processor" in line])
-            result.append(f"\nCPU cores: {cpu_cores}")
-
-            # Warn if load is high relative to cores
-            if load_1 > cpu_cores * 0.8:
-                result.append("\n⚠️ High CPU load detected")
         except:
             pass
 
-        return "\n".join(result)
+        # Determine status based on load relative to cores
+        status = "normal"
+        if load_1 > cpu_cores * 0.8:
+            status = "high"
+
+        return {
+            "load_1min": load_1,
+            "load_5min": load_5,
+            "load_15min": load_15,
+            "cpu_cores": cpu_cores,
+            "status": status,
+        }
 
     except Exception as e:
         logger.error(f"Error checking CPU load: {e}")
-        return f"❌ Error checking CPU load: {str(e)}"
+        return {"error": str(e)}
 
 
 # =============================================================================
-# Homelab Service Monitoring
+# Homelab Service Monitoring - Atomic Data Tools
 # =============================================================================
 
 
 @agent.tool_plain
-def check_external_service(url: str, timeout: int = 10) -> str:
+def check_external_service(url: str, timeout: int = 10) -> Dict[str, Any]:
     """Check if an external service/URL is accessible.
 
     Use this to monitor specific web services, APIs, or homelab applications.
@@ -189,7 +185,7 @@ def check_external_service(url: str, timeout: int = 10) -> str:
         timeout: Request timeout in seconds (default: 10)
 
     Returns:
-        Service status information
+        Dict with service status and response metrics
     """
     try:
         start_time = time.time()
@@ -199,29 +195,42 @@ def check_external_service(url: str, timeout: int = 10) -> str:
             response_time_ms = int((time.time() - start_time) * 1000)
             
             # 405 Method Not Allowed means service is up, just doesn't accept GET
-            status = "✅ UP" if (response.status_code < 400 or response.status_code == 405) else "⚠️ DEGRADED"
-            if response.status_code >= 500:
-                status = "❌ DOWN"
+            if response.status_code < 400 or response.status_code == 405:
+                status = "up"
+            elif response.status_code >= 500 or response.status_code == 404:
+                status = "down"  # 5xx or 404 = down
+            else:
+                status = "degraded"  # Other 4xx = degraded
 
-            result = [
-                f"{status} - {url}",
-                f"━━━━━━━━━━━━━━━━━━━━",
-                f"Status: {response.status_code}",
-                f"Response time: {response_time_ms}ms",
-            ]
-
-            return "\n".join(result)
+            return {
+                "url": url,
+                "status": status,
+                "status_code": response.status_code,
+                "response_time_ms": response_time_ms,
+            }
 
     except httpx.TimeoutException:
-        return f"❌ TIMEOUT - {url}\nService did not respond within {timeout}s"
+        return {
+            "url": url,
+            "status": "timeout",
+            "error": f"Service did not respond within {timeout}s",
+        }
     except httpx.ConnectError:
-        return f"❌ DOWN - {url}\nCould not connect to service"
+        return {
+            "url": url,
+            "status": "down",
+            "error": "Could not connect to service",
+        }
     except Exception as e:
-        return f"❌ ERROR - {url}\n{str(e)}"
+        return {
+            "url": url,
+            "status": "error",
+            "error": str(e),
+        }
 
 
 @agent.tool_plain
-def get_glances_server_stats(server_url: str = "http://192.168.1.16:61208") -> str:
+def get_glances_server_stats(server_url: str = "http://192.168.1.16:61208") -> Dict[str, Any]:
     """Get hardware stats from a remote server running Glances.
 
     Use this to monitor remote server hardware (CPU, memory, disk).
@@ -230,14 +239,18 @@ def get_glances_server_stats(server_url: str = "http://192.168.1.16:61208") -> s
         server_url: Glances API URL (default: homelab server)
 
     Returns:
-        Server hardware statistics
+        Dict with server hardware statistics
     """
     try:
         with httpx.Client(timeout=5) as client:
             # Get status
             status_resp = client.get(f"{server_url}/api/4/status")
             if status_resp.status_code != 200:
-                return f"❌ Cannot reach Glances API at {server_url}"
+                return {
+                    "server_url": server_url,
+                    "error": "Cannot reach Glances API",
+                    "status": "unreachable",
+                }
 
             # Get CPU
             cpu_resp = client.get(f"{server_url}/api/4/cpu")
@@ -250,83 +263,116 @@ def get_glances_server_stats(server_url: str = "http://192.168.1.16:61208") -> s
             mem_percent = mem_data.get("percent", 0)
             mem_used_gb = mem_data.get("used", 0) / (1024**3)
             mem_total_gb = mem_data.get("total", 0) / (1024**3)
+            
             # Get load
             load_resp = client.get(f"{server_url}/api/4/load")
             load_data = load_resp.json()
             load_1 = load_data.get("min1", 0)
 
-            result = [
-                f"🖥️ Server Stats: {server_url}",
-                "━━━━━━━━━━━━━━━━━━━━",
-                f"CPU:    {cpu_percent}%",
-                f"Memory: {mem_percent}% ({round(mem_used_gb, 1)}/{round(mem_total_gb, 1)} GB)",
-                f"Load:   {load_1} (1min avg)",
-            ]
-
-            # Add warnings
+            # Determine overall status
+            status = "normal"
+            warnings = []
             if cpu_percent > 80:
-                result.append("\n⚠️ High CPU usage")
+                status = "warning"
+                warnings.append("high_cpu")
             if mem_percent > 80:
-                result.append("⚠️ High memory usage")
+                status = "warning"
+                warnings.append("high_memory")
 
-            return "\n".join(result)
+            return {
+                "server_url": server_url,
+                "status": status,
+                "cpu_percent": round(cpu_percent, 1),
+                "memory_percent": round(mem_percent, 1),
+                "memory_used_gb": round(mem_used_gb, 1),
+                "memory_total_gb": round(mem_total_gb, 1),
+                "load_1min": round(load_1, 2),
+                "warnings": warnings,
+            }
 
     except httpx.ConnectError:
-        return f"❌ Cannot connect to Glances at {server_url}"
+        return {
+            "server_url": server_url,
+            "status": "unreachable",
+            "error": "Cannot connect to Glances",
+        }
     except Exception as e:
         logger.error(f"Error getting Glances stats: {e}")
-        return f"❌ Error: {str(e)}"
+        return {
+            "server_url": server_url,
+            "status": "error",
+            "error": str(e),
+        }
 
 
 @agent.tool_plain
-def get_all_homelab_stats() -> str:
+def get_all_homelab_servers() -> Dict[str, Any]:
     """Get hardware stats from all configured homelab servers.
 
-    Checks all Glances servers configured in settings.
+    Checks all Glances servers (Portainer, TrueNAS, Friday).
 
     Returns:
-        Combined hardware statistics from all servers
+        Dict with stats from all servers
     """
     servers = [
-        ("Portainer Server", "http://192.168.1.16:61208"),
-        ("TrueNAS", "http://192.168.1.17:61208"),
-        ("Friday", "http://192.168.1.18:61208"),
+        {"name": "Portainer Server", "url": "http://192.168.1.16:61208"},
+        {"name": "TrueNAS", "url": "http://192.168.1.17:61208"},
+        {"name": "Friday", "url": "http://192.168.1.18:61208"},
     ]
 
-    results = ["🏠 Homelab Server Stats", "═" * 40]
+    results = []
+    total_warnings = 0
 
-    for name, url in servers:
-        results.append(f"\n📊 {name}:")
+    for server_info in servers:
+        name = server_info["name"]
+        url = server_info["url"]
+        
         stats = get_glances_server_stats(url)
-        # Remove the header from individual stats
-        stats_lines = stats.split("\n")[2:]  # Skip first 2 lines (header)
-        results.extend(stats_lines)
+        stats["server_name"] = name
+        
+        if stats.get("warnings"):
+            total_warnings += len(stats["warnings"])
+        
+        results.append(stats)
 
-    return "\n".join(results)
+    # Determine overall status
+    all_up = all(s.get("status") not in ["unreachable", "error"] for s in results)
+    has_warnings = any(s.get("status") == "warning" for s in results)
+    
+    overall_status = "normal"
+    if not all_up:
+        overall_status = "degraded"
+    elif has_warnings:
+        overall_status = "warning"
+
+    return {
+        "overall_status": overall_status,
+        "total_servers": len(servers),
+        "total_warnings": total_warnings,
+        "servers": results,
+    }
 
 
 @agent.tool_plain
-def check_all_external_services() -> str:
+def get_all_external_services() -> Dict[str, Any]:
     """Check status of all configured external services.
     
     Checks all homelab services configured in EXTERNAL_SERVICES.
     Returns a summary showing which services are up, down, or having issues.
     
     Returns:
-        Status summary of all external services
+        Dict with status of all external services
     """
     try:
-        services = settings.EXTERNAL_SERVICES
-        
-        if not services:
-            return "No external services configured"
+        if not EXTERNAL_SERVICES:
+            return {"error": "No external services configured"}
         
         results = []
         up_count = 0
         down_count = 0
         degraded_count = 0
         
-        for service in services:
+        for service in EXTERNAL_SERVICES:
             name = service.get("name", "Unknown")
             url = service.get("url", "")
             timeout = service.get("timeout", 5)
@@ -342,67 +388,147 @@ def check_all_external_services() -> str:
                     
                     # 405 Method Not Allowed means service is up, just doesn't accept GET
                     if response.status_code < 400 or response.status_code == 405:
-                        status = "✅ UP"
+                        status = "up"
                         up_count += 1
-                    elif response.status_code < 500:
-                        status = "⚠️ DEGRADED"
-                        degraded_count += 1
-                    else:
-                        status = "❌ DOWN"
+                    elif response.status_code >= 500 or response.status_code == 404:
+                        status = "down"  # 5xx or 404 = down
                         down_count += 1
+                    else:
+                        status = "degraded"  # Other 4xx = degraded
+                        degraded_count += 1
                     
                     results.append({
                         "name": name,
-                        "status": status,
-                        "code": response.status_code,
-                        "time": response_time_ms,
                         "url": url,
+                        "status": status,
+                        "status_code": response.status_code,
+                        "response_time_ms": response_time_ms,
                     })
             except httpx.TimeoutException:
-                results.append({"name": name, "status": "❌ TIMEOUT", "code": None, "time": None, "url": url})
+                results.append({
+                    "name": name,
+                    "url": url,
+                    "status": "timeout",
+                    "error": "Request timed out",
+                })
                 down_count += 1
             except httpx.ConnectError:
-                results.append({"name": name, "status": "❌ DOWN", "code": None, "time": None, "url": url})
+                results.append({
+                    "name": name,
+                    "url": url,
+                    "status": "down",
+                    "error": "Connection failed",
+                })
                 down_count += 1
             except Exception as e:
-                results.append({"name": name, "status": f"❌ ERROR", "code": None, "time": None, "url": url})
+                results.append({
+                    "name": name,
+                    "url": url,
+                    "status": "error",
+                    "error": str(e),
+                })
                 down_count += 1
         
-        # Build output
+        # Determine overall status
         total = len(results)
-        output = [
-            "🌐 External Services Status",
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-            f"Total: {total} | Up: {up_count} | Down: {down_count}" + (f" | Degraded: {degraded_count}" if degraded_count > 0 else ""),
-            "",
-        ]
+        if down_count > 0:
+            overall_status = "degraded"
+        elif degraded_count > 0:
+            overall_status = "warning"
+        else:
+            overall_status = "normal"
         
-        # Group by status
-        up_services = [r for r in results if "UP" in r["status"] and "DOWN" not in r["status"]]
-        degraded_services = [r for r in results if "DEGRADED" in r["status"]]
-        down_services = [r for r in results if "DOWN" in r["status"] or "TIMEOUT" in r["status"] or "ERROR" in r["status"]]
-        
-        # Show down/degraded services first (most important)
-        if down_services:
-            output.append("❌ DOWN/ERROR:")
-            for s in down_services:
-                output.append(f"  • {s['name']}: {s['url']} - {s['status']}")
-            output.append("")
-        
-        if degraded_services:
-            output.append("⚠️ DEGRADED:")
-            for s in degraded_services:
-                output.append(f"  • {s['name']}: {s['url']} - HTTP {s['code']} ({s['time']}ms)")
-            output.append("")
-        
-        if up_services:
-            output.append("✅ UP:")
-            for s in up_services:
-                time_str = f"({s['time']}ms)" if s['time'] is not None else ""
-                output.append(f"  • {s['name']}: {s['url']} {time_str}")
-        
-        return "\n".join(output)
+        return {
+            "overall_status": overall_status,
+            "total_services": total,
+            "up_count": up_count,
+            "down_count": down_count,
+            "degraded_count": degraded_count,
+            "services": results,
+        }
         
     except Exception as e:
         logger.error(f"Error checking external services: {e}")
-        return f"❌ Error checking services: {str(e)}"
+        return {"error": str(e)}
+
+
+# =============================================================================
+# Composite Reports - Report Tools (return str, no snapshots)
+# =============================================================================
+
+
+@agent.tool_plain
+def report_homelab_status() -> str:
+    """Generate a comprehensive homelab status report.
+    
+    Combines server hardware stats and external service checks into a single report.
+    Use this for a quick overview of the entire homelab infrastructure.
+    
+    Returns:
+        Formatted status report
+    """
+    output = ["🏠 Homelab Status Report", "═" * 50, ""]
+    
+    # Server stats
+    output.append("📊 SERVER HARDWARE:")
+    output.append("─" * 50)
+    servers_data = get_all_homelab_servers()
+    
+    for server in servers_data.get("servers", []):
+        name = server.get("server_name", "Unknown")
+        status_icon = "✅" if server.get("status") == "normal" else "⚠️" if server.get("status") == "warning" else "❌"
+        
+        output.append(f"\n{status_icon} {name}:")
+        
+        if server.get("error"):
+            output.append(f"  Error: {server['error']}")
+        else:
+            output.append(f"  CPU: {server.get('cpu_percent', 0)}%")
+            output.append(f"  Memory: {server.get('memory_percent', 0)}% ({server.get('memory_used_gb', 0)}/{server.get('memory_total_gb', 0)} GB)")
+            output.append(f"  Load: {server.get('load_1min', 0)}")
+            
+            if server.get("warnings"):
+                output.append(f"  ⚠️ Warnings: {', '.join(server['warnings'])}")
+    
+    output.append("\n")
+    
+    # External services
+    output.append("🌐 EXTERNAL SERVICES:")
+    output.append("─" * 50)
+    services_data = get_all_external_services()
+    
+    total = services_data.get("total_services", 0)
+    up = services_data.get("up_count", 0)
+    down = services_data.get("down_count", 0)
+    degraded = services_data.get("degraded_count", 0)
+    
+    output.append(f"Total: {total} | Up: {up} | Down: {down}" + (f" | Degraded: {degraded}" if degraded > 0 else ""))
+    output.append("")
+    
+    # Group by status
+    services = services_data.get("services", [])
+    down_services = [s for s in services if s["status"] in ["down", "timeout", "error"]]
+    degraded_services = [s for s in services if s["status"] == "degraded"]
+    up_services = [s for s in services if s["status"] == "up"]
+    
+    # Show down/degraded services first (most important)
+    if down_services:
+        output.append("❌ DOWN/ERROR:")
+        for s in down_services:
+            error_msg = f" - {s.get('error', 'Unknown error')}" if s.get("error") else ""
+            output.append(f"  • {s['name']}: {s['url']}{error_msg}")
+        output.append("")
+    
+    if degraded_services:
+        output.append("⚠️ DEGRADED:")
+        for s in degraded_services:
+            output.append(f"  • {s['name']}: {s['url']} - HTTP {s.get('status_code')} ({s.get('response_time_ms')}ms)")
+        output.append("")
+    
+    if up_services:
+        output.append("✅ UP:")
+        for s in up_services:
+            time_str = f" ({s['response_time_ms']}ms)" if s.get('response_time_ms') is not None else ""
+            output.append(f"  • {s['name']}{time_str}")
+    
+    return "\n".join(output)

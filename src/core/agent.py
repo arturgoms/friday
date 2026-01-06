@@ -160,10 +160,13 @@ _original_tool_plain = _base_agent.tool_plain
 
 
 def enhanced_tool_plain(func):
-    """Enhanced tool_plain decorator that auto-saves snapshots for all tool executions.
+    """Enhanced tool_plain decorator that auto-saves snapshots for data tool executions.
     
-    All tool results are saved as snapshots, EXCEPT tools with '_report' in their name
-    (which are composite reports meant for display, not data storage).
+    Snapshots are saved for data/query tools (get_*, fetch_*, check_*, etc.).
+    Snapshots are NOT saved for:
+    - Report tools: Functions starting with 'report_'
+    - Action tools: Functions with action prefixes (add_, create_, update_, delete_, send_, etc.)
+    - Calculation tools: Functions starting with 'calc_' (ephemeral calculations)
     
     Args:
         func: The function to decorate
@@ -171,8 +174,14 @@ def enhanced_tool_plain(func):
     Returns:
         Decorated function with auto-snapshot capability
     """
-    # Check if this is a report tool (skip snapshot saving)
-    is_report = '_report' in func.__name__
+    # Define action prefixes that indicate write/mutate operations
+    ACTION_PREFIXES = ('add_', 'create_', 'update_', 'delete_', 'send_', 'remove_', 
+                       'clear_', 'set_', 'save_', 'write_', 'edit_', 'insert_')
+    
+    # Check if this is a report, action, or calculation tool (skip snapshot saving)
+    is_report = func.__name__.startswith('report_')
+    is_action = func.__name__.startswith(ACTION_PREFIXES)
+    is_calculation = func.__name__.startswith('calc_')
     
     # Create wrapper FIRST, then register with pydantic-ai
     @functools.wraps(func)
@@ -180,8 +189,8 @@ def enhanced_tool_plain(func):
         """Sync wrapper for snapshot saving."""
         result = func(*args, **kwargs)
         
-        # Auto-save snapshot for all tools EXCEPT reports
-        if not is_report:
+        # Auto-save snapshot for data tools ONLY (skip reports, actions, and calculations)
+        if not is_report and not is_action and not is_calculation:
             try:
                 from src.awareness.store import InsightsStore
                 from src.awareness.models import Snapshot
@@ -213,8 +222,8 @@ def enhanced_tool_plain(func):
         """Async wrapper for snapshot saving."""
         result = await func(*args, **kwargs)
         
-        # Auto-save snapshot for all tools EXCEPT reports
-        if not is_report:
+        # Auto-save snapshot for data tools ONLY (skip reports, actions, and calculations)
+        if not is_report and not is_action and not is_calculation:
             try:
                 from src.awareness.store import InsightsStore
                 from src.awareness.models import Snapshot
@@ -272,6 +281,7 @@ try:
     from src.tools import people
     from src.tools import sensors
     from src.tools import system
+    from src.tools import utils
     from src.tools import vault
     from src.tools import weather
     from src.tools import web

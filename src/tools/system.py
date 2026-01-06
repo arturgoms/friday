@@ -28,14 +28,16 @@ FRIDAY_SERVICES = ["friday-vllm", "friday-core", "friday-awareness", "friday-tel
 
 
 @agent.tool_plain
-def get_disk_usage(path: str = "/") -> str:
-    """Get disk usage for a path.
+def get_friday_disk_usage(path: str = "/") -> dict:
+    """Get Friday server disk usage.
+    
+    Atomic data tool that returns structured disk usage data for the Friday server.
     
     Args:
         path: Path to check disk usage for (default: root)
     
     Returns:
-        Formatted string with disk usage information
+        Dict with disk usage information
     """
     try:
         total, used, free = shutil.disk_usage(path)
@@ -46,58 +48,51 @@ def get_disk_usage(path: str = "/") -> str:
         free_gb = free / (1024 ** 3)
         percent = (used / total) * 100
         
-        return (
-            f"Disk usage for {path}:\n"
-            f"  Total: {total_gb:.1f} GB\n"
-            f"  Used: {used_gb:.1f} GB ({percent:.1f}%)\n"
-            f"  Free: {free_gb:.1f} GB"
-        )
+        return {
+            "path": path,
+            "total_gb": round(total_gb, 2),
+            "used_gb": round(used_gb, 2),
+            "free_gb": round(free_gb, 2),
+            "used_percent": round(percent, 1),
+            "timestamp": datetime.now(settings.TIMEZONE).isoformat()
+        }
     except Exception as e:
-        return f"Error getting disk usage: {e}"
+        return {"error": str(e)}
 
 
 @agent.tool_plain
-def get_current_time(format: str = "%Y-%m-%d %H:%M:%S") -> str:
-    """Get the current date and time in local timezone (UTC-3).
+def get_friday_system_info() -> dict:
+    """Get Friday server system information.
     
-    Args:
-        format: strftime format string
-    
-    Returns:
-        Formatted current time string
-    """
-    return datetime.now(settings.TIMEZONE).strftime(format)
-
-
-@agent.tool_plain
-def get_system_info() -> str:
-    """Get basic system information.
+    Atomic data tool that returns structured system information for the Friday server.
     
     Returns:
-        System information including OS, hostname, Python version
+        Dict with system information including OS, hostname, Python version
     """
     import platform
     import sys
     
-    info_lines = [
-        f"System: {platform.system()}",
-        f"Release: {platform.release()}",
-        f"Version: {platform.version()}",
-        f"Machine: {platform.machine()}",
-        f"Processor: {platform.processor()}",
-        f"Hostname: {platform.node()}",
-        f"Python: {sys.version}",
-    ]
-    
-    return "\n".join(info_lines)
+    return {
+        "system": platform.system(),
+        "release": platform.release(),
+        "version": platform.version(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "hostname": platform.node(),
+        "python_version": sys.version,
+        "python_version_short": platform.python_version(),
+        "timestamp": datetime.now(settings.TIMEZONE).isoformat()
+    }
 
 
 @agent.tool_plain
-def get_uptime() -> str:
-    """Get system uptime.
+def get_friday_uptime() -> dict:
+    """Get Friday server uptime.
+    
+    Atomic data tool that returns structured uptime data for the Friday server.
     
     Returns:
-        Human-readable uptime string
+        Dict with uptime information
     """
     try:
         with open("/proc/uptime", "r") as f:
@@ -107,25 +102,25 @@ def get_uptime() -> str:
         hours = int((uptime_seconds % 86400) // 3600)
         minutes = int((uptime_seconds % 3600) // 60)
         
-        parts = []
-        if days > 0:
-            parts.append(f"{days} day{'s' if days != 1 else ''}")
-        if hours > 0:
-            parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
-        if minutes > 0:
-            parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
-        
-        return "Uptime: " + ", ".join(parts) if parts else "Uptime: less than a minute"
+        return {
+            "uptime_seconds": int(uptime_seconds),
+            "days": days,
+            "hours": hours,
+            "minutes": minutes,
+            "timestamp": datetime.now(settings.TIMEZONE).isoformat()
+        }
     except Exception as e:
-        return f"Error getting uptime: {e}"
+        return {"error": str(e)}
 
 
 @agent.tool_plain
-def get_memory_usage() -> str:
-    """Get system memory usage.
+def get_friday_memory_usage() -> dict:
+    """Get Friday server memory usage.
+    
+    Atomic data tool that returns structured memory usage data for the Friday server.
     
     Returns:
-        Formatted memory usage information
+        Dict with memory usage information
     """
     try:
         with open("/proc/meminfo", "r") as f:
@@ -144,14 +139,15 @@ def get_memory_usage() -> str:
         used = total - available
         percent = (used / total) * 100 if total > 0 else 0
         
-        return (
-            f"Memory Usage:\n"
-            f"  Total: {total:.1f} GB\n"
-            f"  Used: {used:.1f} GB ({percent:.1f}%)\n"
-            f"  Available: {available:.1f} GB"
-        )
+        return {
+            "total_gb": round(total, 2),
+            "used_gb": round(used, 2),
+            "available_gb": round(available, 2),
+            "used_percent": round(percent, 1),
+            "timestamp": datetime.now(settings.TIMEZONE).isoformat()
+        }
     except Exception as e:
-        return f"Error getting memory usage: {e}"
+        return {"error": str(e)}
 
 
 @agent.tool_plain
@@ -209,14 +205,16 @@ def get_homelab_status() -> str:
 
 
 @agent.tool_plain
-def get_friday_status() -> str:
+def get_friday_status() -> dict:
     """Get status of all Friday services.
     
+    Atomic data tool that returns structured Friday service status data.
+    
     Returns:
-        Status information for all Friday services including state, PID, and memory usage
+        Dict with status information for all Friday services
     """
     try:
-        status_lines = ["Friday Service Status:", "=" * 50]
+        services_status = []
         
         for service in FRIDAY_SERVICES:
             result = subprocess.run(
@@ -235,138 +233,31 @@ def get_friday_status() -> str:
             
             state = status.get("ActiveState", "unknown")
             substate = status.get("SubState", "unknown")
-            pid = status.get("MainPID", "0")
-            memory = status.get("MemoryCurrent", "0")
             
-            # Format memory
-            try:
-                mem_bytes = int(memory)
-                if mem_bytes > 1024 * 1024 * 1024:
-                    mem_str = f"{mem_bytes / (1024**3):.1f} GB"
-                elif mem_bytes > 1024 * 1024:
-                    mem_str = f"{mem_bytes / (1024**2):.1f} MB"
-                else:
-                    mem_str = f"{mem_bytes / 1024:.1f} KB"
-            except (ValueError, TypeError):
-                mem_str = "N/A"
+            # Handle MainPID
+            pid_str = status.get("MainPID", "0")
+            pid = int(pid_str) if pid_str.isdigit() else 0
             
-            pid_str = pid if pid != "0" else "N/A"
+            # Handle MemoryCurrent (can be "[not set]")
+            mem_str = status.get("MemoryCurrent", "0")
+            memory_bytes = int(mem_str) if mem_str.isdigit() else 0
             
-            status_lines.append(f"\n{service}:")
-            status_lines.append(f"  State: {state} ({substate})")
-            status_lines.append(f"  PID: {pid_str}")
-            status_lines.append(f"  Memory: {mem_str}")
+            services_status.append({
+                "service": service,
+                "state": state,
+                "substate": substate,
+                "pid": pid if pid != 0 else None,
+                "memory_bytes": memory_bytes,
+                "memory_mb": round(memory_bytes / (1024**2), 1) if memory_bytes > 0 else 0
+            })
         
-        return "\n".join(status_lines)
+        return {
+            "services": services_status,
+            "total_services": len(FRIDAY_SERVICES),
+            "timestamp": datetime.now(settings.TIMEZONE).isoformat()
+        }
         
     except Exception as e:
-        return f"Error getting status: {e}"
+        return {"error": str(e)}
 
 
-@agent.tool_plain
-def days_until_date(month: int, day: int, year: int = 0) -> str:
-    """Calculate how many days until a specific date.
-    
-    Use this tool when the user asks "how many days until X" or "when is X birthday".
-    DO NOT try to calculate dates yourself - always use this tool.
-    
-    Args:
-        month: Month number (1-12, where 1=January, 12=December)
-        day: Day of month (1-31)
-        year: Optional specific year (if not provided, assumes current or next occurrence)
-    
-    Returns:
-        String with the date and number of days until that date
-    
-    Examples:
-        - days_until_date(12, 25) → Days until December 25th
-        - days_until_date(3, 15, 2026) → Days until March 15, 2026
-    """
-    try:
-        now = datetime.now(settings.TIMEZONE)
-        
-        # Determine target year
-        if year and year > 0:
-            target_year = year
-        else:
-            # Try current year first
-            target_year = now.year
-            target_date = datetime(target_year, month, day, tzinfo=settings.TIMEZONE)
-            
-            # If date has already passed this year, use next year
-            if target_date < now:
-                target_year = now.year + 1
-        
-        # Create target date
-        target_date = datetime(target_year, month, day, tzinfo=settings.TIMEZONE)
-        
-        # Calculate difference
-        delta = target_date - now
-        days_until = delta.days
-        
-        # Format target date
-        date_formatted = target_date.strftime("%B %d, %Y")
-        day_name = target_date.strftime("%A")
-        
-        if days_until < 0:
-            return f"❌ {date_formatted} ({day_name}) was {abs(days_until)} days ago"
-        elif days_until == 0:
-            return f"🎉 {date_formatted} is TODAY!"
-        elif days_until == 1:
-            return f"📅 {date_formatted} ({day_name}) is TOMORROW"
-        else:
-            return f"📅 {date_formatted} ({day_name}) is in {days_until} days"
-        
-    except Exception as e:
-        logger.error(f"Error calculating days until date: {e}")
-        return f"❌ Error: Invalid date - month={month}, day={day}, year={year}: {e}"
-
-
-@agent.tool_plain
-def days_between_dates(month1: int, day1: int, month2: int, day2: int) -> str:
-    """Calculate the difference in days between two dates (same year).
-    
-    Use this tool when the user asks "what's the difference between X and Y dates".
-    DO NOT try to calculate date differences yourself - always use this tool.
-    
-    Args:
-        month1: First date's month (1-12)
-        day1: First date's day (1-31)
-        month2: Second date's month (1-12)
-        day2: Second date's day (1-31)
-    
-    Returns:
-        String with the number of days between the two dates
-    
-    Examples:
-        - days_between_dates(12, 25, 1, 1) → Days between Dec 25 and Jan 1
-        - days_between_dates(3, 15, 12, 12) → Days between Mar 15 and Dec 12
-    """
-    try:
-        now = datetime.now(settings.TIMEZONE)
-        current_year = now.year
-        
-        # Create both dates in the same year for comparison
-        date1 = datetime(current_year, month1, day1, tzinfo=settings.TIMEZONE)
-        date2 = datetime(current_year, month2, day2, tzinfo=settings.TIMEZONE)
-        
-        # Calculate absolute difference
-        delta = abs((date2 - date1).days)
-        
-        # Format dates
-        date1_formatted = date1.strftime("%B %d")
-        date2_formatted = date2.strftime("%B %d")
-        
-        # Determine which is earlier
-        if date1 < date2:
-            earlier = date1_formatted
-            later = date2_formatted
-        else:
-            earlier = date2_formatted
-            later = date1_formatted
-        
-        return f"📊 There are {delta} days between {earlier} and {later}"
-        
-    except Exception as e:
-        logger.error(f"Error calculating days between dates: {e}")
-        return f"❌ Error: Invalid dates - date1: {month1}/{day1}, date2: {month2}/{day2}: {e}"

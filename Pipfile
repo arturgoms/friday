@@ -30,6 +30,7 @@ vobject = "*"
 npcpy = {extras = ["all"], version = "*"}
 gtts = "*"
 vllm = "==0.13.0"
+croniter = "*"
 
 [dev-packages]
 pytest = "*"

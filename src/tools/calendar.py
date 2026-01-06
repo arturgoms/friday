@@ -514,15 +514,17 @@ def get_calendar_manager() -> CalendarManager:
 # =============================================================================
 
 @agent.tool_plain
-def get_calendar_events(days: int = 7, calendar: str = "both") -> str:
+def get_calendar_events(days: int = 7, calendar: str = "both") -> Dict[str, Any]:
     """Get upcoming calendar events.
+    
+    Atomic data tool that returns structured calendar event data.
     
     Args:
         days: Number of days to look ahead (default: 7)
         calendar: Which calendar to check - "personal", "work", or "both" (default)
     
     Returns:
-        Formatted list of upcoming events
+        Dict with list of events and metadata
     """
     try:
         manager = get_calendar_manager()
@@ -538,38 +540,28 @@ def get_calendar_events(days: int = 7, calendar: str = "both") -> str:
         else:
             events = manager.get_all_events(start, end)
         
-        if not events:
-            return f"No events found in the next {days} days."
-        
-        # Group by day
-        lines = [f"📅 Events for the next {days} days:\n"]
-        current_date = None
-        
-        for event in events:
-            event_date = event.start.date()
-            if event_date != current_date:
-                current_date = event_date
-                day_name = event_date.strftime("%A, %B %d")
-                if event_date == now.date():
-                    day_name = "Today"
-                elif event_date == (now + timedelta(days=1)).date():
-                    day_name = "Tomorrow"
-                lines.append(f"\n{day_name}:")
-            
-            lines.append(f"  {event.format_short()}")
-        
-        return "\n".join(lines)
+        return {
+            "events": [event.to_dict() for event in events],
+            "count": len(events),
+            "calendar_filter": calendar,
+            "period_days": days,
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+            "timestamp": datetime.now(settings.TIMEZONE).isoformat()
+        }
         
     except Exception as e:
-        return f"Error getting events: {e}"
+        return {"error": str(e)}
 
 
 @agent.tool_plain
-def get_today_schedule() -> str:
+def get_today_schedule() -> Dict[str, Any]:
     """Get today's complete schedule from both calendars.
     
+    Atomic data tool that returns structured schedule data.
+    
     Returns:
-        Formatted schedule for today
+        Dict with today's events categorized by status (current, upcoming, completed)
     """
     try:
         manager = get_calendar_manager()
@@ -580,23 +572,33 @@ def get_today_schedule() -> str:
         
         events = manager.get_all_events(start, end)
         
-        if not events:
-            return "📅 No events scheduled for today!"
-        
-        lines = [f"📅 Today's Schedule ({now.strftime('%A, %B %d')}):\n"]
+        current_events = []
+        upcoming_events = []
+        completed_events = []
         
         for event in events:
+            event_dict = event.to_dict()
             if event.start < now and event.end > now:
-                lines.append(f"  🔴 NOW: {event.format_short()}")
+                event_dict["status"] = "current"
+                current_events.append(event_dict)
             elif event.start > now:
-                lines.append(f"  {event.format_short()}")
+                event_dict["status"] = "upcoming"
+                upcoming_events.append(event_dict)
             else:
-                lines.append(f"  ✓ {event.format_short()} (done)")
+                event_dict["status"] = "completed"
+                completed_events.append(event_dict)
         
-        return "\n".join(lines)
+        return {
+            "date": start.date().isoformat(),
+            "current_events": current_events,
+            "upcoming_events": upcoming_events,
+            "completed_events": completed_events,
+            "total_events": len(events),
+            "timestamp": now.isoformat()
+        }
         
     except Exception as e:
-        return f"Error getting schedule: {e}"
+        return {"error": str(e)}
 
 
 @agent.tool_plain
@@ -658,15 +660,17 @@ def add_calendar_event(title: str, start_time: str, end_time: str,
 
 
 @agent.tool_plain
-def find_free_time(date: str = "", min_duration: int = 30) -> str:
+def find_free_time(date: str = "", min_duration: int = 30) -> Dict[str, Any]:
     """Find free time slots on a given date.
+    
+    Atomic data tool that returns structured free time slot data.
     
     Args:
         date: Date to check in format "YYYY-MM-DD" (default: today)
         min_duration: Minimum slot duration in minutes (default: 30)
     
     Returns:
-        List of available time slots
+        Dict with list of free time slots
     """
     try:
         manager = get_calendar_manager()
@@ -678,27 +682,35 @@ def find_free_time(date: str = "", min_duration: int = 30) -> str:
         
         slots = manager.find_free_slots(check_date, min_duration)
         
-        if not slots:
-            return f"No free slots of {min_duration}+ minutes on {check_date.strftime('%Y-%m-%d')}."
-        
-        lines = [f"🕐 Free time slots on {check_date.strftime('%A, %B %d')} (min {min_duration} min):\n"]
-        
+        free_slots = []
         for start, end in slots:
-            duration = int((end - start).total_seconds() / 60)
-            lines.append(f"  {start.strftime('%H:%M')} - {end.strftime('%H:%M')} ({duration} min)")
+            duration_minutes = int((end - start).total_seconds() / 60)
+            free_slots.append({
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "duration_minutes": duration_minutes
+            })
         
-        return "\n".join(lines)
+        return {
+            "date": check_date.date().isoformat(),
+            "free_slots": free_slots,
+            "min_duration_minutes": min_duration,
+            "total_slots": len(free_slots),
+            "timestamp": datetime.now(settings.TIMEZONE).isoformat()
+        }
         
     except Exception as e:
-        return f"Error finding free time: {e}"
+        return {"error": str(e)}
 
 
 @agent.tool_plain
-def get_next_event() -> str:
+def get_next_event() -> Dict[str, Any]:
     """Get the next upcoming event from either calendar.
     
+    Atomic data tool that returns structured next event data.
+    
     Returns:
-        Details of the next event
+        Dict with next event details and time until event
     """
     try:
         manager = get_calendar_manager()
@@ -714,21 +726,27 @@ def get_next_event() -> str:
                 time_until = event.start - now
                 hours = int(time_until.total_seconds() // 3600)
                 minutes = int((time_until.total_seconds() % 3600) // 60)
+                total_minutes = int(time_until.total_seconds() / 60)
                 
-                if hours > 0:
-                    time_str = f"{hours}h {minutes}m"
-                else:
-                    time_str = f"{minutes} minutes"
-                
-                return (
-                    f"⏰ Next event in {time_str}:\n\n"
-                    f"{event.format_full()}"
-                )
+                return {
+                    "event": event.to_dict(),
+                    "time_until": {
+                        "hours": hours,
+                        "minutes": minutes,
+                        "total_minutes": total_minutes
+                    },
+                    "current_time": now.isoformat(),
+                    "timestamp": now.isoformat()
+                }
         
-        return "No upcoming events in the next 7 days."
+        return {
+            "event": None,
+            "message": "No upcoming events in the next 7 days",
+            "timestamp": now.isoformat()
+        }
         
     except Exception as e:
-        return f"Error getting next event: {e}"
+        return {"error": str(e)}
 
 
 @agent.tool_plain

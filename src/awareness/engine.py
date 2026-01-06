@@ -1,8 +1,8 @@
 """
-Friday Insights Engine - Main Orchestrator
+Friday Awareness Engine - Main Orchestrator
 
-The InsightsEngine coordinates all components:
-- Collectors: Gather data from various sources
+The AwarenessEngine coordinates all components:
+- Data Sources: Call atomic tools to gather data (replaces collectors)
 - Analyzers: Process data and generate insights
 - Decision Engine: Determine what to deliver and when
 - Delivery Manager: Send insights via appropriate channels
@@ -20,19 +20,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from settings import settings
-def get_brt():
-    return settings.TIMEZONE
-from settings import settings
+from croniter import croniter
 
+from settings import settings
 from src.awareness.models import Insight, Snapshot
 from src.awareness.store import InsightsStore
-from src.awareness.collectors import (
-    HealthCollector,
-    CalendarCollector,
-    HomelabCollector,
-    WeatherCollector,
-)
 from src.awareness.analyzers import (
     ThresholdAnalyzer,
     StressAnalyzer,
@@ -47,12 +39,12 @@ from src.awareness.delivery import DeliveryManager
 logger = logging.getLogger(__name__)
 
 
-class InsightsEngine:
+class AwarenessEngine:
     """
-    Main orchestrator for the Friday Insights system.
+    Main orchestrator for the Friday Awareness system.
 
     Runs a continuous loop that:
-    1. Collects data from various sources (on their intervals)
+    1. Calls atomic tools from data sources (on their cron schedules)
     2. Runs analyzers to generate insights
     3. Decides which insights to deliver
     4. Delivers via appropriate channels
@@ -60,33 +52,73 @@ class InsightsEngine:
     """
 
     def __init__(self, config=None):
-        """Initialize the insights engine.
+        """Initialize the awareness engine.
 
         Args:
-            config: Configuration dict. Uses settings.INSIGHTS if not provided.
+            config: Configuration dict. Uses settings.AWARENESS if not provided.
         """
-        self.config = config or settings.INSIGHTS
+        self.config = config or settings.AWARENESS
         self.store = InsightsStore()
 
-        # Initialize collectors
-        self._collectors = {
-            "health": HealthCollector(),
-            "calendar": CalendarCollector(),
-            "homelab": HomelabCollector(),
-            "weather": WeatherCollector(),
-        }
+        # Import agent to access registered tools
+        from src.core.agent import agent
+        self.agent = agent
 
-        # Initialize collectors
-        for name, collector in self._collectors.items():
-            collector.initialize()
+        # Initialize data source schedulers (cron-based)
+        self._data_source_iters: Dict[str, croniter] = {}
+        self._data_source_next_run: Dict[str, datetime] = {}
+        
+        for source in self.config.get("data_sources", []):
+            if source.get("enabled", True):
+                name = source["name"]
+                schedule = source["schedule"]
+                now = datetime.now()
+                
+                # Create croniter instance
+                cron = croniter(schedule, now)
+                self._data_source_iters[name] = cron
+                self._data_source_next_run[name] = cron.get_next(datetime)
+                
+                logger.info(f"[AWARENESS] Scheduled data source '{name}' with cron: {schedule}")
+
+        # Initialize report schedulers (cron-based)
+        self._report_iters: Dict[str, croniter] = {}
+        self._report_next_run: Dict[str, datetime] = {}
+        self._report_state: Dict[str, str] = {}
+        
+        for report in self.config.get("scheduled_reports", []):
+            if report.get("enabled", True):
+                name = report["name"]
+                schedule = report["schedule"]
+                now = datetime.now()
+                
+                # Create croniter instance
+                cron = croniter(schedule, now)
+                self._report_iters[name] = cron
+                self._report_next_run[name] = cron.get_next(datetime)
+                
+                logger.info(f"[AWARENESS] Scheduled report '{name}' with cron: {schedule}")
 
         # Initialize analyzers (they need config and store)
-        # Real-time analyzers (run every cycle)
-        self._analyzers = {
-            "threshold": ThresholdAnalyzer(self.config, self.store),
-            "stress_monitor": StressAnalyzer(self.config, self.store),
-            "calendar_reminder": CalendarAnalyzer(self.config, self.store),
-        }
+        # Real-time analyzers (run every cycle when data is collected)
+        self._analyzers = {}
+        
+        for source in self.config.get("data_sources", []):
+            if not source.get("enabled", True):
+                continue
+                
+            analyzer_names = source.get("analyzers", [])
+            for analyzer_name in analyzer_names:
+                if analyzer_name not in self._analyzers:
+                    # Create analyzer instance based on name
+                    if analyzer_name == "threshold":
+                        self._analyzers[analyzer_name] = ThresholdAnalyzer(self.config, self.store)
+                    elif analyzer_name == "stress_monitor":
+                        self._analyzers[analyzer_name] = StressAnalyzer(self.config, self.store)
+                    elif analyzer_name == "calendar_reminder":
+                        self._analyzers[analyzer_name] = CalendarAnalyzer(self.config, self.store)
+                    
+                    logger.info(f"[AWARENESS] Initialized analyzer: {analyzer_name}")
 
         # Periodic analyzers (run on their own schedules)
         self._periodic_analyzers = {
@@ -99,52 +131,26 @@ class InsightsEngine:
             "daily_journal": DailyJournalAnalyzer(self.config, self.store),
         }
 
-        # Track last run times for periodic analyzers
-        self._last_periodic_run: Dict[str, float] = {}
-
         # Initialize delivery
         self.delivery = DeliveryManager(self.config, self.store)
-
-        # Timing tracking
-        self._last_collection: Dict[str, float] = {}
-        self._report_state_file = (
-            Path(__file__).parent.parent.parent / "data" / "schedule_state.json"
-        )
-        self._report_state: Dict[str, str] = self._load_report_state()
 
         # Control
         self._running = False
 
         logger.info(
-            "[INSIGHTS] Engine initialized with %d collectors, %d analyzers",
-            len(self._collectors),
+            "[AWARENESS] Engine initialized with %d data sources, %d analyzers",
+            len(self._data_source_iters),
             len(self._analyzers),
         )
 
-    def _load_report_state(self) -> Dict[str, str]:
-        """Load report delivery state from file."""
-        if self._report_state_file.exists():
-            try:
-                return json.loads(self._report_state_file.read_text())
-            except Exception as e:
-                logger.warning(f"Failed to load report state: {e}")
-        return {}
-
-    def _save_report_state(self):
-        """Save report delivery state to file."""
-        try:
-            self._report_state_file.write_text(json.dumps(self._report_state, indent=2))
-        except Exception as e:
-            logger.warning(f"Failed to save report state: {e}")
-
-    async def run(self, check_interval: float = 10.0):
-        """Run the insights engine main loop.
+    async def run(self, check_interval: float = 60.0):
+        """Run the awareness engine main loop.
 
         Args:
             check_interval: How often to check for work (seconds)
         """
         self._running = True
-        logger.info("[INSIGHTS] Engine started - check interval: %.1fs", check_interval)
+        logger.info("[AWARENESS] Engine started - check interval: %.1fs", check_interval)
 
         # Initial cleanup
         self.store.cleanup_old_snapshots(self.config.get("snapshot_retention_days", 90))
@@ -152,9 +158,10 @@ class InsightsEngine:
         while self._running:
             try:
                 cycle_start = time_module.time()
+                now = datetime.now()
 
-                # 1. Run collectors that are due
-                collected_data = await self._run_collectors()
+                # 1. Run data sources that are due
+                collected_data = await self._run_data_sources(now)
 
                 # 2. Run analyzers if we have data
                 if collected_data:
@@ -170,73 +177,127 @@ class InsightsEngine:
                     self.delivery.process_insights(periodic_insights)
 
                 # 5. Check scheduled reports
-                await self._check_scheduled_reports()
+                await self._check_scheduled_reports(now)
 
                 # Log cycle time if slow
                 cycle_time = time_module.time() - cycle_start
                 if cycle_time > 5.0:
                     logger.warning(
-                        "[INSIGHTS] Slow cycle detected: %.1fs (collectors=%d)",
+                        "[AWARENESS] Slow cycle detected: %.1fs (data_sources=%d)",
                         cycle_time,
                         len(collected_data) if collected_data else 0,
                     )
 
             except Exception as e:
-                logger.error("[INSIGHTS] Error in main cycle: %s", e, exc_info=True)
+                logger.error("[AWARENESS] Error in main cycle: %s", e, exc_info=True)
 
             await asyncio.sleep(check_interval)
 
-        logger.info("[INSIGHTS] Engine stopped")
+        logger.info("[AWARENESS] Engine stopped")
 
     def stop(self):
         """Stop the engine."""
         self._running = False
 
-    async def _run_collectors(self) -> Dict[str, Any]:
-        """Run collectors that are due based on their intervals.
+    async def _run_data_sources(self, now: datetime) -> Dict[str, Any]:
+        """Run data sources that are due based on their cron schedules.
+
+        Args:
+            now: Current datetime
 
         Returns:
-            Combined data from all collectors that ran
+            Combined data from all data sources that ran
         """
-        now = time_module.time()
         collected_data = {}
 
-        for name, collector in self._collectors.items():
-            # Check if collector is enabled
-            coll_config = self.config.get("collection", {}).get(name, {})
-            if not coll_config.get("enabled", True):
+        for source in self.config.get("data_sources", []):
+            if not source.get("enabled", True):
                 continue
-
-            # Get interval
-            interval = coll_config.get("interval_seconds", 300)
-
-            # Check if due
-            last_run = self._last_collection.get(name, 0)
-            if now - last_run >= interval:
+                
+            name = source["name"]
+            tool_path = source["tool"]  # Format: "src.tools.health.get_recovery_status"
+            
+            # Check if due to run
+            next_run = self._data_source_next_run.get(name)
+            if next_run and now >= next_run:
                 try:
-                    data = collector.collect()
-                    if data:
-                        collected_data[name] = data
-
-                        # Save snapshot for historical analysis
-                        snapshot = Snapshot(
-                            collector=name, timestamp=datetime.now(get_brt()), data=data
-                        )
-                        self.store.save_snapshot(snapshot)
-
-                    self._last_collection[name] = now
-                    logger.debug(f"Collected from {name}")
-
+                    # Import and call the tool function dynamically
+                    tool_func = self._import_tool(tool_path)
+                    
+                    if tool_func:
+                        # Call the tool
+                        logger.debug(f"[AWARENESS] Calling data source: {name} -> {tool_path}()")
+                        data = tool_func()
+                        
+                        if data and not (isinstance(data, dict) and data.get("error")):
+                            collected_data[name] = data
+                            
+                            # Save snapshot manually (tools called directly don't auto-save)
+                            tool_name = tool_path.split(".")[-1]  # Extract function name
+                            snapshot = Snapshot(
+                                collector=tool_name,
+                                timestamp=datetime.now(),
+                                data=data
+                            )
+                            self.store.save_snapshot(snapshot)
+                            logger.debug(f"[AWARENESS] Saved snapshot for {tool_name}")
+                            
+                            logger.info(f"[AWARENESS] Collected data from: {name}")
+                        else:
+                            error_msg = data.get("error") if isinstance(data, dict) else "Unknown error"
+                            logger.warning(f"[AWARENESS] Data source {name} returned error: {error_msg}")
+                    else:
+                        logger.error(f"[AWARENESS] Tool not found: {tool_path}")
+                    
+                    # Update next run time
+                    cron = self._data_source_iters[name]
+                    self._data_source_next_run[name] = cron.get_next(datetime)
+                    logger.debug(f"[AWARENESS] Next run for {name}: {self._data_source_next_run[name]}")
+                    
                 except Exception as e:
-                    logger.error(f"Collector {name} error: {e}")
+                    logger.error(f"[AWARENESS] Data source {name} error: {e}", exc_info=True)
 
         return collected_data
+    
+    def _import_tool(self, tool_path: str):
+        """Import a tool function from a dotted path.
+        
+        Args:
+            tool_path: Full dotted path to tool (e.g., "src.tools.health.get_recovery_status")
+            
+        Returns:
+            The tool function or None if not found
+        """
+        try:
+            import importlib
+            
+            # Split path into module and function name
+            parts = tool_path.rsplit(".", 1)
+            if len(parts) != 2:
+                logger.error(f"Invalid tool path format: {tool_path}")
+                return None
+            
+            module_path, func_name = parts
+            
+            # Import module and get function
+            module = importlib.import_module(module_path)
+            tool_func = getattr(module, func_name, None)
+            
+            if not tool_func:
+                logger.error(f"Function {func_name} not found in {module_path}")
+                return None
+                
+            return tool_func
+            
+        except Exception as e:
+            logger.error(f"Failed to import tool {tool_path}: {e}")
+            return None
 
     def _run_analyzers(self, data: Dict[str, Any]) -> List[Insight]:
         """Run all analyzers and collect insights.
 
         Args:
-            data: Combined data from collectors
+            data: Combined data from data sources
 
         Returns:
             List of generated insights
@@ -290,119 +351,78 @@ class InsightsEngine:
 
         return all_insights
 
-    async def _check_scheduled_reports(self):
-        """Check if any scheduled reports are due and send them."""
-        now = datetime.now(get_brt())
-        today = now.strftime("%Y-%m-%d")
-
-        # Morning report
-        delivery_config = self.config.get("delivery", {})
-        if delivery_config.get("morning_report", {}).get("enabled", True):
-            if self._is_report_due("morning", today, now):
-                logger.info("Sending morning report...")
-                success = self.delivery.send_morning_report()
-                if success:
-                    self._mark_report_sent("morning", today)
-
-        # Evening report
-        if delivery_config.get("evening_report", {}).get("enabled", True):
-            if self._is_report_due("evening", today, now):
-                logger.info("Sending evening report...")
-                success = self.delivery.send_evening_report()
-                if success:
-                    self._mark_report_sent("evening", today)
-
-        # Weekly report (check day of week too)
-        weekly_config = delivery_config.get("weekly_report", {})
-        if weekly_config.get("enabled", True):
-            day_name = now.strftime("%A").lower()
-            if day_name == weekly_config.get("day", "sunday"):
-                week_key = now.strftime("%Y-W%W")
-                if self._is_report_due("weekly", week_key, now, is_weekly=True):
-                    logger.info("Sending weekly report...")
-                    success = self.delivery.send_weekly_report()
-                    if success:
-                        self._mark_report_sent("weekly", week_key)
-
-        # Daily journal note (23:59)
-        if delivery_config.get("daily_note", {}).get("enabled", True):
-            if self._is_report_due("daily_note", today, now):
-                logger.info("Generating daily journal note...")
-                try:
-                    # Run the daily journal analyzer
-                    analyzer = self._scheduled_analyzers.get("daily_journal")
-                    if analyzer:
-                        result = analyzer.run({})
-                        if result.success and result.insights:
-                            # Process the insights (will send notification)
-                            self.delivery.process_insights(result.insights)
-                            self._mark_report_sent("daily_note", today)
-                        else:
-                            logger.warning(
-                                "Daily journal analyzer returned no insights"
-                            )
-                except Exception as e:
-                    logger.error(f"Failed to generate daily note: {e}", exc_info=True)
-
-    def _is_report_due(
-        self, report_type: str, date_key: str, now: datetime, is_weekly: bool = False
-    ) -> bool:
-        """Check if a report is due.
-
+    async def _check_scheduled_reports(self, now: datetime):
+        """Check if any scheduled reports are due and send them.
+        
         Args:
-            report_type: "morning", "evening", or "weekly"
-            date_key: Date/week string to track delivery
             now: Current datetime
-            is_weekly: Whether this is a weekly report
-
-        Returns:
-            True if report should be sent now
         """
-        # Check if already sent
-        state_key = f"{report_type}_report"
-        if self._report_state.get(state_key) == date_key:
-            return False
-
-        # Get target time from config
-        from datetime import time
-        delivery_config = self.config.get("delivery", {})
+        today = now.strftime("%Y-%m-%d")
         
-        if report_type == "morning":
-            time_str = delivery_config.get("morning_report", {}).get("time", "10:00")
-        elif report_type == "evening":
-            time_str = delivery_config.get("evening_report", {}).get("time", "21:00")
-        else:
-            time_str = delivery_config.get("weekly_report", {}).get("time", "20:00")
-        
-        # Parse time string HH:MM
-        hour, minute = map(int, time_str.split(":"))
-        target = time(hour, minute)
-
-        # Check if within 2 minute window of target time
-        current_minutes = now.hour * 60 + now.minute
-        target_minutes = target.hour * 60 + target.minute
-
-        return abs(current_minutes - target_minutes) <= 2
-
-    def _mark_report_sent(self, report_type: str, date_key: str):
-        """Mark a report as sent."""
-        state_key = f"{report_type}_report"
-        self._report_state[state_key] = date_key
-        self._save_report_state()
-        logger.info(f"Marked {report_type} report as sent for {date_key}")
+        for report in self.config.get("scheduled_reports", []):
+            if not report.get("enabled", True):
+                continue
+                
+            name = report["name"]
+            tool_path = report["tool"]  # Format: "src.tools.daily_briefing.report_morning_briefing"
+            
+            # Check if due to run
+            next_run = self._report_next_run.get(name)
+            if next_run and now >= next_run:
+                # Check if already sent today (prevent duplicates)
+                last_sent = self._report_state.get(name)
+                if last_sent == today:
+                    # Update next run but skip sending
+                    cron = self._report_iters[name]
+                    self._report_next_run[name] = cron.get_next(datetime)
+                    continue
+                
+                try:
+                    # Import and call the report tool
+                    tool_func = self._import_tool(tool_path)
+                    
+                    if tool_func:
+                        logger.info(f"[AWARENESS] Sending scheduled report: {name}")
+                        report_text = tool_func()
+                        
+                        # Send via delivery manager
+                        channels = report.get("channels", ["telegram"])
+                        if "telegram" in channels:
+                            # Create a simple insight to wrap the report
+                            from src.awareness.models import Insight, Priority, InsightType, Category
+                            insight = Insight(
+                                type=InsightType.DIGEST,
+                                category=Category.SYSTEM,  # Generic category for reports
+                                priority=Priority.LOW,
+                                title=name,
+                                message=report_text,
+                                confidence=1.0
+                            )
+                            self.delivery.process_insights([insight])
+                            self._report_state[name] = today
+                            logger.info(f"[AWARENESS] Sent report: {name}")
+                    else:
+                        logger.error(f"[AWARENESS] Report tool not found: {tool_path}")
+                    
+                    # Update next run time
+                    cron = self._report_iters[name]
+                    self._report_next_run[name] = cron.get_next(datetime)
+                    
+                except Exception as e:
+                    logger.error(f"[AWARENESS] Report {name} error: {e}", exc_info=True)
 
 
 def main():
-    """Entry point for the insights engine daemon."""
+    """Entry point for the awareness engine daemon."""
     # Configure logging
     logging.basicConfig(
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         level=logging.INFO,
     )
 
-    logger.info("Starting Friday Insights Engine...")
+    logger.info("Starting Friday Awareness Engine...")
 
-    engine = InsightsEngine()
+    engine = AwarenessEngine()
 
     # Setup signal handlers
     def handle_signal(signum, frame):
@@ -413,15 +433,7 @@ def main():
     signal.signal(signal.SIGINT, handle_signal)
 
     try:
-        asyncio.run(engine.run(check_interval=10.0))
-    except KeyboardInterrupt:
-        logger.info("Interrupted by user")
-    except Exception as e:
-        logger.error(f"Engine error: {e}", exc_info=True)
-        import sys
-
-    try:
-        asyncio.run(engine.run(check_interval=10.0))
+        asyncio.run(engine.run(check_interval=60.0))
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
     except Exception as e:

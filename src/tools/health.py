@@ -85,7 +85,7 @@ def get_recent_runs(limit: int = 10, days: int = 30) -> Dict[str, Any]:
 
 
 @agent.tool_plain
-def get_training_load_report(weeks: int = 4) -> str:
+def report_training_load(weeks: int = 4) -> str:
     """Analyze weekly training load: mileage, time, and intensity.
     
     COMPOSITE REPORT: Returns formatted string for display.
@@ -356,7 +356,7 @@ def get_hrv_trend(days: int = 14) -> Dict[str, Any]:
 # =============================================================================
 
 @agent.tool_plain
-def get_weekly_health_report(weeks_ago: int = 0) -> str:
+def report_weekly_health(weeks_ago: int = 0) -> str:
     """Get comprehensive weekly health overview.
     
     COMPOSITE REPORT: Returns formatted string for display.

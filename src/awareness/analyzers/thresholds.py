@@ -52,6 +52,10 @@ class ThresholdAnalyzer(RealTimeAnalyzer):
         # System/homelab thresholds
         if "homelab" in data:
             insights.extend(self._check_homelab_thresholds(data["homelab"]))
+        
+        # External services thresholds (from external_services data source)
+        if "external_services" in data:
+            insights.extend(self._check_external_services_thresholds(data["external_services"]))
 
         # Weather thresholds (extreme conditions)
         if "weather" in data:
@@ -256,6 +260,45 @@ class ThresholdAnalyzer(RealTimeAnalyzer):
                 if insight:
                     insights.append(insight)
 
+        return insights
+    
+    def _check_external_services_thresholds(self, external_services: Dict[str, Any]) -> List[Insight]:
+        """Check external services thresholds (services down)."""
+        insights = []
+        
+        # Get services list
+        services = external_services.get("services", [])
+        down_services = [s for s in services if s.get("status") in ["down", "timeout", "error"]]
+        
+        if down_services:
+            svc_threshold = self.config.get("thresholds", {}).get("services_down", {})
+            warning = svc_threshold.get("warning", 1)
+            critical = svc_threshold.get("critical", 3)
+            
+            count = len(down_services)
+            names = ", ".join([s.get("name", "unknown") for s in down_services[:5]])
+            
+            if count >= critical:
+                level, priority = "critical", Priority.HIGH
+            elif count >= warning:
+                level, priority = "elevated", Priority.MEDIUM
+            else:
+                level, priority = None, None
+            
+            if level:
+                dedupe_key = f"services_down_{count}"
+                if not self.was_insight_delivered_recently(dedupe_key):
+                    insights.append(Insight(
+                        type=InsightType.THRESHOLD,
+                        category=Category.HOMELAB,
+                        priority=priority,
+                        title=f"{count} service(s) down",
+                        message=f"Down: {names}",
+                        dedupe_key=dedupe_key,
+                        data={"count": count, "services": down_services},
+                        expires_at=datetime.now(get_brt()) + timedelta(hours=1),
+                    ))
+        
         return insights
 
     def _check_weather_thresholds(self, weather: Dict[str, Any]) -> List[Insight]:

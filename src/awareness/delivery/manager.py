@@ -5,19 +5,18 @@ Orchestrates insight delivery across all channels.
 """
 
 import logging
-from datetime import datetime
 from typing import Any, Dict, List
 
 from settings import settings
-def get_brt():
-    return settings.TIMEZONE
-from settings import settings
 from src.awareness.decision.engine import DecisionEngine, DeliveryAction
 from src.awareness.delivery.channels import get_channel_registry
-from src.awareness.delivery.loader import initialize_channels, get_routing_config
-from src.awareness.delivery.reports import ReportGenerator
+from src.awareness.delivery.loader import get_routing_config, initialize_channels
 from src.awareness.models import Category, DeliveryChannel, Insight, Priority
 from src.awareness.store import InsightsStore
+
+
+def get_brt():
+    return settings.TIMEZONE
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +36,11 @@ class DeliveryManager:
         self.config = config
         self.store = store
         self.decision = DecisionEngine(config, store)
-        self.reports = ReportGenerator(config, store)
-        
+
         # Initialize delivery channels
         num_channels = initialize_channels()
         logger.info(f"[DELIVERY] Initialized {num_channels} delivery channel(s)")
-        
+
         # Get channel registry and routing config
         self.channel_registry = get_channel_registry()
         self.routing_config = get_routing_config()
@@ -87,11 +85,11 @@ class DeliveryManager:
         try:
             # Determine which channels to use based on priority
             channels_to_use = self._get_channels_for_insight(insight)
-            
+
             if not channels_to_use:
                 logger.warning(f"[DELIVERY] No channels configured for insight: {insight.title}")
                 return False
-            
+
             # Send to all configured channels
             any_success = False
             for channel in channels_to_use:
@@ -103,9 +101,9 @@ class DeliveryManager:
                         logger.info(f"[DELIVERY] Sent insight via {channel.name}: {insight.title}")
                 except Exception as e:
                     logger.error(f"[DELIVERY] Failed to send via {channel.name}: {e}")
-            
+
             return any_success
-            
+
         except Exception as e:
             logger.error(f"[DELIVERY] Failed to deliver insight '{insight.title}': {e}")
             return False
@@ -126,78 +124,6 @@ class DeliveryManager:
         except Exception as e:
             logger.error(f"Failed to queue insight: {e}")
 
-    def send_morning_report(self) -> bool:
-        """Generate and send morning report."""
-        try:
-            report = self.reports.generate_morning_report()
-            channels = self._get_channels_for_report("morning")
-            
-            any_success = False
-            for channel in channels:
-                try:
-                    success = channel.send_report_sync(report, "morning")
-                    if success:
-                        any_success = True
-                except Exception as e:
-                    logger.error(f"[DELIVERY] Failed to send morning report via {channel.name}: {e}")
-            
-            if any_success:
-                logger.info("[DELIVERY] Morning report sent successfully")
-
-            return any_success
-
-        except Exception as e:
-            logger.error(f"[DELIVERY] Failed to send morning report: {e}")
-            return False
-
-    def send_evening_report(self) -> bool:
-        """Generate and send evening report."""
-        try:
-            report = self.reports.generate_evening_report()
-            channels = self._get_channels_for_report("evening")
-            
-            any_success = False
-            for channel in channels:
-                try:
-                    success = channel.send_report_sync(report, "evening")
-                    if success:
-                        any_success = True
-                except Exception as e:
-                    logger.error(f"[DELIVERY] Failed to send evening report via {channel.name}: {e}")
-
-            if any_success:
-                logger.info("[DELIVERY] Evening report sent successfully")
-
-            return any_success
-
-        except Exception as e:
-            logger.error(f"[DELIVERY] Failed to send evening report: {e}")
-            return False
-
-    def send_weekly_report(self) -> bool:
-        """Generate and send weekly report."""
-        try:
-            report = self.reports.generate_weekly_report()
-            channels = self._get_channels_for_report("weekly")
-            
-            any_success = False
-            for channel in channels:
-                try:
-                    success = channel.send_report_sync(report, "weekly")
-                    if success:
-                        any_success = True
-                except Exception as e:
-                    logger.error(f"[DELIVERY] Failed to send weekly report via {channel.name}: {e}")
-
-            if any_success:
-                logger.info("Weekly report sent successfully")
-
-            return any_success
-
-        except Exception as e:
-            logger.error(f"Failed to send weekly report: {e}")
-            return False
-
     def process_queued_insights(self) -> int:
         """Process insights that were queued (after quiet hours end, etc).
 
@@ -216,62 +142,13 @@ class DeliveryManager:
 
         return delivered
 
-    def should_send_morning_report(self) -> bool:
-        """Check if it's time for morning report."""
-        delivery_config = self.config.get("delivery", {})
-        if not delivery_config.get("morning_report_enabled", False):
-            return False
 
-        now = datetime.now(get_brt())
-        target = delivery_config.get("morning_report_time")
-
-        # Check if within 5 minute window of target time
-        now_minutes = now.hour * 60 + now.minute
-        target_minutes = target.hour * 60 + target.minute
-
-        return abs(now_minutes - target_minutes) <= 2
-
-    def should_send_evening_report(self) -> bool:
-        """Check if it's time for evening report."""
-        delivery_config = self.config.get("delivery", {})
-        if not delivery_config.get("evening_report_enabled", False):
-            return False
-
-        now = datetime.now(get_brt())
-        target = delivery_config.get("evening_report_time")
-
-        now_minutes = now.hour * 60 + now.minute
-        target_minutes = target.hour * 60 + target.minute
-
-        return abs(now_minutes - target_minutes) <= 2
-
-    def should_send_weekly_report(self) -> bool:
-        """Check if it's time for weekly report."""
-        delivery_config = self.config.get("delivery", {})
-        if not delivery_config.get("weekly_report_enabled", False):
-            return False
-
-        now = datetime.now(get_brt())
-        target_day = delivery_config.get("weekly_report_day", "").lower()
-        target_time = delivery_config.get("weekly_report_time")
-
-        # Check day
-        days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-        if days[now.weekday()] != target_day:
-            return False
-
-        # Check time
-        now_minutes = now.hour * 60 + now.minute
-        target_minutes = target_time.hour * 60 + target_time.minute
-
-        return abs(now_minutes - target_minutes) <= 2
-    
     def _get_channels_for_insight(self, insight: Insight) -> List:
         """Get delivery channels for an insight based on routing config.
-        
+
         Args:
             insight: The insight to deliver
-            
+
         Returns:
             List of channels to use
         """
@@ -279,71 +156,46 @@ class DeliveryManager:
         insights_routing = self.routing_config.get("insights", {})
         priority_str = insight.priority.value.lower()
         channel_names = insights_routing.get(priority_str, ["telegram"])
-        
+
         # Get enabled channels
         channels = []
         for name in channel_names:
             channel = self.channel_registry.get(name)
             if channel and channel.enabled:
                 channels.append(channel)
-        
+
         # Fallback: use all enabled channels if no routing configured
         if not channels:
             channels = self.channel_registry.get_enabled_channels()
-        
+
         return channels
-    
-    def _get_channels_for_report(self, report_type: str) -> List:
-        """Get delivery channels for a report based on routing config.
-        
-        Args:
-            report_type: Type of report (morning, evening, weekly)
-            
-        Returns:
-            List of channels to use
-        """
-        # Get routing for reports
-        reports_routing = self.routing_config.get("reports", {})
-        channel_names = reports_routing.get(report_type, ["telegram"])
-        
-        # Get enabled channels
-        channels = []
-        for name in channel_names:
-            channel = self.channel_registry.get(name)
-            if channel and channel.enabled:
-                channels.append(channel)
-        
-        # Fallback: use all enabled channels if no routing configured
-        if not channels:
-            channels = self.channel_registry.get_enabled_channels()
-        
-        return channels
-    
+
+
     def send_alert(self, message: str, level: str = "info") -> bool:
         """Send an alert via configured channels.
-        
+
         Args:
             message: Alert message
             level: Alert level (info, warning, critical)
-            
+
         Returns:
             True if sent to at least one channel
         """
         # Get routing for alerts
         alerts_routing = self.routing_config.get("alerts", {})
         channel_names = alerts_routing.get(level, ["telegram"])
-        
+
         # Get enabled channels
         channels = []
         for name in channel_names:
             channel = self.channel_registry.get(name)
             if channel and channel.enabled:
                 channels.append(channel)
-        
+
         # Fallback: use all enabled channels
         if not channels:
             channels = self.channel_registry.get_enabled_channels()
-        
+
         # Send to all channels
         any_success = False
         for channel in channels:
@@ -354,5 +206,5 @@ class DeliveryManager:
                     logger.info(f"[DELIVERY] Sent alert via {channel.name}")
             except Exception as e:
                 logger.error(f"[DELIVERY] Failed to send alert via {channel.name}: {e}")
-        
+
         return any_success

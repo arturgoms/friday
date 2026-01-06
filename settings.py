@@ -189,7 +189,14 @@ EXTERNAL_SERVICES = [
     },
     {
         "name": "Traefik",
-        "url": "http://192.168.1.16:80",
+        "url": "http://traefik.arturgomes.com/",
+        "type": "http",
+        "timeout": 5,
+        "check_interval": 300,
+    },
+    {
+        "name": "Dashy",
+        "url": "https://dashy.arturgomes.com/",
         "type": "http",
         "timeout": 5,
         "check_interval": 300,
@@ -287,18 +294,11 @@ EXTERNAL_SERVICES = [
     },
     {
         "name": "Glances",
-        "url": "http://192.168.1.16:61208",
+        "url": "http://192.168.1.16:61208/api/4/status",
         "type": "http",
         "timeout": 5,
         "check_interval": 300,
-    },
-    {
-        "name": "CrowdSec",
-        "url": "http://192.168.1.16:6060",
-        "type": "http",
-        "timeout": 5,
-        "check_interval": 300,
-    },
+    }
 ]
 
 
@@ -310,32 +310,32 @@ AWARENESS = {
     # Data source tools - atomic tools that return dict, saved as snapshots
     "data_sources": [
         {
-            "name": "health_monitoring",
-            "tool": "get_current_health_data",
+            "name": "recovery_status",
+            "tool": "src.tools.health.get_recovery_status",
             "schedule": "*/5 * * * *",  # Every 5 minutes
             "enabled": True,
             "analyzers": ["stress_monitor", "threshold"],
-            "description": "Current health metrics from Garmin",
+            "description": "Current health metrics from Garmin (training readiness, body battery, HRV, stress)",
         },
         {
             "name": "sleep_tracking",
-            "tool": "get_sleep_snapshot",
-            "schedule": "0 */2 * * *",  # Every 2 hours
+            "tool": "src.tools.health.get_sleep_summary",
+            "schedule": "0 9 * * *",  # Daily at 9:00 AM
             "enabled": True,
             "analyzers": ["sleep_correlator"],
-            "description": "Latest sleep data",
+            "description": "Latest sleep data with sleep score and stages",
         },
         {
             "name": "calendar_sync",
-            "tool": "get_calendar_snapshot",
+            "tool": "src.tools.calendar.get_today_schedule",
             "schedule": "*/10 * * * *",  # Every 10 minutes
             "enabled": True,
             "analyzers": ["calendar_reminder"],
-            "description": "Upcoming calendar events",
+            "description": "Today's calendar events",
         },
         {
             "name": "weather_updates",
-            "tool": "get_weather_data",
+            "tool": "src.tools.weather.get_current_weather",
             "schedule": "0 */1 * * *",  # Every hour
             "enabled": True,
             "analyzers": [],
@@ -343,19 +343,35 @@ AWARENESS = {
         },
         {
             "name": "system_monitoring",
-            "tool": "get_system_resources_data",
+            "tool": "src.tools.system.get_friday_status",
             "schedule": "*/5 * * * *",  # Every 5 minutes
             "enabled": True,
             "analyzers": ["threshold", "resource_trend"],
-            "description": "System resources (disk, CPU, memory)",
+            "description": "Friday server status (disk, CPU, memory)",
+        },
+        {
+            "name": "homelab_monitoring",
+            "tool": "src.tools.sensors.get_all_homelab_servers",
+            "schedule": "*/10 * * * *",  # Every 10 minutes
+            "enabled": True,
+            "analyzers": ["threshold"],
+            "description": "Homelab server hardware stats",
+        },
+        {
+            "name": "external_services",
+            "tool": "src.tools.sensors.get_all_external_services",
+            "schedule": "*/15 * * * *",  # Every 15 minutes
+            "enabled": True,
+            "analyzers": ["threshold"],
+            "description": "External services health checks (Portainer, Home Assistant, Dashy, etc.)",
         },
     ],
-    
+
     # Scheduled reports - composite tools that return formatted strings
     "scheduled_reports": [
         {
             "name": "morning_briefing",
-            "tool": "get_morning_report",
+            "tool": "src.tools.daily_briefing.report_morning_briefing",
             "schedule": "0 10 * * *",  # Daily at 10:00 AM
             "enabled": True,
             "channels": ["telegram"],
@@ -363,30 +379,14 @@ AWARENESS = {
         },
         {
             "name": "evening_report",
-            "tool": "get_evening_report",
+            "tool": "src.tools.daily_briefing.report_evening_briefing",
             "schedule": "0 21 * * *",  # Daily at 9:00 PM
             "enabled": True,
             "channels": ["telegram"],
             "description": "Evening report with sleep recommendation",
         },
-        {
-            "name": "journal_thread",
-            "tool": "create_journal_thread",
-            "schedule": "0 10 * * *",  # Daily at 10:00 AM
-            "enabled": True,
-            "channels": ["telegram"],
-            "description": "Create daily journal thread for reflections",
-        },
-        {
-            "name": "daily_note",
-            "tool": "generate_daily_note",
-            "schedule": "59 23 * * *",  # Daily at 11:59 PM
-            "enabled": True,
-            "channels": ["vault"],
-            "description": "Generate daily journal note in Obsidian",
-        },
     ],
-    
+
     # Analyzer configuration
     "analyzers": {
         "threshold": {
@@ -419,7 +419,7 @@ AWARENESS = {
             "description": "Alert on concerning resource usage trends",
         },
     },
-    
+
     # Decision engine settings
     "decision": {
         "max_reach_outs_per_day": 5,
@@ -429,7 +429,7 @@ AWARENESS = {
         "min_confidence": 0.7,
         "scheduled_reports_respect_quiet_hours": False,  # Scheduled reports ignore quiet hours
     },
-    
+
     # Thresholds for alerts
     "thresholds": {
         "disk_percent": {"warning": 85, "critical": 95},
@@ -439,9 +439,9 @@ AWARENESS = {
         "body_battery": {"warning": 30, "critical": 20},
         "sleep_score": {"warning": 50, "critical": 40},
         "garmin_sync_stale_hours": 12,
-        "services_down": {"warning": 1, "critical": 3},
+        "services_down": {"warning": 1, "critical": 2},  # Alert on ANY service down, critical if 2+
     },
-    
+
     # Storage settings
     "snapshot_retention_days": 90,
 }

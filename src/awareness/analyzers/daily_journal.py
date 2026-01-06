@@ -14,7 +14,8 @@ def get_brt():
     return settings.TIMEZONE
 from src.awareness.analyzers.base import ScheduledAnalyzer
 from src.awareness.models import Insight, Priority, Category, InsightType
-from src.awareness.collectors.journal import JournalCollector
+# TODO: Refactor JournalCollector to use tools instead of collectors
+# from src.awareness.collectors.journal import JournalCollector
 from src.tools.vault import vault_write_note
 from pathlib import Path
 
@@ -23,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 class DailyJournalAnalyzer(ScheduledAnalyzer):
     """
+    TODO: Needs refactoring to use tools instead of JournalCollector
+    
     Processes journal entries and creates daily notes in Obsidian.
     
     Runs once per day at 23:59 to collect and process:
@@ -36,7 +39,9 @@ class DailyJournalAnalyzer(ScheduledAnalyzer):
     
     def __init__(self, config, store):
         super().__init__("daily_journal", config, store)
-        self.journal_collector = JournalCollector(store)
+        # TODO: Replace JournalCollector with direct tool calls
+        # self.journal_collector = JournalCollector(store)
+        logger.warning("DailyJournalAnalyzer needs refactoring - JournalCollector is disabled")
     
     def analyze(self, data: Dict[str, Any]) -> List[Insight]:
         """Process daily journal data and create the daily note.

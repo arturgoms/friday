@@ -67,11 +67,24 @@ class BudgetManager:
         """Check if we're currently in quiet hours."""
         now = datetime.now(get_brt()).time()
         decision_config = self.config.get("decision", {})
-        start = decision_config.get("quiet_hours_start")
-        end = decision_config.get("quiet_hours_end")
+        quiet_hours = decision_config.get("quiet_hours", {})
+        
+        # Get start and end times
+        start_str = quiet_hours.get("start")
+        end_str = quiet_hours.get("end")
         
         # If quiet hours not configured, assume no quiet hours
-        if start is None or end is None:
+        if not start_str or not end_str:
+            return False
+        
+        # Parse time strings (format: "HH:MM")
+        try:
+            start_hour, start_min = map(int, start_str.split(":"))
+            end_hour, end_min = map(int, end_str.split(":"))
+            start = time(start_hour, start_min)
+            end = time(end_hour, end_min)
+        except (ValueError, AttributeError):
+            logger.error(f"Invalid quiet hours format: start={start_str}, end={end_str}")
             return False
         
         # Handle overnight quiet hours (e.g., 22:00 - 08:00)
@@ -111,9 +124,19 @@ class BudgetManager:
             return None
         
         now = datetime.now(get_brt())
-        end_time = self.config.get("decision", {}).get("quiet_hours_end")
+        decision_config = self.config.get("decision", {})
+        quiet_hours = decision_config.get("quiet_hours", {})
+        end_str = quiet_hours.get("end")
         
-        if end_time is None:
+        if not end_str:
+            return None
+        
+        # Parse end time string (format: "HH:MM")
+        try:
+            end_hour, end_min = map(int, end_str.split(":"))
+            end_time = time(end_hour, end_min)
+        except (ValueError, AttributeError):
+            logger.error(f"Invalid quiet hours end format: {end_str}")
             return None
         
         # Build end datetime

@@ -231,29 +231,32 @@ def _build_calendar_section(ctx: ReportContext):
     ctx.add_section("📅 TODAY'S SCHEDULE")
     
     try:
-        from src.tools.calendar import get_calendar_manager
+        from src.tools.calendar import get_today_schedule
         
-        manager = get_calendar_manager()
-        start = ctx.now.replace(hour=0, minute=0, second=0, microsecond=0)
-        end = start + timedelta(days=1)
+        schedule = get_today_schedule()
         
-        events = manager.get_all_events(start, end)
-        
-        if events:
-            meeting_count = 0
-            for event in events:
-                if event.all_day:
-                    ctx.add_line(f"📌 {event.title}", indent=True)
-                else:
-                    cal_icon = "🏠" if event.calendar == "personal" else "💼"
-                    ctx.add_line(f"{cal_icon} {event.start.strftime('%H:%M')}-{event.end.strftime('%H:%M')}: {event.title}", indent=True)
-                    meeting_count += 1
+        if isinstance(schedule, dict) and not schedule.get("error"):
+            all_events = schedule.get("all_events", [])
             
-            if meeting_count > 5:
-                ctx.add_warning(f"Heavy meeting day ({meeting_count}). Block time for breaks.")
+            if all_events:
+                meeting_count = 0
+                for event in all_events:
+                    if event.get("all_day"):
+                        ctx.add_line(f"📌 {event['summary']}", indent=True)
+                    else:
+                        cal_icon = "🏠" if event.get("calendar") == "personal" else "💼"
+                        start_time = event.get("start_time", "")
+                        end_time = event.get("end_time", "")
+                        ctx.add_line(f"{cal_icon} {start_time}-{end_time}: {event['summary']}", indent=True)
+                        meeting_count += 1
+                
+                if meeting_count > 5:
+                    ctx.add_warning(f"Heavy meeting day ({meeting_count}). Block time for breaks.")
+            else:
+                ctx.add_line("No events - open day!", indent=True)
+                ctx.add_insight("Clear calendar - good for deep work.")
         else:
-            ctx.add_line("No events - open day!", indent=True)
-            ctx.add_insight("Clear calendar - good for deep work.")
+            ctx.add_line("Calendar unavailable", indent=True)
             
     except Exception as e:
         logger.debug(f"Calendar unavailable: {e}")
@@ -265,18 +268,25 @@ def _build_weather_section(ctx: ReportContext):
     ctx.add_section("🌤️ WEATHER")
     
     try:
-        from src.tools.weather import get_current_weather, will_it_rain
+        from src.tools.weather import get_current_weather
         
         weather = get_current_weather()
-        if weather:
-            for line in weather.split('\n')[1:5]:
-                if line.strip() and not line.startswith('='):
-                    ctx.add_line(line.strip(), indent=True)
-        
-        rain_info = will_it_rain()
-        if rain_info and "expected" in rain_info.lower():
-            ctx.add_line("☔ Rain expected - bring umbrella!", indent=True)
-            ctx.add_warning("Rain expected today.")
+        if isinstance(weather, dict) and not weather.get("error"):
+            temp = weather.get("temperature_c")
+            feels = weather.get("feels_like_c")
+            condition = weather.get("condition", "").lower()
+            humidity = weather.get("humidity")
+            
+            ctx.add_line(f"🌡️ {temp}°C (feels {feels}°C)", indent=True)
+            ctx.add_line(f"Condition: {condition.title()}", indent=True)
+            ctx.add_line(f"Humidity: {humidity}%", indent=True)
+            
+            # Check for rain in condition
+            if "rain" in condition or "drizzle" in condition or "shower" in condition:
+                ctx.add_line("☔ Rain expected - bring umbrella!", indent=True)
+                ctx.add_warning("Rain expected today.")
+        else:
+            ctx.add_line("Weather data unavailable", indent=True)
             
     except Exception as e:
         logger.debug(f"Weather unavailable: {e}")
@@ -433,20 +443,24 @@ def _build_evening_meetings_section(ctx: ReportContext, factors: SleepFactors):
     ctx.add_section("📅 MEETINGS")
     
     try:
-        from src.tools.calendar import get_calendar_manager
+        from src.tools.calendar import get_today_schedule
         
-        manager = get_calendar_manager()
-        today_start = ctx.now.replace(hour=0, minute=0, second=0, microsecond=0)
-        end = ctx.now.replace(hour=23, minute=59, second=59)
-        events = manager.get_all_events(today_start, end)
+        schedule = get_today_schedule()
         
-        meetings = [e for e in events if not e.all_day]
-        meeting_count = len(meetings)
-        factors.meetings = meeting_count
-        
-        total_min = sum((e.end - e.start).total_seconds() / 60 for e in meetings)
-        
-        ctx.add_line(f"{meeting_count} meetings, {format_duration(total_min * 60)} total")
+        if isinstance(schedule, dict) and not schedule.get("error"):
+            all_events = schedule.get("all_events", [])
+            meetings = [e for e in all_events if not e.get("all_day")]
+            meeting_count = len(meetings)
+            factors.meetings = meeting_count
+            
+            # Calculate total duration
+            total_min = 0
+            for e in meetings:
+                total_min += e.get("duration_minutes", 0)
+            
+            ctx.add_line(f"{meeting_count} meetings, {format_duration(int(total_min * 60))} total")
+        else:
+            ctx.add_line("Calendar unavailable")
             
     except Exception as e:
         logger.debug(f"Calendar unavailable: {e}")
@@ -516,8 +530,10 @@ def _build_sleep_recommendation(ctx: ReportContext, factors: SleepFactors):
 # =============================================================================
 
 @agent.tool_plain
-def get_morning_report() -> str:
+def report_morning_briefing() -> str:
     """Get morning briefing with sleep, energy, calendar, and weather.
+    
+    COMPOSITE REPORT: Returns formatted string for display.
     
     Returns:
         Formatted morning report string
@@ -544,8 +560,10 @@ def get_morning_report() -> str:
 
 
 @agent.tool_plain
-def get_evening_report() -> str:
+def report_evening_briefing() -> str:
     """Get evening report with activity summary and sleep recommendations.
+    
+    COMPOSITE REPORT: Returns formatted string for display.
     
     Returns:
         Formatted evening report string
