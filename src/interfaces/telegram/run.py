@@ -49,6 +49,9 @@ class FridayTelegramBot:
         logger.info(f"Processing message from {message.sender_name}: {message.content[:50]}...")
         
         try:
+            # Track original message type (before transcription)
+            original_message_type = message.type
+            
             # Handle voice messages - transcribe to text first
             if message.type == MessageType.AUDIO and message.attachments:
                 from src.tools.media import transcribe_audio
@@ -79,6 +82,35 @@ class FridayTelegramBot:
                     import os
                     temp_audio.close()
                     os.unlink(temp_audio.name)
+            
+            # Check if this message is a reply to today's journal thread
+            reply_to_id = self.telegram.get_reply_to_message_id(message)
+            if reply_to_id:
+                from src.tools.journal import get_journal_thread_for_date, save_journal_entry
+                from src.utils.time import get_brt
+                from datetime import datetime
+                
+                today = datetime.now(get_brt()).strftime("%Y-%m-%d")
+                thread_id = get_journal_thread_for_date(today)
+                
+                if thread_id and str(thread_id) == str(reply_to_id):
+                    # This is a journal entry!
+                    entry_type = "audio" if original_message_type == MessageType.AUDIO else "text"
+                    save_journal_entry(
+                        content=message.content,
+                        entry_type=entry_type,
+                        thread_message_id=int(reply_to_id)
+                    )
+                    logger.info(f"✓ Saved journal entry ({entry_type}, {len(message.content)} chars)")
+                    
+                    # Send acknowledgment without processing with agent
+                    response = Message(
+                        content="✅ Journal entry saved!",
+                        type=MessageType.TEXT,
+                        reply_to=reply_to_id
+                    )
+                    await self.telegram.send(response)
+                    return  # Don't process with agent
             
             # Use sender_id as session_id (channel-agnostic)
             session_id = message.sender_id

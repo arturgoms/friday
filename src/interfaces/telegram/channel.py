@@ -244,7 +244,8 @@ class TelegramChannel(Channel):
             channel=self.channel_id,
             metadata={
                 'telegram_message_id': update.message.message_id,
-                'chat_id': update.effective_chat.id
+                'chat_id': update.effective_chat.id,
+                'reply_to_message_id': update.message.reply_to_message.message_id if update.message.reply_to_message else None
             }
         )
         
@@ -274,7 +275,8 @@ class TelegramChannel(Channel):
                 'telegram_message_id': update.message.message_id,
                 'chat_id': update.effective_chat.id,
                 'duration': voice.duration,
-                'mime_type': voice.mime_type
+                'mime_type': voice.mime_type,
+                'reply_to_message_id': update.message.reply_to_message.message_id if update.message.reply_to_message else None
             }
         )
         

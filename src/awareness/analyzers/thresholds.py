@@ -57,6 +57,10 @@ class ThresholdAnalyzer(RealTimeAnalyzer):
         if "external_services" in data:
             insights.extend(self._check_external_services_thresholds(data["external_services"]))
 
+        # Portfolio thresholds (from portfolio_tracking data source)
+        if "portfolio_tracking" in data:
+            insights.extend(self._check_portfolio_thresholds(data["portfolio_tracking"]))
+
         # Weather thresholds (extreme conditions)
         if "weather" in data:
             insights.extend(self._check_weather_thresholds(data["weather"]))
@@ -419,3 +423,60 @@ class ThresholdAnalyzer(RealTimeAnalyzer):
             data={"value": value, "threshold": threshold_value, "level": level},
             expires_at=datetime.now(get_brt()) + timedelta(hours=2),
         )
+    
+    def _check_portfolio_thresholds(self, portfolio: Dict[str, Any]) -> List[Insight]:
+        """Check investment portfolio thresholds for significant losses."""
+        insights = []
+        
+        # Get summary data from portfolio_summary
+        summary = portfolio.get("summary", {})
+        if not summary:
+            return insights
+        
+        # Calculate profit percentage from profits data
+        profits = summary.get("profits", [])
+        total_profit = sum(p.get("profit", 0) for p in profits if isinstance(p, dict))
+        
+        # Check for significant daily losses (requires historical comparison)
+        # For now, we'll focus on total portfolio performance
+        
+        # Get thresholds
+        thresholds = self.config.get("thresholds", {})
+        loss_warning = thresholds.get("portfolio_total_loss_percent", {}).get("warning", -10.0)
+        loss_critical = thresholds.get("portfolio_total_loss_percent", {}).get("critical", -15.0)
+        
+        # Check if we have enough data to calculate percentage
+        # This would require comparing current vs invested value
+        # For now, alert on absolute profit/loss if significantly negative
+        
+        if total_profit < 0:
+            abs_loss = abs(total_profit)
+            
+            if abs_loss >= abs(loss_critical) * 1000:  # Assuming threshold is in percentage, scale to BRL
+                dedupe_key = "portfolio_loss_critical"
+                if not self.was_insight_delivered_recently(dedupe_key, hours=24):
+                    insights.append(Insight(
+                        type=InsightType.THRESHOLD,
+                        category=Category.SYSTEM,  # Could add Category.INVESTMENTS if we add it
+                        priority=Priority.HIGH,
+                        title="Significant portfolio loss detected",
+                        message=f"Portfolio showing loss of R$ {abs_loss:,.2f}. Review your positions.",
+                        dedupe_key=dedupe_key,
+                        data={"total_profit": total_profit},
+                        expires_at=datetime.now(get_brt()) + timedelta(hours=24),
+                    ))
+            elif abs_loss >= abs(loss_warning) * 1000:
+                dedupe_key = "portfolio_loss_warning"
+                if not self.was_insight_delivered_recently(dedupe_key, hours=24):
+                    insights.append(Insight(
+                        type=InsightType.THRESHOLD,
+                        category=Category.SYSTEM,
+                        priority=Priority.MEDIUM,
+                        title="Portfolio loss alert",
+                        message=f"Portfolio showing loss of R$ {abs_loss:,.2f}.",
+                        dedupe_key=dedupe_key,
+                        data={"total_profit": total_profit},
+                        expires_at=datetime.now(get_brt()) + timedelta(hours=24),
+                    ))
+        
+        return insights

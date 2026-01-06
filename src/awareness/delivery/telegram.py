@@ -207,9 +207,22 @@ class TelegramChannel(DeliveryChannel):
             return False
     
     def send_insight_sync(self, insight: Insight) -> bool:
-        """Synchronous version of send_insight."""
+        """Synchronous version of send_insight.
+        
+        Returns:
+            True if sent successfully, False otherwise
+        """
+        message_id = self.send_insight_sync_with_id(insight)
+        return message_id is not None
+    
+    def send_insight_sync_with_id(self, insight: Insight) -> Optional[int]:
+        """Synchronous version of send_insight that returns message_id.
+        
+        Returns:
+            Message ID if sent successfully, None otherwise
+        """
         if not self.enabled:
-            return False
+            return None
         
         import httpx
         
@@ -217,7 +230,7 @@ class TelegramChannel(DeliveryChannel):
         
         try:
             with httpx.Client(timeout=10.0) as client:
-                all_success = True
+                message_id = None
                 for chat_id in self.chat_ids:
                     response = client.post(
                         f"{self.api_base}/sendMessage",
@@ -229,16 +242,18 @@ class TelegramChannel(DeliveryChannel):
                     )
                     
                     if response.status_code == 200:
-                        logger.info(f"Sent insight to Telegram chat {chat_id}: {insight.title}")
+                        result = response.json()
+                        message_id = result.get("result", {}).get("message_id")
+                        logger.info(f"Sent insight to Telegram chat {chat_id}: {insight.title} (msg_id={message_id})")
                     else:
                         logger.error(f"Failed to send insight to chat {chat_id}: {response.status_code}")
-                        all_success = False
+                        return None
                 
-                return all_success
+                return message_id  # Return message_id from last chat (or first if only one)
                     
         except Exception as e:
             logger.error(f"Error sending insight to Telegram: {e}")
-            return False
+            return None
     
     def send_alert_sync(self, message: str, level: str = "info") -> bool:
         """Synchronous version of send_alert."""

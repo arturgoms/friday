@@ -229,6 +229,9 @@ class Database:
         """
         with self.get_connection() as conn:
             result = conn.execute(text(sql), params or {})
+            # Commit for INSERT/UPDATE/DELETE statements
+            if sql.strip().upper().startswith(('INSERT', 'UPDATE', 'DELETE', 'REPLACE')):
+                conn.commit()
             return result
     
     def fetchall(self, sql: str, params: Optional[Dict[str, Any]] = None) -> List[tuple]:

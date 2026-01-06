@@ -107,6 +107,7 @@ def create_agent(
             "- Calendar: View and manage events\n"
             "- Weather: Current conditions and forecasts\n"
             "- Health: Garmin fitness and sleep data\n"
+            "- Investments: Portfolio tracking, operations history, dividends/earnings, tax reports (DARF/IRPF), performance analytics\n"
             "- System: Monitor disk, CPU, memory, Friday services\n"
             "- Sensors: Check external services, homelab hardware stats\n"
             "- Memory: Access conversation history\n"
@@ -285,6 +286,7 @@ try:
     from src.tools import vault
     from src.tools import weather
     from src.tools import web
+    from src.tools import investments
     logger.info("Tools loaded successfully")
 except Exception as e:
     logger.warning(f"Error loading tools: {e}")

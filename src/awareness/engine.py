@@ -292,6 +292,36 @@ class AwarenessEngine:
         except Exception as e:
             logger.error(f"Failed to import tool {tool_path}: {e}")
             return None
+    
+    def _send_journal_thread(self, insight):
+        """Send journal thread and return message_id.
+        
+        Args:
+            insight: The insight to send
+            
+        Returns:
+            Message ID if sent successfully, None otherwise
+        """
+        try:
+            # Get telegram channel from delivery manager's registry
+            telegram_channel = self.delivery.channel_registry.get("telegram")
+            if not telegram_channel:
+                logger.error("[AWARENESS] No Telegram channel configured")
+                return None
+            
+            # Send and get message_id
+            message_id = telegram_channel.send_insight_sync_with_id(insight)
+            
+            if message_id:
+                logger.info(f"[AWARENESS] Journal thread sent with message_id={message_id}")
+                return message_id
+            else:
+                logger.error("[AWARENESS] Failed to send journal thread")
+                return None
+                
+        except Exception as e:
+            logger.error(f"[AWARENESS] Error sending journal thread: {e}")
+            return None
 
     def _run_analyzers(self, data: Dict[str, Any]) -> List[Insight]:
         """Run all analyzers and collect insights.
@@ -398,7 +428,19 @@ class AwarenessEngine:
                                 message=report_text,
                                 confidence=1.0
                             )
-                            self.delivery.process_insights([insight])
+                            
+                            # For journal threads, send directly and capture message_id
+                            if name == "journal_thread":
+                                message_id = self._send_journal_thread(insight)
+                                if message_id:
+                                    # Save thread to database
+                                    from src.tools.journal import save_journal_thread
+                                    save_journal_thread(today, message_id)
+                                    logger.info(f"[AWARENESS] Saved journal thread with message_id={message_id}")
+                            else:
+                                # Regular report - use normal delivery process
+                                self.delivery.process_insights([insight])
+                            
                             self._report_state[name] = today
                             logger.info(f"[AWARENESS] Sent report: {name}")
                     else:

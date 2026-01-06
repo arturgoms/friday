@@ -200,6 +200,25 @@ class Channel(ABC):
         """
         pass
     
+    def get_reply_to_message_id(self, message: Message) -> Optional[str]:
+        """
+        Extract the reply-to message ID from an incoming message.
+        
+        This method allows each channel to implement its own logic for
+        detecting if a message is a reply to another message. Useful for
+        thread detection (e.g., journal entries replying to journal threads).
+        
+        Args:
+            message: The incoming message to check
+            
+        Returns:
+            The message ID being replied to, or None if not a reply
+        """
+        # Default implementation checks metadata
+        if message.metadata:
+            return message.metadata.get('reply_to_message_id')
+        return None
+    
     def __repr__(self):
         return f"<{self.__class__.__name__} id={self.channel_id} running={self._is_running}>"
 
