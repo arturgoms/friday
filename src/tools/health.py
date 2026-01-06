@@ -618,6 +618,109 @@ def get_activity_summary(days: int = 7) -> Dict[str, Any]:
 
 
 @agent.tool_plain
+def get_todays_steps() -> Dict[str, Any]:
+    """Get today's step count with comparison to recent average.
+    
+    Returns:
+        Dict with today's steps, recent average, and comparison
+    """
+    activity = get_activity_summary(days=30)
+    
+    daily_values = activity.get("steps", {}).get("daily_values", [])
+    
+    if not daily_values:
+        return {"error": "No step data available"}
+    
+    today_steps = daily_values[0]
+    avg_steps = round(sum(daily_values[1:]) / len(daily_values[1:])) if len(daily_values) > 1 else today_steps
+    
+    return {
+        "today": today_steps,
+        "average_30d": avg_steps,
+        "vs_average": today_steps - avg_steps,
+        "vs_average_percent": round((today_steps - avg_steps) / avg_steps * 100, 1) if avg_steps > 0 else 0
+    }
+
+
+@agent.tool_plain
+def get_body_battery_today() -> Dict[str, Any]:
+    """Get body battery levels for today.
+    
+    Returns start (wake) and current/end levels.
+    
+    Returns:
+        Dict with body battery start, end, and current level
+    """
+    from datetime import datetime
+    
+    # Get today's body battery data
+    start_of_day = datetime.now(settings.TIMEZONE).replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    query = f"""
+    SELECT "BodyBatteryLevel"
+    FROM "BodyBatteryIntraday"
+    WHERE time >= '{start_of_day.strftime('%Y-%m-%dT%H:%M:%SZ')}'
+    ORDER BY time ASC
+    """
+    
+    points = _query(query)
+    
+    if not points:
+        return {"error": "No body battery data available"}
+    
+    levels = [int(p.get("BodyBatteryLevel", 0) or 0) for p in points]
+    
+    return {
+        "start": levels[0] if levels else 0,
+        "end": levels[-1] if levels else 0,
+        "current": levels[-1] if levels else 0,
+        "min": min(levels) if levels else 0,
+        "max": max(levels) if levels else 0,
+        "readings_count": len(levels)
+    }
+
+
+@agent.tool_plain
+def get_stress_today() -> Dict[str, Any]:
+    """Get stress levels for today.
+    
+    Returns average, min, max stress levels.
+    
+    Returns:
+        Dict with stress statistics
+    """
+    from datetime import datetime
+    
+    # Get today's stress data
+    start_of_day = datetime.now(settings.TIMEZONE).replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    query = f"""
+    SELECT "stressLevel"
+    FROM "StressIntraday"
+    WHERE time >= '{start_of_day.strftime('%Y-%m-%dT%H:%M:%SZ')}'
+    ORDER BY time ASC
+    """
+    
+    points = _query(query)
+    
+    if not points:
+        return {"error": "No stress data available"}
+    
+    levels = [int(p.get("stressLevel", 0) or 0) for p in points if p.get("stressLevel")]
+    
+    if not levels:
+        return {"error": "No valid stress data"}
+    
+    return {
+        "average": round(sum(levels) / len(levels)),
+        "min": min(levels),
+        "max": max(levels),
+        "current": levels[-1],
+        "readings_count": len(levels)
+    }
+
+
+@agent.tool_plain
 def get_garmin_sync_status() -> Dict[str, Any]:
     """Check when Garmin data was last synced to InfluxDB.
     

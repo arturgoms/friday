@@ -8,9 +8,11 @@ exec /home/artur/.local/share/virtualenvs/friday/bin/python -m vllm.entrypoints.
     --model "$MODEL_ID" \
     --served-model-name "NousResearch/Hermes-4-14B" \
     --port 8000 \
-    --gpu-memory-utilization 0.85 \
+    --gpu-memory-utilization 0.95 \
     --trust-remote-code \
     --dtype auto \
-    --max-model-len 16384 \
+    --max-model-len 32000 \
+    --kv-cache-dtype fp8 \
     --enable-auto-tool-choice \
-    --tool-call-parser hermes
+    --tool-call-parser hermes \
+    --enforce-eager

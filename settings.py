@@ -410,6 +410,14 @@ AWARENESS = {
             "channels": ["telegram"],
             "description": "Evening report with sleep recommendation",
         },
+        {
+            "name": "generate_daily_journal_note",
+            "tool": "src.tools.journal.generate_daily_note",
+            "schedule": "50 23 * * *",  # Daily at 23:50
+            "enabled": True,
+            "channels": [],  # No Telegram delivery, just generates note
+            "description": "Compile daily journal entries into Obsidian note",
+        },
     ],
 
     # Analyzer configuration
