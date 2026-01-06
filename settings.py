@@ -97,6 +97,15 @@ TELEGRAM_USER_ID = os.getenv("TELEGRAM_USER_ID", "")
 
 
 # ==============================================================================
+# External Services - Investments
+# ==============================================================================
+
+# Dlombello Planilhas API
+DLP_API_KEY = os.getenv("DLP_API_KEY", "")
+DLP_API_BASE_URL = os.getenv("DLP_API_BASE_URL", "https://users.dlombelloplanilhas.com")
+
+
+# ==============================================================================
 # External Services - Calendar
 # ==============================================================================
 
@@ -365,10 +374,26 @@ AWARENESS = {
             "analyzers": ["threshold"],
             "description": "External services health checks (Portainer, Home Assistant, Dashy, etc.)",
         },
+        {
+            "name": "portfolio_tracking",
+            "tool": "src.tools.investments.get_portfolio_summary",
+            "schedule": "0 9,21 * * *",  # Daily at 9 AM and 9 PM
+            "enabled": True,
+            "analyzers": ["threshold"],
+            "description": "Investment portfolio tracking with profits, earnings, and performance metrics",
+        },
     ],
 
     # Scheduled reports - composite tools that return formatted strings
     "scheduled_reports": [
+        {
+            "name": "journal_thread",
+            "tool": "src.tools.journal.create_daily_journal_thread",
+            "schedule": "0 8 * * *",  # Daily at 8:00 AM
+            "enabled": True,
+            "channels": ["telegram"],
+            "description": "Daily journal thread for user entries",
+        },
         {
             "name": "morning_briefing",
             "tool": "src.tools.daily_briefing.report_morning_briefing",
@@ -440,6 +465,8 @@ AWARENESS = {
         "sleep_score": {"warning": 50, "critical": 40},
         "garmin_sync_stale_hours": 12,
         "services_down": {"warning": 1, "critical": 2},  # Alert on ANY service down, critical if 2+
+        "portfolio_daily_loss_percent": {"warning": -3.0, "critical": -5.0},  # Alert on daily losses > 3%
+        "portfolio_total_loss_percent": {"warning": -10.0, "critical": -15.0},  # Alert on total losses > 10%
     },
 
     # Storage settings
