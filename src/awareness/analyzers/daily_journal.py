@@ -39,9 +39,9 @@ class DailyJournalAnalyzer(ScheduledAnalyzer):
     
     def __init__(self, config, store):
         super().__init__("daily_journal", config, store)
-        # TODO: Replace JournalCollector with direct tool calls
-        # self.journal_collector = JournalCollector(store)
-        logger.warning("DailyJournalAnalyzer needs refactoring - JournalCollector is disabled")
+        # Journal system now works via scheduled reports:
+        # - journal_thread: Creates daily thread via scheduled report
+        # - generate_daily_note: Compiles entries into Obsidian note via scheduled report
     
     def analyze(self, data: Dict[str, Any]) -> List[Insight]:
         """Process daily journal data and create the daily note.

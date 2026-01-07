@@ -2,7 +2,7 @@
 
 **Your Personal AI Assistant with Memory, Tools, and Multi-Channel Communication**
 
-Friday is an intelligent AI assistant built on **Hermes-4-14B** via vLLM, featuring conversation history, channel-agnostic communication, 25+ tools, and an awareness engine for proactive insights.
+Friday is an intelligent AI assistant built on **Hermes-4-14B** via vLLM, featuring conversation history, multi-channel communication, 79 tools, an awareness engine for proactive insights, and a comprehensive CLI for system management.
 
 ---
 
@@ -14,8 +14,10 @@ Friday is an intelligent AI assistant built on **Hermes-4-14B** via vLLM, featur
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
-- [Message Flow](#message-flow)
+- [CLI Commands](#cli-commands)
 - [Tools](#tools)
+- [Journal System](#journal-system)
+- [Scheduled Reports](#scheduled-reports)
 - [Services](#services)
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
@@ -26,11 +28,13 @@ Friday is an intelligent AI assistant built on **Hermes-4-14B** via vLLM, featur
 
 ### Core Capabilities
 - **🤖 Local LLM**: Runs Hermes-4-14B locally via vLLM (no cloud API needed)
-- **💬 Multi-Channel**: Telegram bot with extensible channel system (email, web, CLI coming soon)
+- **💬 Multi-Channel**: Telegram bot + comprehensive CLI interface
 - **🧠 Conversation Memory**: Channel-agnostic session tracking with full history persistence
-- **🛠️ 25+ Tools**: Calendar, weather, health, system monitoring, vault operations, and more
-- **📊 Awareness Engine**: Proactive insights from health data, calendar, homelab metrics etc
+- **🛠️ 79 Tools**: Calendar, weather, health, investments, journal, system monitoring, and more
+- **📊 Awareness Engine**: Proactive insights from health data, calendar, portfolio metrics, etc.
 - **🗄️ Centralized Database**: SQLite-based storage for conversations, facts, insights, and snapshots
+- **⚡ Powerful CLI**: Manage services, execute tools, query database, trigger scheduled reports
+- **📔 Journal System**: Daily journal threads with voice transcription and automatic note generation
 - **🔌 Extensible**: Easy to add new tools, channels, and data collectors
 
 ### Intelligence Features
@@ -38,7 +42,9 @@ Friday is an intelligent AI assistant built on **Hermes-4-14B** via vLLM, featur
 - **Tool Chaining**: Agent can use multiple tools to answer complex questions
 - **Proactive Alerts**: Awareness engine monitors thresholds and sends notifications
 - **Smart Scheduling**: Respects quiet hours and daily notification budgets
-- **Health Integration**: Garmin data via InfluxDB for health insights
+- **Health Integration**: Garmin data via InfluxDB for comprehensive health insights
+- **Portfolio Tracking**: Investment monitoring with DLP API integration
+- **Markdown Formatting**: All messages properly formatted for Telegram
 
 ---
 
@@ -54,58 +60,61 @@ Friday is an intelligent AI assistant built on **Hermes-4-14B** via vLLM, featur
 │  │   Server    │                                             │
 │  └──────┬──────┘                                             │
 │         │                                                     │
-│    ┌────┴────────────────────────────┐                      │
-│    │                                  │                      │
-│  ┌─▼──────────┐              ┌───────▼────────┐            │
-│  │  Telegram  │              │   Awareness     │            │
-│  │  Interface │              │   Engine        │            │
-│  │            │              │                 │            │
-│  │  • Recv    │              │ ┌─────────────┐ │            │
-│  │  • Agent   │              │ │ Collectors  │ │            │
-│  │  • Send    │              │ │ - Health    │ │            │
-│  │  • History │              │ │ - Calendar  │ │            │
-│  └────────────┘              │ │ - Homelab   │ │            │
-│       ▲                      │ │ - Weather   │ │            │
-│       │                      │ └─────────────┘ │            │
-│       │                      │                 │            │
-│       │                      │ ┌─────────────┐ │            │
-│       │                      │ │ Analyzers   │ │            │
-│       │                      │ │ - Threshold │ │            │
-│       │                      │ │ - Calendar  │ │            │
-│       │                      │ │ - Journal   │ │            │
-│       │                      │ └─────────────┘ │            │
-│       │                      │                 │            │
-│       │                      │ ┌─────────────┐ │            │
-│       │                      │ │ Decision    │ │            │
-│       │                      │ │ Engine      │ │            │
-│       │                      │ │ - Budget    │ │            │
-│       │                      │ │ - Priority  │ │            │
-│       │                      │ │ - Quiet hrs │ │            │
-│       │                      │ └─────────────┘ │            │
-│       │                      │                 │            │
-│       └──────────────────────┤ Delivery       │            │
-│                              │ Manager         │            │
-│                              └─────────────────┘            │
-│                                                              │
-│  ┌──────────────────────────────────────────────────┐      │
-│  │ Centralized Database (SQLite)                    │      │
-│  │ - conversation_history: Full message history     │      │
-│  │ - facts: User knowledge/preferences              │      │
-│  │ - insights: Generated observations               │      │
-│  │ - snapshots: Point-in-time data captures         │      │
-│  │ - deliveries: Notification tracking              │      │
-│  │ - reach_out_budget: Daily notification limits    │      │
-│  │ - journal_threads: Journal message tracking      │      │
-│  └──────────────────────────────────────────────────┘      │
-│                                                              │
-│  ┌──────────────────────────────────────────────────┐      │
-│  │ Agent Tools (25+)                                 │      │
-│  │ ✓ Calendar    ✓ Weather     ✓ Health             │      │
-│  │ ✓ System      ✓ Memory      ✓ People             │      │
-│  │ ✓ Vault       ✓ Web         ✓ Media              │      │
-│  │ ✓ Daily Brief ✓ More...                          │      │
-│  └──────────────────────────────────────────────────┘      │
-└─────────────────────────────────────────────────────────────┘
+│    ┌────┴────────────────────────────────┐                  │
+│    │                                      │                  │
+│  ┌─▼──────────┐    ┌──────────┐   ┌─────▼─────────┐       │
+│  │  Telegram  │    │   CLI    │   │   Awareness    │       │
+│  │ Interface  │    │Interface │   │   Engine       │       │
+│  │            │    │          │   │                │       │
+│  │  • Recv    │    │• Tools   │   │ ┌────────────┐ │       │
+│  │  • Agent   │    │• DB Ops  │   │ │ Collectors │ │       │
+│  │  • Send    │    │• Schedule│   │ │ - Health   │ │       │
+│  │  • History │    │• Status  │   │ │ - Calendar │ │       │
+│  │  • Journal │    │• Logs    │   │ │ - Homelab  │ │       │
+│  └────────────┘    └──────────┘   │ │ - Weather  │ │       │
+│       ▲                            │ │ - Portfolio│ │       │
+│       │                            │ └────────────┘ │       │
+│       │                            │                │       │
+│       │                            │ ┌────────────┐ │       │
+│       │                            │ │ Analyzers  │ │       │
+│       │                            │ │ - Threshold│ │       │
+│       │                            │ │ - Calendar │ │       │
+│       │                            │ └────────────┘ │       │
+│       │                            │                │       │
+│       │                            │ ┌────────────┐ │       │
+│       │                            │ │ Decision   │ │       │
+│       │                            │ │ Engine     │ │       │
+│       │                            │ │ - Budget   │ │       │
+│       │                            │ │ - Priority │ │       │
+│       │                            │ │ - Quiet hrs│ │       │
+│       │                            │ └────────────┘ │       │
+│       │                            │                │       │
+│       └────────────────────────────┤ Scheduled    │       │
+│                                    │ Reports      │       │
+│                                    │ - Journal    │       │
+│                                    │ - Briefings  │       │
+│                                    └──────────────┘       │
+│                                                            │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │ Centralized Database (SQLite)                    │    │
+│  │ - conversation_history: Full message history     │    │
+│  │ - facts: User knowledge/preferences              │    │
+│  │ - insights: Generated observations               │    │
+│  │ - snapshots: Point-in-time data captures         │    │
+│  │ - deliveries: Notification tracking              │    │
+│  │ - journal_threads: Journal message tracking      │    │
+│  │ - journal_entries: Daily journal entries         │    │
+│  └──────────────────────────────────────────────────┘    │
+│                                                            │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │ Agent Tools (79 tools across 13 modules)         │    │
+│  │ ✓ Calendar     ✓ Weather      ✓ Health           │    │
+│  │ ✓ System       ✓ Memory       ✓ People           │    │
+│  │ ✓ Vault        ✓ Web          ✓ Media            │    │
+│  │ ✓ Daily Brief  ✓ Investments  ✓ Journal          │    │
+│  │ ✓ Utils        ✓ Sensors                         │    │
+│  └──────────────────────────────────────────────────┘    │
+└────────────────────────────────────────────────────────────┘
 ```
 
 ### Component Overview
@@ -113,35 +122,39 @@ Friday is an intelligent AI assistant built on **Hermes-4-14B** via vLLM, featur
 **1. vLLM Server**
 - Serves Hermes-4-14B model on `localhost:8000`
 - OpenAI-compatible API
-- ~14B parameters, quantized for local inference
+- ~14B parameters, optimized for local inference
 
-**2. Telegram Interface** (`src/interfaces/telegram/`)
-- Receives messages from authorized users
-- Routes to AI agent with conversation history
-- Sends responses back to Telegram
+**2. Communication Interfaces**
+- **Telegram Interface** (`src/interfaces/telegram/`): Bot interface with conversation history
+- **CLI Interface** (`src/interfaces/cli/`): Comprehensive command-line tools
 
 **3. Core Agent** (`src/core/agent.py`)
-- Pydantic-AI agent with tool support
+- Pydantic-AI agent with 79 registered tools
 - Manages conversation context
-- Routes tool calls to appropriate functions
+- Auto-snapshot system for data tools
 
 **4. Conversation Manager** (`src/core/conversation.py`)
 - Channel-agnostic session tracking
 - Persists full conversation history to database
-- Loads history for context in each interaction
 
 **5. Tools** (`src/tools/`)
 - Modular tool system using `@agent.tool` decorators
-- Each tool module auto-registers on import
-- Access to session context via dependency injection
+- 13 modules: calendar, health, investments, journal, weather, vault, etc.
+- Auto-registration on import
 
 **6. Awareness Engine** (`src/awareness/`)
-- Collects data from various sources (health, calendar, homelab)
-- Generates insights based on thresholds and patterns
-- Decision engine determines when to notify user
-- Respects quiet hours and daily notification budgets
+- Collects data from health, calendar, portfolio, homelab, weather
+- Generates insights based on thresholds
+- Decision engine with quiet hours and notification budgets
+- Scheduled reports system (journal threads, briefings)
 
-**7. Database** (`src/core/database.py`)
+**7. Journal System** (`src/tools/journal.py`)
+- Daily thread creation at 8:00 AM
+- Voice message transcription via Whisper
+- Automatic note generation at 11:50 PM
+- Obsidian vault integration
+
+**8. Database** (`src/core/database.py`)
 - Centralized SQLite database
 - Schema migration support
 - Unified storage for all Friday components
@@ -153,7 +166,7 @@ Friday is an intelligent AI assistant built on **Hermes-4-14B** via vLLM, featur
 ### System Requirements
 - **OS**: Linux (tested on Ubuntu/Debian)
 - **RAM**: 16GB minimum (32GB recommended for vLLM)
-- **GPU**: Optional (NVIDIA GPU with CUDA for faster inference)
+- **GPU**: NVIDIA GPU with CUDA recommended for faster inference
 - **Storage**: 50GB+ free space for models
 
 ### Software Dependencies
@@ -169,6 +182,8 @@ vllm>=0.6.0
 python-telegram-bot>=21.0
 logfire
 sqlalchemy>=2.0
+typer
+rich
 
 # Tools
 caldav
@@ -176,8 +191,9 @@ icalendar
 pytz
 httpx
 influxdb-client
+openai-whisper
 
-# Optional (for embeddings/knowledge)
+# Optional
 sentence-transformers
 numpy
 ```
@@ -185,8 +201,9 @@ numpy
 ### External Services (Optional)
 - **Telegram Bot**: Token from [@BotFather](https://t.me/BotFather)
 - **InfluxDB**: For health data storage (Garmin sync)
-- **Google Calendar**: For calendar integration
+- **CalDAV**: For calendar integration (Google/Nextcloud)
 - **OpenWeatherMap**: For weather data
+- **DLP API**: For investment portfolio tracking
 
 ---
 
@@ -198,37 +215,27 @@ git clone <repository-url>
 cd friday
 ```
 
-### 2. Create Virtual Environment
-```bash
-python3.12 -m venv ~/.local/share/virtualenvs/friday
-source ~/.local/share/virtualenvs/friday/bin/activate
-```
-
-### 3. Install Dependencies
+### 2. Install Dependencies
 ```bash
 pipenv install
 ```
 
-### 4. Configure Environment
+### 3. Configure Environment
 Create `.env` file in project root:
 ```bash
 cp .env.example .env
 # Edit .env with your configuration
 ```
 
-### 5. Download Model
-The model will be auto-downloaded by vLLM on first start. To pre-download:
+### 4. Download Model
+The model will be auto-downloaded by vLLM on first start.
+
+### 5. Initialize Database
 ```bash
-# Using huggingface-cli
-huggingface-cli download NousResearch/Hermes-3-Llama-3.1-8B
+pipenv run python -c "from src.core.database import Database; Database()"
 ```
 
-### 6. Initialize Database
-```bash
-python -c "from src.core.database import Database; Database()"
-```
-
-### 7. Install Services
+### 6. Install Services
 ```bash
 # Copy service files
 cp services/*.service ~/.config/systemd/user/
@@ -247,16 +254,13 @@ systemctl --user start friday-telegram.service
 systemctl --user start friday-awareness.service
 ```
 
-### 8. Verify Installation
+### 7. Verify Installation
 ```bash
-# Check service status
-systemctl --user status friday-vllm.service
-systemctl --user status friday-telegram.service
-systemctl --user status friday-awareness.service
+# Using CLI
+./friday status
 
 # Check logs
-tail -f logs/friday-telegram.log
-tail -f logs/friday-awareness.log
+./friday logs
 ```
 
 ---
@@ -270,6 +274,7 @@ tail -f logs/friday-awareness.log
 # User Information
 USER_NAME=Artur
 USER_TIMEZONE=America/Sao_Paulo
+TELEGRAM_USER_ID=your_telegram_user_id
 
 # LLM Configuration
 LLM_MODEL_NAME=NousResearch/Hermes-4-14B
@@ -281,18 +286,16 @@ LLM_MAX_TOKENS=4096
 PATHS_ROOT=/home/artur/friday
 PATHS_DATA=/home/artur/friday/data
 PATHS_LOGS=/home/artur/friday/logs
+PATHS_VAULT=/home/artur/brain
 ```
 
 #### Telegram
 ```bash
 TELEGRAM_BOT_TOKEN=your_bot_token_here
-TELEGRAM_USER_ID=your_telegram_user_id
 ```
 
-#### Calendar
+#### Calendar (CalDAV)
 ```bash
-GOOGLE_CALENDAR_ID=your_calendar_id@gmail.com
-# OR for Nextcloud CalDAV
 NEXTCLOUD_CALDAV_URL=https://your-nextcloud.com/remote.php/dav/
 NEXTCLOUD_USERNAME=your_username
 NEXTCLOUD_PASSWORD=your_password
@@ -304,22 +307,28 @@ OPENWEATHERMAP_API_KEY=your_api_key
 WEATHER_LOCATION=Curitiba,BR
 ```
 
-#### Health (Optional)
+#### Health (Garmin/InfluxDB)
 ```bash
 INFLUXDB_HOST=192.168.1.16
 INFLUXDB_PORT=8088
 INFLUXDB_DATABASE=GarminStats
 ```
 
+#### Investments
+```bash
+DLP_API_KEY=your_dlp_api_key
+DLP_API_BASE_URL=https://api.dlombelloplanilhas.com
+```
+
 ### Settings File (`settings.py`)
 
-Main configuration is in `settings.py`. Key sections:
-
-**Paths**: Data, logs, vault locations
-**User**: Name, timezone, profile
-**LLM**: Model, base URL, parameters
-**Services**: Telegram, calendar, weather API keys
-**Awareness**: Thresholds, quiet hours, notification budgets
+Main configuration in `settings.py`:
+- **Paths**: Data, logs, vault locations
+- **User**: Name, timezone, profile, relationships
+- **LLM**: Model, base URL, parameters
+- **Services**: API keys for external services
+- **Awareness**: Thresholds, quiet hours, notification budgets
+- **Scheduled Reports**: Journal threads, briefings, note generation
 
 ---
 
@@ -327,271 +336,322 @@ Main configuration is in `settings.py`. Key sections:
 
 ### Telegram Bot
 
-Send messages to your Friday bot on Telegram. The bot supports:
+Send messages to your Friday bot on Telegram:
 
 **Basic Conversation:**
 ```
 You: Hi Friday
 Friday: Hello! How can I assist you today?
-
-You: What time is it?
-Friday: It's currently 10:36 AM on January 5th, 2026.
 ```
 
 **Using Tools:**
 ```
 You: What's the weather like?
-Friday: The weather in Curitiba is cloudy with a temperature of 20.9°C...
+Friday: The weather in Curitiba is cloudy with a temperature of 24.92°C...
 
 You: What's on my calendar today?
 Friday: [Retrieves and displays calendar events]
+
+You: Show my portfolio
+Friday: [Displays investment portfolio summary]
 ```
 
-**Memory & Context:**
+**Journal Entries:**
 ```
-You: My favorite color is blue
-Friday: ✅ I'll remember that!
+Daily at 8:00 AM, Friday sends a journal thread.
+Reply to the thread throughout the day with:
+• Text entries
+• Voice messages (auto-transcribed)
 
-You: What did I just say?
-Friday: You said your favorite color is blue.
-```
-
-**System Monitoring:**
-```
-You: Show me system status
-Friday: [CPU, memory, disk usage, service status]
-
-You: Check Friday logs
-Friday: [Recent log entries from Friday services]
-```
-
-### CLI Usage 
-
-Run agent directly:
-```bash
-python -m src.core.agent "What's the weather?"
+At 11:50 PM, Friday compiles into Obsidian note.
 ```
 
 ---
 
-## 🔄 Message Flow
+## 🖥️ CLI Commands
 
-### Incoming Message Flow
+The Friday CLI provides comprehensive system management:
 
-```
-1. Telegram receives message
-   └─> TelegramChannel._handle_text_message()
+### Tool Execution
+```bash
+# List all tools (grouped by module)
+./friday tools
 
-2. Convert to Message object
-   └─> sender_id, content, metadata extracted
+# Search for specific tools
+./friday tools --search health
 
-3. Call registered handler
-   └─> FridayTelegramBot.handle_incoming_message()
+# Get tool details and parameters
+./friday tool-info get_sleep_summary
 
-4. Get conversation history
-   └─> ConversationManager.get_history(session_id)
-   └─> Loads previous messages from database
+# Execute a tool
+./friday tool get_current_weather
 
-5. Create agent dependencies
-   └─> AgentDeps(session_id) for tool context
+# Execute with parameters
+./friday tool get_sleep_summary days=7
 
-6. Run AI agent
-   └─> agent.run(content, message_history, deps)
-   └─> Agent processes with tools & history
-   └─> LLM generates response (via vLLM)
-
-7. Extract tool calls (if any)
-   └─> Agent may call: weather, calendar, system, etc.
-   └─> Tools use ctx.deps.session_id for context
-
-8. Get agent response
-   └─> result.output contains final response
-
-9. Update conversation history
-   └─> ConversationManager.update_history()
-   └─> Persists new messages to database
-
-10. Send response back
-    └─> TelegramChannel.send(response)
-    └─> Message delivered to Telegram
+# Execute and send to Telegram
+./friday tool will_it_rain --send telegram
 ```
 
-### Awareness Engine Flow
+### Interactive Chat
+```bash
+# Start interactive chat session
+./friday chat
 
-```
-1. Engine runs every 10 seconds
-   └─> awareness.engine.run()
-
-2. Collect data
-   └─> HealthCollector: Garmin metrics from InfluxDB
-   └─> CalendarCollector: Upcoming events
-   └─> HomelabCollector: Service status checks
-   └─> WeatherCollector: Current conditions
-
-3. Save snapshots
-   └─> Store point-in-time data in database
-   └─> Indexed by collector + timestamp
-
-4. Run analyzers
-   └─> ThresholdAnalyzer: Check metric thresholds
-   └─> CalendarAnalyzer: Meeting reminders
-   └─> JournalAnalyzer: Daily journal prompts
-
-5. Generate insights
-   └─> Insight objects with type, priority, message
-   └─> Deduplication by dedupe_key
-
-6. Decision engine processes
-   └─> Check priority vs current time
-   └─> Verify notification budget
-   └─> Check quiet hours
-   └─> Decide: DELIVER, QUEUE, BATCH, or SKIP
-
-7. Delivery manager
-   └─> For DELIVER: Send via Telegram
-   └─> For QUEUE: Hold for later
-   └─> For SKIP: Log and discard
-   └─> Track delivery in database
+# One-off query
+./friday run "what's the weather?"
 ```
 
-### Tool Execution Flow
+### Scheduled Reports
+```bash
+# List all scheduled reports
+./friday schedule-list
 
+# Show report details
+./friday schedule-status journal_thread
+
+# Manually trigger any report
+./friday schedule-trigger journal_thread
+./friday schedule-trigger morning_briefing
+./friday schedule-trigger generate_daily_journal_note
 ```
-1. Agent identifies tool is needed
-   └─> Based on user query and system prompt
 
-2. Tool function called
-   └─> @agent.tool decorator provides ctx
-   └─> ctx.deps.session_id available for context
+### Database Operations
+```bash
+# List rows from any table
+./friday db-list journal_entries --limit 10
+./friday db-list snapshots --where "source='calendar'"
 
-3. Tool executes
-   └─> Access database via get_db()
-   └─> Use session_id for user-specific data
-   └─> Return string result
+# Execute raw SQL
+./friday db-query "SELECT * FROM insights WHERE priority='high'"
 
-4. Agent processes tool result
-   └─> LLM incorporates result into response
-   └─> May call additional tools if needed
+# Delete rows
+./friday db-delete journal_entries "date='2026-01-05'" --yes
+./friday db-delete snapshots "id=123"
+```
 
-5. Final response generated
-   └─> Agent returns complete answer
-   └─> Includes tool results in natural language
+### System Management
+```bash
+# Show system status (services, GPU, tools)
+./friday status
+
+# View logs
+./friday logs                    # All services
+./friday logs friday-telegram    # Specific service
+./friday logs --no-follow        # Don't follow
+
+# Restart services
+./friday restart all
+./friday restart friday-telegram
 ```
 
 ---
 
 ## 🛠️ Tools
 
-Friday includes 25+ tools across 10 modules:
+Friday includes **79 tools across 13 modules**:
 
-### Calendar (`src/tools/calendar.py`)
-- `get_todays_events()`: Today's schedule
-- `get_upcoming_events()`: Future events
-- `create_event()`: Add calendar event
-- `search_events()`: Find events by query
+### Calendar (6 tools)
+- `get_calendar_events()`: Upcoming events
+- `get_today_schedule()`: Today's schedule
+- `add_calendar_event()`: Create event
+- `delete_calendar_event()`: Remove event
+- `find_free_time()`: Available time slots
+- `get_next_event()`: Next upcoming event
 
-### Weather (`src/tools/weather.py`)
+### Weather (2 tools)
 - `get_current_weather()`: Current conditions
 - `get_weather_forecast()`: Multi-day forecast
-- `get_weather_alerts()`: Severe weather warnings
 
-### Health (`src/tools/health.py`)
-- `get_latest_health_metrics()`: Recent Garmin data
-- `get_sleep_data()`: Sleep analysis
-- `get_activity_summary()`: Daily activity stats
-- `get_heart_rate_data()`: HR trends
+### Health (14 tools)
+- `get_sleep_summary()`: Sleep analysis
+- `get_recovery_status()`: Recovery metrics
+- `get_body_battery()`: Energy levels
+- `get_stress()`: Stress levels
+- `get_steps()`: Step count
+- `get_recent_runs()`: Running activities
+- `get_vo2max()`: VO2 Max trend
+- `get_hrv_trend()`: HRV analysis
+- `get_heart_rate_summary()`: HR data
+- `get_activity_summary()`: Daily activity
+- `get_stress_levels()`: Stress patterns
+- `report_training_load()`: Training analysis
+- `report_weekly_health()`: Weekly summary
+- `get_garmin_sync_status()`: Sync status
 
-### System (`src/tools/system.py`)
-- `get_current_time()`: Current time in user timezone
-- `get_disk_usage()`: Disk space info
-- `get_system_info()`: CPU, memory, OS details
-- `get_uptime()`: System uptime
-- `get_friday_status()`: Friday services status
-- `get_friday_logs()`: Recent log entries
-- `get_homelab_status()`: Homelab service checks
+### Investments (13 tools)
+- `get_portfolio()`: Full portfolio
+- `get_portfolio_summary()`: Summary stats
+- `get_portfolio_history()`: Performance over time
+- `get_operations()`: Transaction history
+- `get_earnings()`: Dividends/proventos
+- `get_darf()`: Tax reports
+- `get_irpf()`: Tax reports
+- `list_wallets()`: All wallets
+- And more...
 
-### Memory (`src/tools/memory.py`)
-- `get_conversation_history()`: Search past messages
-- `get_last_user_message()`: Previous user message
-- `summarize_conversation()`: Conversation summary
+### Journal (2 tools)
+- `create_daily_journal_thread()`: Create daily thread
+- `get_todays_journal_entries()`: Today's entries
 
-### People (`src/tools/people.py`)
-- `list_contacts()`: All contacts
-- `get_contact()`: Contact details
-- `search_contacts()`: Find people
+### Daily Briefing (2 tools)
+- `report_morning_briefing()`: Morning summary
+- `report_evening_briefing()`: Evening recap
 
-### Vault (`src/tools/vault.py`)
-- `vault_search_notes()`: Search Obsidian vault
-- `vault_read_note()`: Read note contents
-- `vault_create_note()`: Create new note
-- `vault_append_note()`: Add to existing note
+### System (5 tools)
+- `get_current_time()`: Current time
+- `check_external_service()`: Service monitoring
+- `send_notification()`: Send alerts
+- `clear_conversation_history()`: Reset history
 
-### Web (`src/tools/web.py`)
-- `web_search()`: DuckDuckGo search
-- `fetch_url()`: Get webpage content
+### Memory (5 tools)
+- `search_facts()`: Search knowledge
+- `store_fact()`: Save information
+- `update_fact()`: Update knowledge
+- `delete_fact()`: Remove information
+- `list_all_facts()`: All stored facts
 
-### Media (`src/tools/media.py`)
-- `media_play()`: Play media on device
-- `media_pause()`: Pause playback
-- `media_next()`: Next track
+### Vault (5 tools)
+- `vault_search_notes()`: Search Obsidian
+- `vault_read_note()`: Read note
+- `vault_create_note()`: Create note
+- `vault_write_note()`: Write note
+- `vault_append_note()`: Append to note
 
-### Daily Briefing (`src/tools/daily_briefing.py`)
-- `get_morning_briefing()`: Morning summary
-- `get_evening_summary()`: Evening recap
+### Web (3 tools)
+- `web_search()`: Search engine
+- `web_fetch()`: Fetch webpage
+- `web_news()`: News search
+
+### Media (3 tools)
+- `generate_image()`: Stable Diffusion
+- `generate_speech()`: Text-to-speech
+- `transcribe_audio()`: Speech-to-text
+
+### People (2 tools)
+- `calculate_age()`: Age calculation
+- Birthday tracking
+
+### Utils (11 tools)
+- Date calculations
+- Time utilities
+- Format conversions
+
+---
+
+## 📔 Journal System
+
+Friday includes a comprehensive journal system:
+
+### Daily Flow
+1. **8:00 AM**: Friday sends journal thread to Telegram
+2. **Throughout day**: Reply to thread with:
+   - Text entries (thoughts, notes, events)
+   - Voice messages (automatically transcribed)
+3. **11:50 PM**: Friday compiles entries into Obsidian note
+
+### Features
+- **Voice Transcription**: Whisper automatically transcribes voice messages
+- **AI Enhancement**: Translates Portuguese→English, improves clarity
+- **Context Integration**: Weather, health metrics, calendar, steps
+- **Habit Detection**: Automatically detects habits from entries
+- **Markdown Format**: Clean Obsidian-compatible notes
+- **Database Tracking**: Thread message IDs saved for reply detection
+
+### Manual Triggers
+```bash
+# Create journal thread now
+./friday schedule-trigger journal_thread
+
+# Generate today's note now
+./friday schedule-trigger generate_daily_journal_note
+
+# View entries
+./friday db-list journal_entries --where "date='2026-01-07'"
+```
+
+### Generated Note Structure
+```markdown
+---
+date: '2026-01-07'
+day: Wednesday
+habits: [exercise, reading]
+sleep: 8.1h
+sleep_score: 81
+tags: [time/daily, area/friday]
+weather: broken clouds, 24°C
+---
+
+## Health
+- Sleep: 8.1h (score: 81)
+- Body Battery: 43%→81%
+- Stress: 22
+- Training Readiness: 99 (PRIME)
+- HRV: 49ms
+- Steps: 432
+
+## Calendar
+[Your events]
+
+## Journal
+### Events
+- [Your events from entries]
+
+### Thoughts
+- [Your thoughts]
+
+### Reminders
+- [Your reminders]
+```
+
+---
+
+## 📅 Scheduled Reports
+
+Friday automatically sends reports via Telegram:
+
+| Report | Schedule | Channels | Description |
+|--------|----------|----------|-------------|
+| `journal_thread` | 8:00 AM daily | Telegram | Daily journal thread |
+| `morning_briefing` | 10:00 AM daily | Telegram | Morning summary with health, calendar, weather |
+| `evening_report` | 9:00 PM daily | Telegram | Evening recap with sleep recommendation |
+| `generate_daily_journal_note` | 11:50 PM daily | None | Compiles journal into Obsidian note |
+
+### Manual Triggers
+```bash
+# Trigger any report manually
+./friday schedule-trigger morning_briefing
+
+# View all scheduled reports
+./friday schedule-list
+
+# Check report status
+./friday schedule-status morning_briefing
+```
 
 ---
 
 ## 🎛️ Services
 
 ### friday-vllm.service
-
-**Purpose**: Serves the LLM model via vLLM
-
-**Location**: `~/.config/systemd/user/friday-vllm.service`
-
-**Key Settings**:
-```ini
-ExecStart=/home/artur/.local/share/virtualenvs/friday/bin/python -m vllm.entrypoints.openai.api_server \
-    --model NousResearch/Hermes-4-14B \
-    --host 0.0.0.0 \
-    --port 8000 \
-    --max-model-len 8192 \
-    --gpu-memory-utilization 0.95
-```
+Serves the LLM model via vLLM on `localhost:8000`
 
 **Commands**:
 ```bash
 systemctl --user start friday-vllm.service
 systemctl --user status friday-vllm.service
-journalctl --user -u friday-vllm.service -f
+./friday restart friday-vllm
 ```
 
 ### friday-telegram.service
+Telegram bot interface
 
-**Purpose**: Telegram bot interface
-
-**Location**: `~/.config/systemd/user/friday-telegram.service`
-
-**Key Settings**:
-```ini
-ExecStartPre=/bin/bash -c 'for i in {1..30}; do curl -s http://localhost:8000/v1/models >/dev/null && exit 0; sleep 3; done; exit 1'
-ExecStart=/home/artur/.local/share/virtualenvs/friday/bin/python -m src.interfaces.telegram.run
-```
-
-**Logs**: `logs/friday-telegram.log`
+**Logs**: `logs/friday-telegram.log` or `./friday logs friday-telegram`
 
 ### friday-awareness.service
+Proactive insights, scheduled reports, portfolio monitoring
 
-**Purpose**: Proactive insights and notifications
-
-**Location**: `~/.config/systemd/user/friday-awareness.service`
-
-**Key Settings**:
-```ini
-ExecStart=/home/artur/.local/share/virtualenvs/friday/bin/python -m src.awareness.engine
-```
-
-**Logs**: `logs/friday-awareness.log`
+**Logs**: `logs/friday-awareness.log` or `./friday logs friday-awareness`
 
 ---
 
@@ -603,40 +663,77 @@ ExecStart=/home/artur/.local/share/virtualenvs/friday/bin/python -m src.awarenes
 friday/
 ├── .env                      # Environment variables
 ├── settings.py               # Main configuration
-├── requirements.txt          # Python dependencies
+├── friday                    # CLI wrapper script
+├── Pipfile                   # Pipenv dependencies
+├── Pipfile.lock
 │
 ├── src/
 │   ├── core/
-│   │   ├── agent.py         # Pydantic-AI agent
+│   │   ├── agent.py         # Pydantic-AI agent (79 tools)
 │   │   ├── conversation.py  # Conversation manager
 │   │   ├── database.py      # Database layer
-│   │   └── embeddings.py    # Embeddings model
+│   │   ├── embeddings.py    # Embeddings model
+│   │   ├── influxdb.py      # InfluxDB client
+│   │   ├── utils.py         # Core utilities
+│   │   └── vault.py         # Vault operations
 │   │
 │   ├── interfaces/          # Communication channels
 │   │   ├── base.py          # Base channel class
-│   │   ├── manager.py       # Channel manager
-│   │   └── telegram/
-│   │       ├── channel.py   # Telegram implementation
-│   │       └── run.py       # Bot entry point
+│   │   ├── manager.py       # Interface manager
+│   │   ├── telegram/        # Telegram bot interface
+│   │   │   ├── channel.py   # Telegram channel
+│   │   │   └── receiver.py  # Message receiver
+│   │   └── cli/             # CLI interface
+│   │       ├── channel.py   # CLI channel
+│   │       ├── commands.py  # All CLI commands (~700 lines)
+│   │       └── run.py       # Entry point
 │   │
-│   ├── tools/               # Agent tools (25+)
-│   │   ├── calendar.py
-│   │   ├── weather.py
-│   │   ├── health.py
-│   │   ├── system.py
-│   │   ├── memory.py
-│   │   └── ...
+│   ├── tools/               # Agent tools (79 tools across 16 files)
+│   │   ├── calendar.py      # Calendar operations (6 tools)
+│   │   ├── weather.py       # Weather data (2 tools)
+│   │   ├── health.py        # Garmin/health metrics (14 tools)
+│   │   ├── investments.py   # Portfolio tracking (13 tools)
+│   │   ├── journal.py       # Journal system (2 tools)
+│   │   ├── daily_briefing.py # Morning/evening reports (2 tools)
+│   │   ├── system.py        # System monitoring (4 tools)
+│   │   ├── memory.py        # Facts/knowledge (5 tools)
+│   │   ├── knowledge.py     # Advanced knowledge search
+│   │   ├── vault.py         # Obsidian integration (5 tools)
+│   │   ├── web.py           # Web search/fetch (3 tools)
+│   │   ├── media.py         # Image/speech generation (3 tools)
+│   │   ├── people.py        # Contact management (2 tools)
+│   │   ├── sensors.py       # Hardware/homelab sensors (10 tools)
+│   │   └── utils.py         # Date/time utilities (11 tools)
 │   │
-│   ├── awareness/           # Insights engine
-│   │   ├── engine.py        # Main engine
-│   │   ├── store.py         # Data storage
-│   │   ├── collectors/      # Data collectors
+│   ├── awareness/           # Proactive insights engine
+│   │   ├── engine.py        # Main awareness loop
+│   │   ├── store.py         # Data persistence
+│   │   ├── models.py        # Data models
 │   │   ├── analyzers/       # Insight generators
-│   │   ├── decision/        # Notification logic
+│   │   │   ├── base.py
+│   │   │   ├── calendar.py  # Calendar insights
+│   │   │   ├── daily_journal.py # Journal analysis
+│   │   │   ├── resources.py # Resource monitoring
+│   │   │   ├── sleep.py     # Sleep insights
+│   │   │   ├── stress.py    # Stress analysis
+│   │   │   └── thresholds.py # Threshold monitoring
+│   │   ├── decision/        # Delivery decision logic
+│   │   │   ├── budget.py    # Notification budgets
+│   │   │   └── engine.py    # Decision engine
 │   │   └── delivery/        # Delivery channels
+│   │       ├── channels.py  # Channel registry
+│   │       ├── loader.py    # Channel loader
+│   │       ├── manager.py   # Delivery manager
+│   │       └── telegram.py  # Telegram delivery
 │   │
-│   └── utils/
-│       └── time.py          # Time utilities
+│   ├── config/              # Configuration
+│   │   └── system_prompts.py # Agent system prompts
+│   │
+│   ├── utils/               # Shared utilities
+│   │   └── time.py          # Time utilities
+│   │
+│   └── tests/               # Test suite
+│       └── ...
 │
 ├── services/                # Systemd service files
 │   ├── friday-vllm.service
@@ -648,20 +745,19 @@ friday/
 │
 ├── logs/                    # Log files
 │   ├── friday-telegram.log
-│   └── friday-awareness.log
+│   ├── friday-awareness.log
+│   └── friday-vllm.log
 │
-└── README.md               # This file
+└── brain/                   # Obsidian vault
+    └── 2. Time/
+        └── 2.2 Daily/       # Daily journal notes (YYYY-MM-DD.md)
 ```
 
 ### Adding a New Tool
 
-1. **Create tool file** in `src/tools/`:
+1. **Create tool in `src/tools/`**:
 ```python
-# src/tools/my_tool.py
 from src.core.agent import agent
-import logging
-
-logger = logging.getLogger(__name__)
 
 @agent.tool_plain
 def my_function(param: str) -> str:
@@ -674,215 +770,122 @@ def my_function(param: str) -> str:
     Returns:
         Result description
     """
-    # Your implementation
     return f"Result: {param}"
 ```
 
-2. **Import in agent.py**:
+2. **Import in `src/core/agent.py`**:
 ```python
-# src/core/agent.py
-from src.tools import my_tool  # Add to imports
+from src.tools import my_module
 ```
 
-3. **Restart service**:
+3. **Restart services**:
 ```bash
-systemctl --user restart friday-telegram.service
+./friday restart all
 ```
 
-### Adding a Tool with Session Context
+4. **Test**:
+```bash
+./friday tools --search my_function
+./friday tool my_function param=test
+```
 
-For tools that need access to user session:
+### Adding a Scheduled Report
 
+1. **Add to `settings.py` scheduled_reports**:
 ```python
-@agent.tool
-def my_contextual_tool(ctx, param: str) -> str:
-    """Tool with access to session."""
-    session_id = ctx.deps.session_id
-    
-    # Use session_id for user-specific operations
-    db = get_db()
-    # ... your implementation
-    
-    return result
+{
+    "name": "my_report",
+    "tool": "src.tools.my_module.my_report_function",
+    "schedule": "0 12 * * *",  # Noon daily
+    "enabled": True,
+    "channels": ["telegram"],
+    "description": "My custom report",
+}
 ```
 
-### Adding a New Communication Channel
-
-1. **Create channel class** in `src/interfaces/`:
-```python
-from src.interfaces.base import Channel, Message, DeliveryResult
-
-class MyChannel(Channel):
-    def __init__(self):
-        super().__init__("my_channel")
-        
-    async def send(self, message: Message) -> DeliveryResult:
-        # Implement sending logic
-        pass
-        
-    async def start(self):
-        # Start listening for messages
-        pass
-        
-    async def stop(self):
-        # Cleanup
-        pass
+2. **Restart awareness**:
+```bash
+./friday restart friday-awareness
 ```
 
-2. **Create run script**:
-```python
-# src/interfaces/my_channel/run.py
-from src.core.agent import agent, AgentDeps
-from src.core.conversation import get_conversation_manager
-
-class MyChannelBot:
-    async def handle_message(self, message: Message):
-        session_id = message.sender_id
-        history = self.conv_manager.get_history(session_id)
-        deps = AgentDeps(session_id=session_id)
-        
-        result = await agent.run(
-            message.content, 
-            message_history=history,
-            deps=deps
-        )
-        
-        self.conv_manager.update_history(session_id, result.all_messages())
-        await self.channel.send(Message(content=result.output))
+3. **Test manually**:
+```bash
+./friday schedule-trigger my_report
 ```
-
-3. **Create systemd service**
-4. **Test and deploy**
 
 ---
 
 ## 🔧 Troubleshooting
 
+### Check System Status
+```bash
+./friday status
+```
+
 ### Services Not Starting
 
-**Check vLLM first** (other services depend on it):
+**Check vLLM first**:
 ```bash
 systemctl --user status friday-vllm.service
-journalctl --user -u friday-vllm.service -n 50
 ```
 
 **Common issues**:
-- Out of memory: Reduce `--max-model-len` or use smaller model
-- CUDA errors: Check GPU drivers, fall back to CPU
-- Port already in use: Change port in service file
+- Out of memory: Reduce `--max-model-len` or `--gpu-memory-utilization`
+- CUDA errors: Check GPU drivers
+- Port in use: Change port in service file
 
 ### Telegram Bot Not Responding
 
-1. **Check service status**:
 ```bash
-systemctl --user status friday-telegram.service
-tail -f logs/friday-telegram.log
-```
+# Check service
+./friday logs friday-telegram
 
-2. **Verify vLLM is running**:
-```bash
+# Verify vLLM
 curl http://localhost:8000/v1/models
+
+# Check authorization
+# Verify TELEGRAM_USER_ID in .env
 ```
 
-3. **Check authorization**:
-- Verify `TELEGRAM_USER_ID` in `.env` matches your Telegram user ID
-- Find your ID by sending `/start` to [@userinfobot](https://t.me/userinfobot)
+### Tool Not Found
 
-4. **Check conversation history**:
 ```bash
-sqlite3 data/friday.db "SELECT COUNT(*) FROM conversation_history;"
-```
+# List all tools
+./friday tools
 
-### Tools Not Working
-
-**Check if tool is loaded**:
-```bash
-grep "Tools loaded successfully" logs/friday-telegram.log
-```
-
-**Check for import errors**:
-```bash
-journalctl --user -u friday-telegram.service | grep -i error
-```
-
-**Test tool directly**:
-```python
-from src.tools.system import get_current_time
-print(get_current_time())
+# Check if module is imported in agent.py
+grep "from src.tools import" src/core/agent.py
 ```
 
 ### Database Issues
 
-**Check database exists**:
 ```bash
-ls -lh data/friday.db
+# Check tables
+./friday db-query ".schema"
+
+# View recent entries
+./friday db-list conversation_history --limit 10
 ```
 
-**Verify schema**:
+### CLI Commands
+
 ```bash
-sqlite3 data/friday.db ".schema"
-```
+# Get help
+./friday --help
+./friday tool --help
+./friday schedule-trigger --help
 
-**Reset database** (⚠️ deletes all data):
-```bash
-rm data/friday.db
-python -c "from src.core.database import Database; Database()"
-```
-
-### Memory/Performance Issues
-
-**Check memory usage**:
-```bash
-systemctl --user status friday-vllm.service | grep Memory
-```
-
-**Reduce vLLM memory**:
-Edit `friday-vllm.service`:
-```ini
---gpu-memory-utilization 0.8  # Reduce from 0.95
---max-model-len 4096         # Reduce from 8192
-```
-
-**Use smaller model**:
-```ini
---model NousResearch/Hermes-3-Llama-3.1-8B  # 8B instead of 14B
-```
-
-### Awareness Engine Issues
-
-**Check for errors**:
-```bash
-tail -f logs/friday-awareness.log | grep ERROR
-```
-
-**Common issues**:
-- Config errors: Check `settings.py` structure
-- Database errors: Verify tables exist
-- InfluxDB connection: Check `INFLUXDB_*` settings
-
-**Disable awareness temporarily**:
-```bash
-systemctl --user stop friday-awareness.service
-systemctl --user disable friday-awareness.service
+# Check tool parameters
+./friday tool-info <tool-name>
 ```
 
 ---
 
 ## 📚 Additional Resources
 
-### Documentation
 - **Pydantic-AI**: https://ai.pydantic.dev/
 - **vLLM**: https://docs.vllm.ai/
-- **python-telegram-bot**: https://docs.python-telegram-bot.org/
-
-### Model Information
 - **Hermes-4-14B**: https://huggingface.co/NousResearch/Hermes-4-14B
-- Fine-tuned for instruction following and function calling
-
-### Community
-- Report issues: Create GitHub issue
-- Contribute: Pull requests welcome
-- Questions: Open discussion
 
 ---
 
@@ -890,27 +893,8 @@ systemctl --user disable friday-awareness.service
 
 - **NousResearch** for Hermes models
 - **vLLM Team** for fast inference
-- **Pydantic** for the amazing Pydantic-AI framework
+- **Pydantic** for Pydantic-AI framework
 - **Python Telegram Bot** maintainers
-
----
-
-## 🗺️ Roadmap
-
-### Current Features
-- ✅ Telegram interface with tools
-- ✅ Conversation history
-- ✅ Awareness engine
-- ✅ 25+ tools
-- ✅ Health/calendar integration
-
-### Planned
-- ⏳ Knowledge tool (vault integration)
-- ⏳ Web interface
-- ⏳ Voice input/output
-- ⏳ Multi-user support
-- ⏳ Plugin system
-- ⏳ Docker deployment
 
 ---
 
