@@ -618,48 +618,92 @@ def get_activity_summary(days: int = 7) -> Dict[str, Any]:
 
 
 @agent.tool_plain
-def get_todays_steps() -> Dict[str, Any]:
-    """Get today's step count with comparison to recent average.
+def get_steps(date: str = None) -> Dict[str, Any]:
+    """Get step count for a specific date with comparison to recent average.
+    
+    Args:
+        date: Date in YYYY-MM-DD format. Defaults to today.
     
     Returns:
-        Dict with today's steps, recent average, and comparison
+        Dict with steps, recent average, and comparison
     """
-    activity = get_activity_summary(days=30)
+    from datetime import datetime, timedelta
     
-    daily_values = activity.get("steps", {}).get("daily_values", [])
+    # Parse date or use today
+    if date:
+        target_date = datetime.strptime(date, '%Y-%m-%d').replace(tzinfo=settings.TIMEZONE)
+    else:
+        target_date = datetime.now(settings.TIMEZONE)
     
-    if not daily_values:
-        return {"error": "No step data available"}
+    # Query for the specific date
+    start_of_day = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_day = start_of_day + timedelta(days=1)
     
-    today_steps = daily_values[0]
-    avg_steps = round(sum(daily_values[1:]) / len(daily_values[1:])) if len(daily_values) > 1 else today_steps
+    query = f"""
+    SELECT totalSteps
+    FROM DailyStats
+    WHERE time >= '{start_of_day.strftime('%Y-%m-%dT%H:%M:%SZ')}'
+    AND time < '{end_of_day.strftime('%Y-%m-%dT%H:%M:%SZ')}'
+    ORDER BY time DESC
+    LIMIT 1
+    """
+    points = _query(query)
+    
+    if not points:
+        return {"error": "No step data available for this date"}
+    
+    target_steps = int(points[0].get("totalSteps", 0) or 0)
+    
+    # Get 30-day average (excluding target date)
+    avg_start = target_date - timedelta(days=30)
+    avg_query = f"""
+    SELECT totalSteps
+    FROM DailyStats
+    WHERE time >= '{avg_start.strftime('%Y-%m-%dT%H:%M:%SZ')}'
+    AND time < '{start_of_day.strftime('%Y-%m-%dT%H:%M:%SZ')}'
+    ORDER BY time DESC
+    """
+    avg_points = _query(avg_query)
+    
+    avg_steps = 0
+    if avg_points:
+        steps_list = [int(p.get("totalSteps", 0) or 0) for p in avg_points]
+        avg_steps = round(sum(steps_list) / len(steps_list)) if steps_list else 0
     
     return {
-        "today": today_steps,
+        "today": target_steps,
         "average_30d": avg_steps,
-        "vs_average": today_steps - avg_steps,
-        "vs_average_percent": round((today_steps - avg_steps) / avg_steps * 100, 1) if avg_steps > 0 else 0
+        "vs_average": target_steps - avg_steps,
+        "vs_average_percent": round((target_steps - avg_steps) / avg_steps * 100, 1) if avg_steps > 0 else 0
     }
 
 
 @agent.tool_plain
-def get_body_battery_today() -> Dict[str, Any]:
-    """Get body battery levels for today.
+def get_body_battery(date: str = None) -> Dict[str, Any]:
+    """Get body battery levels for a specific date.
     
-    Returns start (wake) and current/end levels.
+    Args:
+        date: Date in YYYY-MM-DD format. Defaults to today.
     
     Returns:
         Dict with body battery start, end, and current level
     """
-    from datetime import datetime
+    from datetime import datetime, timedelta
     
-    # Get today's body battery data
-    start_of_day = datetime.now(settings.TIMEZONE).replace(hour=0, minute=0, second=0, microsecond=0)
+    # Parse date or use today
+    if date:
+        target_date = datetime.strptime(date, '%Y-%m-%d').replace(tzinfo=settings.TIMEZONE)
+    else:
+        target_date = datetime.now(settings.TIMEZONE)
+    
+    start_of_day = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_day = start_of_day + timedelta(days=1)
     
     query = f"""
     SELECT "BodyBatteryLevel"
     FROM "BodyBatteryIntraday"
     WHERE time >= '{start_of_day.strftime('%Y-%m-%dT%H:%M:%SZ')}'
+    AND time < '{end_of_day.strftime('%Y-%m-%dT%H:%M:%SZ')}'
     ORDER BY time ASC
     """
     
@@ -681,23 +725,31 @@ def get_body_battery_today() -> Dict[str, Any]:
 
 
 @agent.tool_plain
-def get_stress_today() -> Dict[str, Any]:
-    """Get stress levels for today.
+def get_stress(date: str = None) -> Dict[str, Any]:
+    """Get stress levels for a specific date.
     
-    Returns average, min, max stress levels.
+    Args:
+        date: Date in YYYY-MM-DD format. Defaults to today.
     
     Returns:
         Dict with stress statistics
     """
-    from datetime import datetime
+    from datetime import datetime, timedelta
     
-    # Get today's stress data
-    start_of_day = datetime.now(settings.TIMEZONE).replace(hour=0, minute=0, second=0, microsecond=0)
+    # Parse date or use today
+    if date:
+        target_date = datetime.strptime(date, '%Y-%m-%d').replace(tzinfo=settings.TIMEZONE)
+    else:
+        target_date = datetime.now(settings.TIMEZONE)
+    
+    start_of_day = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_day = start_of_day + timedelta(days=1)
     
     query = f"""
     SELECT "stressLevel"
     FROM "StressIntraday"
     WHERE time >= '{start_of_day.strftime('%Y-%m-%dT%H:%M:%SZ')}'
+    AND time < '{end_of_day.strftime('%Y-%m-%dT%H:%M:%SZ')}'
     ORDER BY time ASC
     """
     

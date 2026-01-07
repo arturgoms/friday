@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Friday 3.0 CLI Entry Point
+# Friday CLI Entry Point
 # This script wraps the Python CLI to ensure proper environment
 
 FRIDAY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$FRIDAY_ROOT"
 
 # Run via pipenv to ensure dependencies are available
-exec pipenv run python -m src.cli "$@"
+exec pipenv run python -m src.interfaces.cli.run "$@"

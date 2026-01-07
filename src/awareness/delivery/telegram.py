@@ -23,6 +23,45 @@ from src.awareness.delivery.channels import DeliveryChannel
 logger = logging.getLogger(__name__)
 
 
+def escape_markdown(text: str) -> str:
+    """
+    Escape special characters for Telegram Markdown.
+    
+    Telegram uses a specific Markdown format that requires escaping:
+    - _ (underscore)
+    - * (asterisk)
+    - [ (left bracket)
+    - ] (right bracket)
+    - ( (left parenthesis)
+    - ) (right parenthesis)
+    - ~ (tilde)
+    - ` (backtick)
+    - > (greater than)
+    - # (hash)
+    - + (plus)
+    - - (minus)
+    - = (equal)
+    - | (pipe)
+    - { (left brace)
+    - } (right brace)
+    - . (dot after numbers)
+    - ! (exclamation)
+    
+    Args:
+        text: Text to escape
+        
+    Returns:
+        Escaped text safe for Telegram Markdown
+    """
+    # Characters that need escaping in Telegram Markdown
+    escape_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    
+    for char in escape_chars:
+        text = text.replace(char, f'\\{char}')
+    
+    return text
+
+
 class TelegramChannel(DeliveryChannel):
     """
     Telegram delivery channel.
@@ -356,8 +395,9 @@ class TelegramChannel(DeliveryChannel):
         """Format an insight for Telegram.
         
         Returns clean, concise message with Markdown formatting.
+        Properly escapes special characters for Telegram Markdown.
         """
-        # Priority emoji
+        # Priority emoji (emojis don't need escaping)
         emoji = {
             Priority.URGENT: "🚨",
             Priority.HIGH: "⚠️",
@@ -365,11 +405,15 @@ class TelegramChannel(DeliveryChannel):
             Priority.LOW: "ℹ️",
         }.get(insight.priority, "•")
         
+        # Escape title and message for Markdown
+        title = escape_markdown(insight.title)
+        message = escape_markdown(insight.message)
+        
         # Build concise message
         if len(insight.message) < 60 and "\n" not in insight.message:
-            return f"{emoji} {insight.title}: {insight.message}"
+            return f"{emoji} {title}: {message}"
         else:
-            return f"{emoji} {insight.title}\n{insight.message}"
+            return f"{emoji} {title}\n{message}"
 
 
 # Backward compatibility alias

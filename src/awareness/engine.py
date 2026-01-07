@@ -74,8 +74,9 @@ class AwarenessEngine:
                 schedule = source["schedule"]
                 now = datetime.now()
                 
-                # Create croniter instance
-                cron = croniter(schedule, now)
+                # Create croniter instance with timezone
+                now_tz = datetime.now(settings.TIMEZONE)
+                cron = croniter(schedule, now_tz)
                 self._data_source_iters[name] = cron
                 self._data_source_next_run[name] = cron.get_next(datetime)
                 
@@ -90,10 +91,10 @@ class AwarenessEngine:
             if report.get("enabled", True):
                 name = report["name"]
                 schedule = report["schedule"]
-                now = datetime.now()
+                now_tz = datetime.now(settings.TIMEZONE)
                 
-                # Create croniter instance
-                cron = croniter(schedule, now)
+                # Create croniter instance with timezone
+                cron = croniter(schedule, now_tz)
                 self._report_iters[name] = cron
                 self._report_next_run[name] = cron.get_next(datetime)
                 
@@ -158,7 +159,7 @@ class AwarenessEngine:
         while self._running:
             try:
                 cycle_start = time_module.time()
-                now = datetime.now()
+                now = datetime.now(settings.TIMEZONE)
 
                 # 1. Run data sources that are due
                 collected_data = await self._run_data_sources(now)
@@ -293,6 +294,68 @@ class AwarenessEngine:
             logger.error(f"Failed to import tool {tool_path}: {e}")
             return None
     
+    def trigger_report(self, report_name: str) -> bool:
+        """Manually trigger a scheduled report by name.
+        
+        This allows manual execution of any scheduled report through the same
+        code path as the automatic scheduler, ensuring consistent behavior.
+        
+        Args:
+            report_name: Name of the report to trigger (e.g., 'journal_thread')
+            
+        Returns:
+            True if report was triggered successfully, False otherwise
+        """
+        # Find the report configuration
+        for report in self.config.get("scheduled_reports", []):
+            if report["name"] == report_name:
+                if not report.get("enabled", True):
+                    logger.warning(f"[AWARENESS] Report {report_name} is disabled")
+                    return False
+                
+                # Execute the report with force=True to bypass duplicate check
+                return self._execute_report(report, force=True)
+        
+        logger.error(f"[AWARENESS] Report not found: {report_name}")
+        return False
+    
+    def get_scheduled_reports(self) -> list[dict]:
+        """Get list of all scheduled reports with their configuration.
+        
+        Returns:
+            List of report configurations
+        """
+        return self.config.get("scheduled_reports", [])
+    
+    def get_report_status(self, report_name: str) -> dict:
+        """Get status information for a specific report.
+        
+        Args:
+            report_name: Name of the report
+            
+        Returns:
+            Dict with status info (last_sent, next_run, enabled)
+        """
+        # Find the report
+        report_config = None
+        for report in self.config.get("scheduled_reports", []):
+            if report["name"] == report_name:
+                report_config = report
+                break
+        
+        if not report_config:
+            return {"error": f"Report '{report_name}' not found"}
+        
+        return {
+            "name": report_name,
+            "enabled": report_config.get("enabled", True),
+            "schedule": report_config.get("schedule", "N/A"),
+            "last_sent": self._report_state.get(report_name),
+            "next_run": self._report_next_run.get(report_name).strftime("%Y-%m-%d %H:%M:%S") if self._report_next_run.get(report_name) else None,
+            "description": report_config.get("description", ""),
+            "channels": report_config.get("channels", []),
+        }
+    
     def _send_journal_thread(self, insight):
         """Send journal thread and return message_id.
         
@@ -381,77 +444,95 @@ class AwarenessEngine:
 
         return all_insights
 
+    def _execute_report(self, report: dict, force: bool = False) -> bool:
+        """Execute a scheduled report.
+        
+        Args:
+            report: Report configuration dict
+            force: If True, bypasses duplicate check and sends anyway
+            
+        Returns:
+            True if report was executed successfully, False otherwise
+        """
+        name = report["name"]
+        tool_path = report["tool"]
+        today = datetime.now(settings.TIMEZONE).strftime("%Y-%m-%d")
+        
+        # Check if already sent today (unless forced)
+        if not force:
+            last_sent = self._report_state.get(name)
+            if last_sent == today:
+                logger.info(f"[AWARENESS] Report {name} already sent today, skipping")
+                return False
+        
+        try:
+            # Import and call the report tool
+            tool_func = self._import_tool(tool_path)
+            
+            if not tool_func:
+                logger.error(f"[AWARENESS] Report tool not found: {tool_path}")
+                return False
+            
+            logger.info(f"[AWARENESS] Executing scheduled report: {name}")
+            report_text = tool_func()
+            
+            # Send via delivery manager
+            channels = report.get("channels", ["telegram"])
+            if "telegram" in channels:
+                # Create a simple insight to wrap the report
+                from src.awareness.models import Insight, Priority, InsightType, Category
+                insight = Insight(
+                    type=InsightType.DIGEST,
+                    category=Category.SYSTEM,
+                    priority=Priority.HIGH,
+                    title=name,
+                    message=report_text,
+                    confidence=1.0
+                )
+                
+                # For journal threads, send directly and capture message_id
+                if name == "journal_thread":
+                    message_id = self._send_journal_thread(insight)
+                    if message_id:
+                        # Save thread to database
+                        from src.tools.journal import save_journal_thread
+                        save_journal_thread(today, message_id)
+                        logger.info(f"[AWARENESS] Saved journal thread with message_id={message_id}")
+                else:
+                    # Regular report - use normal delivery process
+                    self.delivery.process_insights([insight])
+                
+                self._report_state[name] = today
+                logger.info(f"[AWARENESS] Sent report: {name}")
+                return True
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"[AWARENESS] Report {name} error: {e}", exc_info=True)
+            return False
+    
     async def _check_scheduled_reports(self, now: datetime):
         """Check if any scheduled reports are due and send them.
         
         Args:
             now: Current datetime
         """
-        today = now.strftime("%Y-%m-%d")
-        
         for report in self.config.get("scheduled_reports", []):
             if not report.get("enabled", True):
                 continue
                 
             name = report["name"]
-            tool_path = report["tool"]  # Format: "src.tools.daily_briefing.report_morning_briefing"
             
             # Check if due to run
             next_run = self._report_next_run.get(name)
             if next_run and now >= next_run:
-                # Check if already sent today (prevent duplicates)
-                last_sent = self._report_state.get(name)
-                if last_sent == today:
-                    # Update next run but skip sending
-                    cron = self._report_iters[name]
-                    self._report_next_run[name] = cron.get_next(datetime)
-                    continue
+                # Execute the report
+                self._execute_report(report, force=False)
                 
-                try:
-                    # Import and call the report tool
-                    tool_func = self._import_tool(tool_path)
-                    
-                    if tool_func:
-                        logger.info(f"[AWARENESS] Sending scheduled report: {name}")
-                        report_text = tool_func()
-                        
-                        # Send via delivery manager
-                        channels = report.get("channels", ["telegram"])
-                        if "telegram" in channels:
-                            # Create a simple insight to wrap the report
-                            from src.awareness.models import Insight, Priority, InsightType, Category
-                            insight = Insight(
-                                type=InsightType.DIGEST,
-                                category=Category.SYSTEM,  # Generic category for reports
-                                priority=Priority.LOW,
-                                title=name,
-                                message=report_text,
-                                confidence=1.0
-                            )
-                            
-                            # For journal threads, send directly and capture message_id
-                            if name == "journal_thread":
-                                message_id = self._send_journal_thread(insight)
-                                if message_id:
-                                    # Save thread to database
-                                    from src.tools.journal import save_journal_thread
-                                    save_journal_thread(today, message_id)
-                                    logger.info(f"[AWARENESS] Saved journal thread with message_id={message_id}")
-                            else:
-                                # Regular report - use normal delivery process
-                                self.delivery.process_insights([insight])
-                            
-                            self._report_state[name] = today
-                            logger.info(f"[AWARENESS] Sent report: {name}")
-                    else:
-                        logger.error(f"[AWARENESS] Report tool not found: {tool_path}")
-                    
-                    # Update next run time
-                    cron = self._report_iters[name]
-                    self._report_next_run[name] = cron.get_next(datetime)
-                    
-                except Exception as e:
-                    logger.error(f"[AWARENESS] Report {name} error: {e}", exc_info=True)
+                # Update next run time
+                cron = self._report_iters[name]
+                self._report_next_run[name] = cron.get_next(datetime)
 
 
 def main():

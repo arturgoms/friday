@@ -323,9 +323,10 @@ GUIDELINES:
         }
 
 
-@agent.tool_plain
 def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
     """Generate daily Obsidian note from journal entries.
+    
+    NOTE: This is NOT an agent tool - it's for scheduler/automation only.
     
     Creates note at: brain/2. Time/2.2 Daily/YYYY-MM-DD.md
     
@@ -337,7 +338,7 @@ def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
         Status message (or note content if dry_run=True)
     """
     from src.tools.weather import get_current_weather
-    from src.tools.health import get_sleep_summary, get_recovery_status, get_todays_steps, get_body_battery_today, get_stress_today
+    from src.tools.health import get_sleep_summary, get_recovery_status, get_steps, get_body_battery, get_stress
     from src.tools.calendar import get_today_schedule
     from src.tools.vault import vault_write_note
     from datetime import timedelta
@@ -395,13 +396,13 @@ def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
             sleep_score = 0
         
         try:
-            # Get body battery from InfluxDB
-            bb_data = get_body_battery_today()
+            # Get body battery from InfluxDB for the specific date
+            bb_data = get_body_battery(date=date)
             bb_start = bb_data.get('start', 0)
             bb_end = bb_data.get('current', 0)
             
-            # Get stress from InfluxDB
-            stress_data = get_stress_today()
+            # Get stress from InfluxDB for the specific date
+            stress_data = get_stress(date=date)
             stress_avg = stress_data.get('average', 0)
             
             # Get training readiness
@@ -415,7 +416,7 @@ def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
             bb_start, bb_end, stress_avg, tr_score, tr_level, hrv = 0, 0, 0, 0, 'N/A', 0
         
         try:
-            steps_data = get_todays_steps()
+            steps_data = get_steps(date=date)
             steps_today = steps_data.get('today', 0)
             steps_avg = steps_data.get('average_30d', 0)
             steps_diff = steps_data.get('vs_average', 0)

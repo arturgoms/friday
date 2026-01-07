@@ -276,6 +276,9 @@ try:
     from src.tools import calendar
     from src.tools import daily_briefing
     from src.tools import health
+    from src.tools import investments
+    # Import specific journal tools (not generate_daily_note - that's scheduler-only)
+    from src.tools.journal import create_daily_journal_thread
     # from src.tools import knowledge  # TODO: Needs vault integration update
     from src.tools import media
     from src.tools import memory
@@ -286,7 +289,6 @@ try:
     from src.tools import vault
     from src.tools import weather
     from src.tools import web
-    from src.tools import investments
     logger.info("Tools loaded successfully")
 except Exception as e:
     logger.warning(f"Error loading tools: {e}")
