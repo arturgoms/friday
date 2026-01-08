@@ -103,36 +103,50 @@ def get_portfolio() -> Dict[str, Any]:
         return result
     
     # Calculate summary stats
-    if isinstance(result, list) and len(result) > 0:
-        total_invested = sum(item.get("vlr_investido", 0) for item in result)
-        total_market = sum(item.get("qtd", 0) * item.get("price", 0) for item in result)
-        total_profit = total_market - total_invested if total_market > 0 else 0
-        
-        # Group by asset class
-        by_class = {}
-        for item in result:
-            classe = item.get("classe", "N/D")
-            if classe not in by_class:
-                by_class[classe] = {
-                    "invested": 0,
-                    "market_value": 0,
-                    "count": 0
+    if isinstance(result, list):
+        if len(result) > 0:
+            total_invested = sum(item.get("vlr_investido", 0) for item in result)
+            total_market = sum(item.get("qtd", 0) * item.get("price", 0) for item in result)
+            total_profit = total_market - total_invested if total_market > 0 else 0
+            
+            # Group by asset class
+            by_class = {}
+            for item in result:
+                classe = item.get("classe", "N/D")
+                if classe not in by_class:
+                    by_class[classe] = {
+                        "invested": 0,
+                        "market_value": 0,
+                        "count": 0
+                    }
+                by_class[classe]["invested"] += item.get("vlr_investido", 0)
+                by_class[classe]["market_value"] += item.get("qtd", 0) * item.get("price", 0)
+                by_class[classe]["count"] += 1
+            
+            return {
+                "assets": result,
+                "summary": {
+                    "total_invested": round(total_invested, 2),
+                    "total_market_value": round(total_market, 2),
+                    "total_profit": round(total_profit, 2),
+                    "profit_percentage": round((total_profit / total_invested * 100) if total_invested > 0 else 0, 2),
+                    "asset_count": len(result),
+                    "by_class": by_class
                 }
-            by_class[classe]["invested"] += item.get("vlr_investido", 0)
-            by_class[classe]["market_value"] += item.get("qtd", 0) * item.get("price", 0)
-            by_class[classe]["count"] += 1
-        
-        return {
-            "assets": result,
-            "summary": {
-                "total_invested": round(total_invested, 2),
-                "total_market_value": round(total_market, 2),
-                "total_profit": round(total_profit, 2),
-                "profit_percentage": round((total_profit / total_invested * 100) if total_invested > 0 else 0, 2),
-                "asset_count": len(result),
-                "by_class": by_class
             }
-        }
+        else:
+            # Empty portfolio
+            return {
+                "assets": [],
+                "summary": {
+                    "total_invested": 0,
+                    "total_market_value": 0,
+                    "total_profit": 0,
+                    "profit_percentage": 0,
+                    "asset_count": 0,
+                    "by_class": {}
+                }
+            }
     
     return result
 
@@ -502,7 +516,7 @@ def get_user_config() -> Dict[str, Any]:
         return result
     
     return {
-        "email": result.get("email"),
+        "email": result.get("email", ""),
         "moeda_base": result.get("moeda_base", "BRL"),
         "calc_por_corretora": result.get("calc_por_corretora", True),
         "wallets": result.get("carteiras", []),

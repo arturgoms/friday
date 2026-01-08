@@ -879,6 +879,89 @@ def restart(service: str = typer.Argument("all", help="Service to restart (or 'a
 
 
 # =============================================================================
+# Testing Commands
+# =============================================================================
+
+@app.command()
+def test(
+    module: Optional[str] = typer.Argument(None, help="Specific test module to run (e.g., health, sensors, all)"),
+    verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose output"),
+    coverage: bool = typer.Option(False, "--cov", help="Run with coverage report"),
+    failed: bool = typer.Option(False, "--failed", "-f", help="Re-run only failed tests"),
+    keyword: Optional[str] = typer.Option(None, "-k", help="Run tests matching keyword")
+):
+    """
+    Run Friday test suite.
+    
+    Examples:
+        friday test                    # Run all tests
+        friday test health             # Run health module tests
+        friday test -v                 # Run with verbose output
+        friday test --cov              # Run with coverage report
+        friday test --failed           # Re-run only failed tests
+        friday test -k "none_values"   # Run tests matching keyword
+    """
+    # Build pytest command
+    cmd = ["pipenv", "run", "pytest"]
+    
+    # Determine which tests to run
+    if module:
+        if module == "all":
+            # Run all tool tests
+            cmd.append("src/tests/tools/")
+        else:
+            # Run specific module
+            test_file = f"src/tests/tools/test_{module}.py"
+            if not Path(test_file).exists():
+                console.print(f"[red]Test file not found: {test_file}[/red]")
+                console.print("\n[dim]Available modules:[/dim]")
+                test_dir = Path("src/tests/tools")
+                if test_dir.exists():
+                    for test_file in sorted(test_dir.glob("test_*.py")):
+                        module_name = test_file.stem.replace("test_", "")
+                        console.print(f"  - {module_name}")
+                raise typer.Exit(1)
+            cmd.append(test_file)
+    else:
+        # Run all tool tests by default
+        cmd.append("src/tests/tools/")
+    
+    # Add options
+    if verbose:
+        cmd.append("-v")
+    
+    if coverage:
+        cmd.extend(["--cov=src", "--cov-report=html", "--cov-report=term"])
+    
+    if failed:
+        cmd.append("--lf")  # --last-failed
+    
+    if keyword:
+        cmd.extend(["-k", keyword])
+    
+    # Always show short traceback for failures
+    if not verbose:
+        cmd.append("--tb=short")
+    
+    # Run tests
+    console.print(f"[cyan]Running tests...[/cyan]")
+    console.print(f"[dim]Command: {' '.join(cmd)}[/dim]\n")
+    
+    try:
+        result = subprocess.run(cmd, cwd=Path.cwd())
+        
+        if result.returncode == 0:
+            console.print("\n[bold green]✓ All tests passed![/bold green]")
+        else:
+            console.print("\n[bold red]✗ Some tests failed[/bold red]")
+            raise typer.Exit(result.returncode)
+    
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Tests interrupted[/yellow]")
+        raise typer.Exit(130)
+
+
+# =============================================================================
 # Main Entry Point
 # =============================================================================
 
