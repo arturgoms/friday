@@ -66,7 +66,8 @@ def generate_image(
         # Parse size
         try:
             width, height = map(int, size.lower().split('x'))
-        except:
+        except (ValueError, AttributeError) as e:
+            logger.debug(f"Could not parse size '{size}': {e}, using default 512x512")
             width, height = 512, 512
         
         # Enhance prompt with style

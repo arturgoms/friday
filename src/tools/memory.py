@@ -98,7 +98,8 @@ def get_conversation_history(
             try:
                 dt = datetime.fromisoformat(timestamp)
                 time_str = dt.strftime("%Y-%m-%d %H:%M")
-            except:
+            except (ValueError, TypeError) as e:
+                logger.debug(f"Could not parse timestamp {timestamp}: {e}")
                 time_str = str(timestamp)
             
             # Truncate long messages
@@ -150,7 +151,8 @@ def get_last_user_message(ctx) -> str:
         try:
             dt = datetime.fromisoformat(timestamp)
             time_str = dt.strftime("%Y-%m-%d %H:%M")
-        except:
+        except (ValueError, TypeError) as e:
+            logger.debug(f"Could not parse timestamp {timestamp}: {e}")
             time_str = str(timestamp)
         
         return f"Your last message [{time_str}]:\n{content}"

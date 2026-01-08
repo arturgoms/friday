@@ -420,7 +420,8 @@ def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
             steps_today = steps_data.get('today', 0)
             steps_avg = steps_data.get('average_30d', 0)
             steps_diff = steps_data.get('vs_average', 0)
-        except:
+        except Exception as e:
+            logger.debug(f"Could not get steps data: {e}")
             steps_today, steps_avg, steps_diff = 0, 0, 0
         
         try:

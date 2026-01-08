@@ -148,8 +148,8 @@ def get_cpu_load() -> Dict[str, Any]:
         try:
             with open("/proc/cpuinfo", "r") as f:
                 cpu_cores = len([line for line in f if "processor" in line])
-        except:
-            pass
+        except (OSError, IOError) as e:
+            logger.debug(f"Could not read CPU info: {e}")
 
         # Determine status based on load relative to cores
         status = "normal"
