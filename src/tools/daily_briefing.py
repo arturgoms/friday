@@ -236,18 +236,25 @@ def _build_calendar_section(ctx: ReportContext):
         schedule = get_today_schedule()
         
         if isinstance(schedule, dict) and not schedule.get("error"):
-            all_events = schedule.get("all_events", [])
+            # Combine all event types
+            current_events = schedule.get("current_events", [])
+            upcoming_events = schedule.get("upcoming_events", [])
+            completed_events = schedule.get("completed_events", [])
+            all_events = current_events + upcoming_events + completed_events
             
             if all_events:
                 meeting_count = 0
                 for event in all_events:
                     if event.get("all_day"):
-                        ctx.add_line(f"📌 {event['summary']}", indent=True)
+                        ctx.add_line(f"📌 {event['title']}", indent=True)
                     else:
                         cal_icon = "🏠" if event.get("calendar") == "personal" else "💼"
-                        start_time = event.get("start_time", "")
-                        end_time = event.get("end_time", "")
-                        ctx.add_line(f"{cal_icon} {start_time}-{end_time}: {event['summary']}", indent=True)
+                        # Parse ISO format datetime strings
+                        start_dt = datetime.fromisoformat(event.get("start", ""))
+                        end_dt = datetime.fromisoformat(event.get("end", ""))
+                        start_time = start_dt.strftime("%H:%M")
+                        end_time = end_dt.strftime("%H:%M")
+                        ctx.add_line(f"{cal_icon} {start_time}-{end_time}: {event['title']}", indent=True)
                         meeting_count += 1
                 
                 if meeting_count > 5:
@@ -272,8 +279,8 @@ def _build_weather_section(ctx: ReportContext):
         
         weather = get_current_weather()
         if isinstance(weather, dict) and not weather.get("error"):
-            temp = weather.get("temperature_c")
-            feels = weather.get("feels_like_c")
+            temp = weather.get("temp")
+            feels = weather.get("feels_like")
             condition = weather.get("condition", "").lower()
             humidity = weather.get("humidity")
             
@@ -448,7 +455,12 @@ def _build_evening_meetings_section(ctx: ReportContext, factors: SleepFactors):
         schedule = get_today_schedule()
         
         if isinstance(schedule, dict) and not schedule.get("error"):
-            all_events = schedule.get("all_events", [])
+            # Combine all event types
+            current_events = schedule.get("current_events", [])
+            upcoming_events = schedule.get("upcoming_events", [])
+            completed_events = schedule.get("completed_events", [])
+            all_events = current_events + upcoming_events + completed_events
+            
             meetings = [e for e in all_events if not e.get("all_day")]
             meeting_count = len(meetings)
             factors.meetings = meeting_count
@@ -456,7 +468,11 @@ def _build_evening_meetings_section(ctx: ReportContext, factors: SleepFactors):
             # Calculate total duration
             total_min = 0
             for e in meetings:
-                total_min += e.get("duration_minutes", 0)
+                # Calculate duration from start/end times
+                start_dt = datetime.fromisoformat(e.get("start", ""))
+                end_dt = datetime.fromisoformat(e.get("end", ""))
+                duration_min = (end_dt - start_dt).total_seconds() / 60
+                total_min += duration_min
             
             ctx.add_line(f"{meeting_count} meetings, {format_duration(int(total_min * 60))} total")
         else:
