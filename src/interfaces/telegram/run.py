@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 from src.interfaces.base import Message, MessageType
 from src.interfaces.manager import ChannelManager
 from src.interfaces.telegram.channel import TelegramChannel
-from src.core.agent import agent, AgentDeps
+from src.core.agent import agent, AgentDeps, run_with_context
 from src.core.conversation import get_conversation_manager
 from settings import settings
 
@@ -122,8 +122,8 @@ class FridayTelegramBot:
             # Create dependencies with session_id for tools
             deps = AgentDeps(session_id=session_id)
             
-            # Run the AI agent with the user's message, history, and dependencies
-            result = await agent.run(message.content, message_history=history, deps=deps)
+            # Run the AI agent with the user's message, history, dependencies, and auto-context
+            result = await run_with_context(message.content, message_history=history, deps=deps)
             
             # Update conversation history with the complete message list
             # result.all_messages() contains: old history + user message + assistant response

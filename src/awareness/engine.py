@@ -294,7 +294,7 @@ class AwarenessEngine:
             logger.error(f"Failed to import tool {tool_path}: {e}")
             return None
     
-    def trigger_report(self, report_name: str) -> bool:
+    async def trigger_report(self, report_name: str) -> bool:
         """Manually trigger a scheduled report by name.
         
         This allows manual execution of any scheduled report through the same
@@ -314,7 +314,7 @@ class AwarenessEngine:
                     return False
                 
                 # Execute the report with force=True to bypass duplicate check
-                return self._execute_report(report, force=True)
+                return await self._execute_report(report, force=True)
         
         logger.error(f"[AWARENESS] Report not found: {report_name}")
         return False
@@ -444,7 +444,7 @@ class AwarenessEngine:
 
         return all_insights
 
-    def _execute_report(self, report: dict, force: bool = False) -> bool:
+    async def _execute_report(self, report: dict, force: bool = False) -> bool:
         """Execute a scheduled report.
         
         Args:
@@ -454,6 +454,8 @@ class AwarenessEngine:
         Returns:
             True if report was executed successfully, False otherwise
         """
+        import inspect
+        
         name = report["name"]
         tool_path = report["tool"]
         today = datetime.now(settings.TIMEZONE).strftime("%Y-%m-%d")
@@ -474,7 +476,12 @@ class AwarenessEngine:
                 return False
             
             logger.info(f"[AWARENESS] Executing scheduled report: {name}")
-            report_text = tool_func()
+            
+            # Handle both sync and async functions
+            if inspect.iscoroutinefunction(tool_func):
+                report_text = await tool_func()
+            else:
+                report_text = tool_func()
             
             # Send via delivery manager
             channels = report.get("channels", ["telegram"])
@@ -528,7 +535,7 @@ class AwarenessEngine:
             next_run = self._report_next_run.get(name)
             if next_run and now >= next_run:
                 # Execute the report
-                self._execute_report(report, force=False)
+                await self._execute_report(report, force=False)
                 
                 # Update next run time
                 cron = self._report_iters[name]

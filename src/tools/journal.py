@@ -28,6 +28,39 @@ def get_brt():
     return settings.TIMEZONE
 
 
+def _infer_weather_description(cloud_cover: float, precipitation: float) -> str:
+    """Infer weather description from historical metrics.
+
+    Args:
+        cloud_cover: Cloud cover percentage (0-100)
+        precipitation: Precipitation in mm
+
+    Returns:
+        Natural weather description string
+    """
+    # Base description from cloud cover
+    if cloud_cover < 20:
+        desc = "clear sky"
+    elif cloud_cover < 40:
+        desc = "few clouds"
+    elif cloud_cover < 60:
+        desc = "partly cloudy"
+    elif cloud_cover < 85:
+        desc = "mostly cloudy"
+    else:
+        desc = "overcast"
+
+    # Add precipitation if significant
+    if precipitation > 20:
+        desc = f"heavy rain, {desc}"
+    elif precipitation > 5:
+        desc = f"rain, {desc}"
+    elif precipitation > 0.5:
+        desc = f"light rain, {desc}"
+
+    return desc
+
+
 # =============================================================================
 # Journal Thread Management
 # =============================================================================
@@ -234,7 +267,7 @@ def get_todays_journal_entries() -> Dict[str, Any]:
 # =============================================================================
 
 
-def _categorize_entries_with_ai(entries: list) -> dict:
+async def _categorize_entries_with_ai(entries: list) -> dict:
     """Simple AI categorization of entries into Events/Thoughts/Reminders.
     
     Args:
@@ -302,7 +335,8 @@ GUIDELINES:
         model = create_model()
         simple_agent = Agent(model, model_settings={"temperature": 0.3})
         
-        result = simple_agent.run_sync(prompt, output_type=JournalData)
+        # Use async run() instead of run_sync() to work within existing event loop
+        result = await simple_agent.run(prompt, output_type=JournalData)
         
         # result.output is the JournalData instance
         return {
@@ -323,7 +357,83 @@ GUIDELINES:
         }
 
 
-def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
+async def _generate_ai_insight(note_data: dict) -> str:
+    """Generate a creative AI insight based on the day's data.
+    
+    Args:
+        note_data: Dict containing all the day's data (health, calendar, journal, etc.)
+        
+    Returns:
+        A creative insight string
+    """
+    # Build context from note data
+    context_parts = []
+    
+    # Date info
+    context_parts.append(f"Date: {note_data['date']} ({note_data['weekday']})")
+    
+    # Health metrics
+    context_parts.append(f"Sleep: {note_data['sleep_hours']:.1f}h (score: {note_data['sleep_score']})")
+    context_parts.append(f"Body Battery: started at {note_data['bb_start']}%, ended at {note_data['bb_end']}%")
+    context_parts.append(f"Stress average: {note_data['stress_avg']}")
+    context_parts.append(f"Training Readiness: {note_data['tr_score']} ({note_data['tr_level']})")
+    context_parts.append(f"HRV: {note_data['hrv']}ms")
+    context_parts.append(f"Steps: {note_data['steps_today']} (30-day avg: {note_data['steps_avg']})")
+    
+    # Weather
+    context_parts.append(f"Weather: {note_data['weather_desc']}, {note_data['weather_temp']}°C")
+    
+    # Calendar
+    if note_data['calendar_events']:
+        context_parts.append(f"Calendar events: {', '.join(note_data['calendar_events'][:5])}")
+    
+    # Journal content
+    if note_data['journal_events']:
+        context_parts.append(f"What happened: {'; '.join(note_data['journal_events'][:3])}")
+    if note_data['thoughts']:
+        context_parts.append(f"Thoughts/feelings: {'; '.join(note_data['thoughts'][:3])}")
+    
+    # Habits
+    if note_data['detected_habits']:
+        context_parts.append(f"Habits completed: {', '.join(note_data['detected_habits'])}")
+    
+    context = "\n".join(context_parts)
+    
+    prompt = f"""You are Friday, Artur's personal AI assistant. Based on this day's data, write a brief, insightful reflection (2-4 sentences).
+
+DATA:
+{context}
+
+GUIDELINES:
+- Be conversational and warm, like a thoughtful friend
+- Find interesting patterns or connections in the data
+- You can be creative - notice correlations, give encouragement, gentle suggestions, or interesting observations
+- If sleep/stress/energy data tells a story, mention it
+- If there's a mismatch (e.g., busy day but low steps, or high stress but good sleep), note it
+- Keep it personal and relevant to Artur's day
+- Don't just list facts - interpret them
+- If data is sparse, focus on what IS there
+- Write in first person as if talking to Artur directly
+- No need for greetings or sign-offs, just the insight itself
+
+Write the insight:"""
+
+    try:
+        from src.core.agent import create_model
+        from pydantic_ai import Agent
+        
+        model = create_model()
+        simple_agent = Agent(model, model_settings={"temperature": 0.7})
+        
+        result = await simple_agent.run(prompt)
+        return result.output.strip()
+        
+    except Exception as e:
+        logger.error(f"AI insight generation failed: {e}")
+        return ""
+
+
+async def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
     """Generate daily Obsidian note from journal entries.
     
     NOTE: This is NOT an agent tool - it's for scheduler/automation only.
@@ -337,9 +447,9 @@ def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
     Returns:
         Status message (or note content if dry_run=True)
     """
-    from src.tools.weather import get_current_weather
+    from src.tools.weather import get_weather
     from src.tools.health import get_sleep_summary, get_recovery_status, get_steps, get_body_battery, get_stress
-    from src.tools.calendar import get_today_schedule
+    from src.tools.calendar import get_schedule
     from src.tools.vault import vault_write_note
     from datetime import timedelta
     
@@ -350,13 +460,9 @@ def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
         
         logger.info(f"Generating daily note for {date}")
         
-        # Get journal entries
+        # Get journal entries (may be empty - that's OK)
         entries = get_journal_entries_for_date(date)
-        if not entries:
-            logger.info(f"No journal entries for {date}, skipping")
-            return f"⏭️ No journal entries for {date}, skipped"
-        
-        logger.info(f"Found {len(entries)} entries")
+        logger.info(f"Found {len(entries)} entries for {date}")
         
         # Parse date
         date_obj = datetime.strptime(date, "%Y-%m-%d")
@@ -366,9 +472,19 @@ def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
         
         # Fetch data (with fallbacks)
         try:
-            weather = get_current_weather()
-            weather_desc = weather.get('description', 'unavailable')
-            weather_temp = weather.get('temp', 0)  # Correct key is 'temp'
+            weather = get_weather(date=date)
+            if weather.get('error'):
+                weather_desc = 'unavailable'
+                weather_temp = 0
+            elif weather.get('source') == 'onecall_day_summary':
+                # Historical data - infer description from metrics
+                cloud_cover = weather.get('cloud_cover', 0)
+                precipitation = weather.get('precipitation', 0)
+                weather_desc = _infer_weather_description(cloud_cover, precipitation)
+                weather_temp = weather.get('temp', 0)
+            else:
+                weather_desc = weather.get('description', 'unavailable')
+                weather_temp = weather.get('temp', 0)
         except Exception as e:
             logger.warning(f"Weather fetch failed: {e}")
             weather_desc, weather_temp = 'unavailable', 0
@@ -425,25 +541,32 @@ def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
             steps_today, steps_avg, steps_diff = 0, 0, 0
         
         try:
-            calendar = get_today_schedule()
-            # Combine all event types
-            current = calendar.get('current_events', [])
-            upcoming = calendar.get('upcoming_events', [])
-            completed = calendar.get('completed_events', [])
-            events = current + upcoming + completed
+            calendar = get_schedule(date=date)
+            # Handle both today's format (categorized) and other dates format (flat list)
+            if 'events' in calendar:
+                # Other dates: flat list
+                events = calendar.get('events', [])
+            else:
+                # Today: categorized by status
+                current = calendar.get('current_events', [])
+                upcoming = calendar.get('upcoming_events', [])
+                completed = calendar.get('completed_events', [])
+                events = current + upcoming + completed
         except Exception as e:
             logger.warning(f"Calendar fetch failed: {e}")
             events = []
         
-        # AI categorization
-        logger.info("Categorizing entries with AI...")
-        categorized = _categorize_entries_with_ai(entries)
-        
-        # Extract data
-        journal_events = categorized.get('events', [])
-        thoughts = categorized.get('thoughts', [])
-        reminders = categorized.get('reminders', [])
-        detected_habits = categorized.get('habits', [])
+        # AI categorization (only if there are entries)
+        if entries:
+            logger.info("Categorizing entries with AI...")
+            categorized = await _categorize_entries_with_ai(entries)
+            journal_events = categorized.get('events', [])
+            thoughts = categorized.get('thoughts', [])
+            reminders = categorized.get('reminders', [])
+            detected_habits = categorized.get('habits', [])
+        else:
+            logger.info("No entries to categorize")
+            journal_events, thoughts, reminders, detected_habits = [], [], [], []
         
         # Format journal sections
         journal_sections = ""
@@ -464,7 +587,7 @@ def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
             journal_sections += "\n\n"
         
         if not journal_sections:
-            journal_sections = "(No entries categorized)"
+            journal_sections = "(No journal entries for this day)"
         
         # Format calendar
         calendar_lines = []
@@ -491,14 +614,16 @@ def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
             comparison = "high" if steps_diff > 0 else "low"
             steps_insight = f"\n> Steps {comparison} ({steps_today} vs {steps_avg} avg)"
         
-        # Raw entries
-        raw_lines = []
-        for entry in entries:
-            time = datetime.fromisoformat(entry['timestamp']).strftime("%H:%M")
-            prefix = "🎤 " if entry['entry_type'] == 'audio' else ""
-            content = entry['content']
-            raw_lines.append(f"**{time}** - {prefix}\"{content}\"")
-        raw_text = "\n\n".join(raw_lines)
+        # Raw entries (only if there are entries)
+        raw_text = ""
+        if entries:
+            raw_lines = []
+            for entry in entries:
+                time = datetime.fromisoformat(entry['timestamp']).strftime("%H:%M")
+                prefix = "🎤 " if entry['entry_type'] == 'audio' else ""
+                content = entry['content']
+                raw_lines.append(f"**{time}** - {prefix}\"{content}\"")
+            raw_text = "\n\n".join(raw_lines)
         
         # Check which habits were detected
         check_read = 'x' if 'Read' in detected_habits else ' '
@@ -507,6 +632,53 @@ def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
         check_pets = 'x' if 'Quality time with pets' in detected_habits else ' '
         check_games = 'x' if 'Play games' in detected_habits else ' '
         check_meditation = 'x' if 'Meditation' in detected_habits else ' '
+        
+        # Build raw entries section (only if entries exist)
+        raw_entries_section = ""
+        if entries:
+            raw_entries_section = f"""
+---
+
+<details>
+<summary>Raw entries ({len(entries)})</summary>
+
+{raw_text}
+
+</details>
+"""
+        
+        # Generate AI insight
+        logger.info("Generating AI insight...")
+        note_data = {
+            'date': date,
+            'weekday': weekday,
+            'sleep_hours': sleep_hours,
+            'sleep_score': sleep_score,
+            'bb_start': bb_start,
+            'bb_end': bb_end,
+            'stress_avg': stress_avg,
+            'tr_score': tr_score,
+            'tr_level': tr_level,
+            'hrv': hrv,
+            'steps_today': steps_today,
+            'steps_avg': steps_avg,
+            'weather_desc': weather_desc,
+            'weather_temp': weather_temp,
+            'calendar_events': calendar_lines,
+            'journal_events': journal_events,
+            'thoughts': thoughts,
+            'detected_habits': detected_habits,
+        }
+        ai_insight = await _generate_ai_insight(note_data)
+        
+        # Format AI insight section
+        ai_insight_section = ""
+        if ai_insight:
+            ai_insight_section = f"""
+## AI Insight
+
+> {ai_insight}
+"""
         
         # Build markdown
         markdown = f"""---
@@ -549,16 +721,8 @@ weather: {weather_desc}, {weather_temp}°C
 ## Journal
 
 {journal_sections}
-
----
-
-<details>
-<summary>Raw entries ({len(entries)})</summary>
-
-{raw_text}
-
-</details>
-"""
+{ai_insight_section}
+{raw_entries_section}"""
         
         # Dry run: just return the markdown
         if dry_run:

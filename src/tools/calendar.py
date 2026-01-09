@@ -555,50 +555,80 @@ def get_calendar_events(days: int = 7, calendar: str = "both") -> Dict[str, Any]
 
 
 @agent.tool_plain
-def get_today_schedule() -> Dict[str, Any]:
-    """Get today's complete schedule from both calendars.
+def get_schedule(date: str = None) -> Dict[str, Any]:
+    """Get schedule for a specific date from both calendars.
     
     Atomic data tool that returns structured schedule data.
     
+    Args:
+        date: Date in YYYY-MM-DD format. Defaults to today.
+    
     Returns:
-        Dict with today's events categorized by status (current, upcoming, completed)
+        Dict with events for the specified date, categorized by status if today
     """
     try:
         manager = get_calendar_manager()
         
         now = datetime.now(settings.TIMEZONE)
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # Parse date or use today
+        if date:
+            target_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=settings.TIMEZONE)
+        else:
+            target_date = now
+        
+        start = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1)
         
         events = manager.get_all_events(start, end)
         
-        current_events = []
-        upcoming_events = []
-        completed_events = []
+        is_today = target_date.date() == now.date()
         
-        for event in events:
-            event_dict = event.to_dict()
-            if event.start < now and event.end > now:
-                event_dict["status"] = "current"
-                current_events.append(event_dict)
-            elif event.start > now:
-                event_dict["status"] = "upcoming"
-                upcoming_events.append(event_dict)
-            else:
-                event_dict["status"] = "completed"
-                completed_events.append(event_dict)
-        
-        return {
-            "date": start.date().isoformat(),
-            "current_events": current_events,
-            "upcoming_events": upcoming_events,
-            "completed_events": completed_events,
-            "total_events": len(events),
-            "timestamp": now.isoformat()
-        }
+        if is_today:
+            # For today, categorize by status
+            current_events = []
+            upcoming_events = []
+            completed_events = []
+            
+            for event in events:
+                event_dict = event.to_dict()
+                if event.start <= now < event.end:
+                    event_dict["status"] = "current"
+                    current_events.append(event_dict)
+                elif event.start > now:
+                    event_dict["status"] = "upcoming"
+                    upcoming_events.append(event_dict)
+                else:
+                    event_dict["status"] = "completed"
+                    completed_events.append(event_dict)
+            
+            return {
+                "date": start.date().isoformat(),
+                "current_events": current_events,
+                "upcoming_events": upcoming_events,
+                "completed_events": completed_events,
+                "total_events": len(events),
+                "timestamp": now.isoformat()
+            }
+        else:
+            # For other dates, just return all events
+            all_events = [event.to_dict() for event in events]
+            
+            return {
+                "date": start.date().isoformat(),
+                "events": all_events,
+                "total_events": len(events),
+                "timestamp": now.isoformat()
+            }
         
     except Exception as e:
         return {"error": str(e)}
+
+
+# Alias for backward compatibility
+def get_today_schedule() -> Dict[str, Any]:
+    """Alias for get_schedule() - returns today's schedule."""
+    return get_schedule()
 
 
 @agent.tool_plain

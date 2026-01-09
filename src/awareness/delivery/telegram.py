@@ -393,27 +393,30 @@ class TelegramChannel(DeliveryChannel):
     
     def _format_insight(self, insight: Insight) -> str:
         """Format an insight for Telegram.
-        
-        Returns clean, concise message with Markdown formatting.
-        Properly escapes special characters for Telegram Markdown.
+
+        Returns clean message with Markdown formatting.
+        Standard Markdown mode doesn't require escaping.
         """
-        # Priority emoji (emojis don't need escaping)
-        emoji = {
-            Priority.URGENT: "🚨",
-            Priority.HIGH: "⚠️",
-            Priority.MEDIUM: "📊",
-            Priority.LOW: "ℹ️",
-        }.get(insight.priority, "•")
-        
-        # Escape title and message for Markdown
-        title = escape_markdown(insight.title)
-        message = escape_markdown(insight.message)
-        
-        # Build concise message
+        # Priority prefix (no emojis)
+        prefix = {
+            Priority.URGENT: "URGENT",
+            Priority.HIGH: "ALERT",
+            Priority.MEDIUM: "INFO",
+            Priority.LOW: "NOTE",
+        }.get(insight.priority, "")
+
+        # No escaping needed for standard Markdown
+        title = insight.title
+        message = insight.message
+
+        # Build formatted message
+        if prefix and prefix not in title:
+            title = f"*{prefix}:* {title}"
+
         if len(insight.message) < 60 and "\n" not in insight.message:
-            return f"{emoji} {title}: {message}"
+            return f"{title}: {message}"
         else:
-            return f"{emoji} {title}\n{message}"
+            return f"{title}\n{message}"
 
 
 # Backward compatibility alias

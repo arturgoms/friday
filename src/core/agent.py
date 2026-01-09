@@ -280,6 +280,7 @@ try:
     # Import specific journal tools (not generate_daily_note - that's scheduler-only)
     from src.tools.journal import create_daily_journal_thread
     # from src.tools import knowledge  # TODO: Needs vault integration update
+    from src.tools import knowledge_indexer  # RAG indexing tools
     from src.tools import media
     from src.tools import memory
     from src.tools import people
@@ -327,6 +328,145 @@ def run_agent_sync(prompt: str, agent_instance: Optional[Agent] = None) -> str:
         Agent response as string
     """
     return asyncio.run(run_agent(prompt, agent_instance))
+
+
+async def run_with_context(
+    user_message: str,
+    message_history=None,
+    deps=None,
+    agent_instance: Optional[Agent] = None,
+    enable_background: bool = True,
+    enable_rag: bool = True
+):
+    """
+    Run agent with automatic context injection (Auto-Context RAG).
+    
+    Injects two tiers of context:
+    - Tier 1 (Background): User profile from Artur Gomes.md
+    - Tier 2 (RAG): Semantic search results (conditional)
+    
+    Args:
+        user_message: User's input message
+        message_history: Optional message history for conversation context
+        deps: Optional dependencies to inject into agent tools
+        agent_instance: Optional agent instance. Uses default if not provided.
+        enable_background: Whether to inject background context (default: True)
+        enable_rag: Whether to enable RAG context (default: True)
+        
+    Returns:
+        Agent run result (same as agent.run())
+    """
+    from src.core.context_engine import (
+        should_retrieve_context,
+        get_background_context,
+        get_rag_context,
+        build_enhanced_prompt
+    )
+    
+    if agent_instance is None:
+        agent_instance = agent
+    
+    # Get background context (Tier 1)
+    background_context = None
+    if enable_background:
+        background_context = get_background_context()
+        if background_context:
+            logger.debug("Background context retrieved")
+    
+    # Get RAG context (Tier 2) if needed
+    rag_context = None
+    if enable_rag and should_retrieve_context(user_message):
+        rag_context = get_rag_context(user_message)
+        if rag_context:
+            logger.debug("RAG context retrieved")
+    
+    # Build enhanced system prompt
+    # Generate the default system prompt (same logic as create_agent)
+    today = date.today().strftime("%Y-%m-%d")
+    user_name = settings.USER["name"]
+    timezone = settings.USER["timezone"]
+    
+    original_prompt = (
+        f"You are Friday, the personal AI assistant for {user_name}.\n"
+        f"Today is {today}. User timezone: {timezone}.\n\n"
+        "**YOUR CAPABILITIES:**\n"
+        "You have access to tools when needed:\n"
+        "- Calendar: View and manage events\n"
+        "- Weather: Current conditions and forecasts\n"
+        "- Health: Garmin fitness and sleep data\n"
+        "- Investments: Portfolio tracking, operations history, dividends/earnings, tax reports (DARF/IRPF), performance analytics\n"
+        "- System: Monitor disk, CPU, memory, Friday services\n"
+        "- Sensors: Check external services, homelab hardware stats\n"
+        "- Memory: Access conversation history\n"
+        "- People: Contact information\n"
+        "- Vault: Search Obsidian notes (contains user's personal knowledge, preferences, and information)\n"
+        "- Web: Search the internet\n"
+        "- Media: Control media playback, generate_speech for TTS (text-to-speech audio)\n"
+        "- Time: Get current time in any timezone\n\n"
+        "**WHEN TO USE TOOLS:**\n"
+        "- Use tools proactively when they would provide helpful, accurate information\n"
+        "- Don't apologize for using tools - just use them naturally\n"
+        "- You can call multiple tools if needed to answer comprehensively\n"
+        "- For quick facts you know confidently, you can answer directly\n\n"
+        "**COMMUNICATION STYLE:**\n"
+        "- Be concise and direct\n"
+        "- Use natural, conversational language\n"
+        "- Show personality - be warm, helpful, and occasionally witty\n"
+        "- Use emojis sparingly for emphasis (1-2 per message max)\n"
+        "- Format responses with markdown when helpful (lists, bold, etc.)\n"
+        "- For technical topics, be precise but accessible\n\n"
+        "**IMPORTANT GUIDELINES:**\n"
+        "- Always be honest - if you don't know something, say so\n"
+        "- Respect privacy - only access data when relevant to the request\n"
+        "- Be proactive - suggest related information or actions when helpful\n"
+        "- Remember: You're a personal assistant, not just an information retrieval system\n"
+        "- Focus on being genuinely useful, not just technically correct"
+    )
+    
+    enhanced_prompt = build_enhanced_prompt(
+        original_prompt,
+        background_context,
+        rag_context
+    )
+    
+    # Create temporary agent with enhanced prompt
+    enhanced_agent = create_agent(system_prompt=enhanced_prompt)
+    
+    # Run with enhanced context, passing through history and deps
+    result = await enhanced_agent.run(user_message, message_history=message_history, deps=deps)
+    return result
+
+
+def run_with_context_sync(
+    user_message: str,
+    message_history=None,
+    deps=None,
+    agent_instance: Optional[Agent] = None,
+    enable_background: bool = True,
+    enable_rag: bool = True
+):
+    """
+    Synchronous wrapper for run_with_context.
+    
+    Args:
+        user_message: User's input message
+        message_history: Optional message history for conversation context
+        deps: Optional dependencies to inject into agent tools
+        agent_instance: Optional agent instance. Uses default if not provided.
+        enable_background: Whether to inject background context (default: True)
+        enable_rag: Whether to enable RAG context (default: True)
+        
+    Returns:
+        Agent run result (same as agent.run())
+    """
+    return asyncio.run(run_with_context(
+        user_message,
+        message_history=message_history,
+        deps=deps,
+        agent_instance=agent_instance,
+        enable_background=enable_background,
+        enable_rag=enable_rag
+    ))
 
 
 # ==========================================

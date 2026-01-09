@@ -24,7 +24,7 @@ from rich.syntax import Syntax
 
 from settings import settings
 from src.core.database import Database
-from src.core.agent import agent
+from src.core.agent import agent, run_with_context_sync
 from src.interfaces.cli.channel import CLIChannel
 
 # Initialize
@@ -363,7 +363,7 @@ def chat():
             console.print("[dim]Friday is thinking...[/dim]")
             
             try:
-                result = agent.run_sync(user_input, message_history=history)
+                result = run_with_context_sync(user_input, message_history=history)
                 
                 # Print response
                 console.print(f"[bold cyan]Friday:[/bold cyan] {result.output}")
@@ -401,7 +401,7 @@ def run(query: str = typer.Argument(..., help="Natural language query for Friday
     try:
         console.print("[dim]→ Processing query with Friday's agent...[/dim]\n")
         
-        result = agent.run_sync(query)
+        result = run_with_context_sync(query)
         
         # Display result
         console.print(str(result.output))
@@ -414,6 +414,54 @@ def run(query: str = typer.Argument(..., help="Natural language query for Friday
 # =============================================================================
 # Database Operations
 # =============================================================================
+
+@app.command()
+def db_tables():
+    """
+    List all tables in the Friday database.
+    
+    Examples:
+        friday db-tables
+    """
+    try:
+        db = Database()
+        
+        # Query to get all table names
+        query = "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+        rows = db.execute(query).fetchall()
+        
+        if not rows:
+            console.print("[yellow]No tables found[/yellow]")
+            return
+        
+        # Display as table
+        result_table = Table(title="Friday Database Tables", show_header=True)
+        result_table.add_column("Table Name", style="cyan", width=30)
+        result_table.add_column("Row Count", style="yellow", width=15)
+        
+        total_rows = 0
+        for row in rows:
+            table_name = row._mapping['name']
+            
+            # Get row count for each table
+            try:
+                count_query = f"SELECT COUNT(*) as count FROM {table_name}"
+                count_result = db.execute(count_query).fetchone()
+                row_count = count_result._mapping['count'] if count_result else 0
+                total_rows += row_count
+                
+                result_table.add_row(table_name, str(row_count))
+            except Exception as e:
+                result_table.add_row(table_name, f"[red]Error[/red]")
+        
+        console.print(result_table)
+        console.print(f"\n[dim]Total: {len(rows)} tables, {total_rows} rows[/dim]")
+        console.print(f"[dim]Tip: Use 'friday db-list <table>' to view table contents[/dim]")
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
 
 @app.command()
 def db_list(
@@ -586,8 +634,9 @@ def schedule_trigger(report_name: str = typer.Argument(..., help="Name of the sc
         # Initialize awareness engine
         engine = AwarenessEngine()
         
-        # Trigger the report
-        success = engine.trigger_report(report_name)
+        # Trigger the report (async)
+        import asyncio
+        success = asyncio.run(engine.trigger_report(report_name))
         
         if success:
             console.print(f"[green]✓ Report '{report_name}' executed successfully[/green]")
@@ -685,6 +734,138 @@ def schedule_status(report_name: str = typer.Argument(..., help="Name of the sch
         
         console.print(table)
         console.print(f"\n[dim]Tip: Use 'friday schedule-trigger {report_name}' to run manually[/dim]")
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+# =============================================================================
+# Journal Commands
+# =============================================================================
+
+@app.command()
+def journal_generate(
+    date: Optional[str] = typer.Argument(None, help="Date to generate (YYYY-MM-DD). Defaults to today."),
+    dry_run: bool = typer.Option(False, "--dry-run", "-d", help="Preview note without writing to file"),
+    send: bool = typer.Option(False, "--send", "-s", help="Send confirmation to Telegram after generation")
+):
+    """
+    Generate a daily journal note for a specific date.
+    
+    Creates an Obsidian daily note from journal entries, health data,
+    and calendar events. Entries are AI-categorized into Events, Thoughts,
+    and Reminders.
+    
+    Examples:
+        friday journal-generate                    # Generate for today
+        friday journal-generate 2026-01-07         # Generate for specific date
+        friday journal-generate --dry-run          # Preview without saving
+        friday journal-generate 2026-01-07 --send  # Generate and notify Telegram
+    """
+    import asyncio
+    from src.tools.journal import generate_daily_note
+    
+    try:
+        # Validate date format if provided
+        if date:
+            try:
+                datetime.strptime(date, '%Y-%m-%d')
+            except ValueError:
+                console.print(f"[red]Invalid date format: {date}[/red]")
+                console.print("[dim]Use YYYY-MM-DD format (e.g., 2026-01-07)[/dim]")
+                raise typer.Exit(1)
+        
+        target_date = date or datetime.now(settings.TIMEZONE).strftime('%Y-%m-%d')
+        console.print(f"[cyan]Generating daily note for:[/cyan] {target_date}")
+        
+        if dry_run:
+            console.print("[yellow]DRY RUN - note will not be saved[/yellow]\n")
+        
+        # Run async function
+        with console.status("[cyan]Generating note...[/cyan]", spinner="dots"):
+            result = asyncio.run(generate_daily_note(date=date, dry_run=dry_run))
+        
+        if dry_run:
+            # Show the markdown content
+            console.print("\n[bold]Generated Note Preview:[/bold]\n")
+            console.print(result)
+        elif result.startswith("✅"):
+            console.print(f"[green]{result}[/green]")
+            
+            # Optionally send to Telegram
+            if send:
+                try:
+                    from src.interfaces.telegram.channel import TelegramChannel
+                    telegram = TelegramChannel()
+                    asyncio.run(telegram.send(f"📔 Daily note generated for {target_date}"))
+                    console.print("[dim]Telegram notification sent[/dim]")
+                except Exception as e:
+                    console.print(f"[yellow]Could not send Telegram notification: {e}[/yellow]")
+        elif result.startswith("⏭️"):
+            console.print(f"[yellow]{result}[/yellow]")
+        else:
+            console.print(f"[red]{result}[/red]")
+            raise typer.Exit(1)
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def journal_entries(
+    date: Optional[str] = typer.Argument(None, help="Date to show entries for (YYYY-MM-DD). Defaults to today."),
+    limit: int = typer.Option(50, "--limit", "-l", help="Maximum entries to show")
+):
+    """
+    List journal entries for a specific date.
+    
+    Examples:
+        friday journal-entries                    # Show today's entries
+        friday journal-entries 2026-01-07         # Show entries for specific date
+    """
+    from src.tools.journal import get_journal_entries_for_date
+    
+    try:
+        # Validate date format if provided
+        if date:
+            try:
+                datetime.strptime(date, '%Y-%m-%d')
+            except ValueError:
+                console.print(f"[red]Invalid date format: {date}[/red]")
+                console.print("[dim]Use YYYY-MM-DD format (e.g., 2026-01-07)[/dim]")
+                raise typer.Exit(1)
+        
+        target_date = date or datetime.now(settings.TIMEZONE).strftime('%Y-%m-%d')
+        entries = get_journal_entries_for_date(target_date)
+        
+        if not entries:
+            console.print(f"[yellow]No journal entries for {target_date}[/yellow]")
+            return
+        
+        # Create table
+        table = Table(title=f"Journal Entries - {target_date}")
+        table.add_column("Time", style="cyan", width=8)
+        table.add_column("Type", style="magenta", width=8)
+        table.add_column("Content", style="white")
+        
+        for entry in entries[:limit]:
+            time = datetime.fromisoformat(entry['timestamp']).strftime("%H:%M")
+            entry_type = entry['entry_type']
+            content = entry['content']
+            # Truncate long content
+            if len(content) > 100:
+                content = content[:100] + "..."
+            table.add_row(time, entry_type, content)
+        
+        console.print(table)
+        console.print(f"\n[dim]Total: {len(entries)} entries[/dim]")
+        
+        if len(entries) > limit:
+            console.print(f"[dim](Showing first {limit}, use --limit to see more)[/dim]")
     
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
@@ -959,6 +1140,156 @@ def test(
     except KeyboardInterrupt:
         console.print("\n[yellow]Tests interrupted[/yellow]")
         raise typer.Exit(130)
+
+
+# =============================================================================
+# Knowledge Index Commands
+# =============================================================================
+
+@app.command()
+def knowledge_rebuild():
+    """
+    Rebuild the entire knowledge index from scratch.
+    
+    Indexes:
+    - Vault notes (chunked by headers)
+    - Person profile notes
+    - Conversation history (last 90 days)
+    """
+    from src.tools.knowledge_indexer import rebuild_knowledge_index
+    
+    console.print("[cyan]Rebuilding knowledge index...[/cyan]\n")
+    
+    with console.status("[cyan]Indexing...[/cyan]", spinner="dots"):
+        result = rebuild_knowledge_index()
+    
+    if "error" in result:
+        console.print(f"[red]✗ Indexing failed: {result['error']}[/red]")
+        raise typer.Exit(1)
+    
+    console.print("[green]✓ Knowledge index rebuilt successfully![/green]\n")
+    console.print(f"[dim]Vault notes:[/dim] {result.get('vault_indexed', 0)} chunks")
+    console.print(f"[dim]Person notes:[/dim] {result.get('persons_indexed', 0)} chunks")
+    console.print(f"[dim]Conversations:[/dim] {result.get('conversations_indexed', 0)} messages")
+    console.print(f"[bold]Total:[/bold] {result.get('total_indexed', 0)} chunks indexed")
+
+
+@app.command()
+def knowledge_stats():
+    """
+    Show statistics about the knowledge index.
+    """
+    from src.tools.knowledge_indexer import get_index_stats
+    
+    result = get_index_stats()
+    
+    if "error" in result:
+        console.print(f"[red]✗ Failed to get stats: {result['error']}[/red]")
+        raise typer.Exit(1)
+    
+    console.print("\n[bold cyan]Knowledge Index Statistics[/bold cyan]\n")
+    console.print(f"[dim]Vault notes:[/dim] {result.get('vault_notes', 0)} chunks")
+    console.print(f"[dim]Person notes:[/dim] {result.get('person_notes', 0)} chunks")
+    console.print(f"[dim]Conversations:[/dim] {result.get('conversation_history', 0)} messages")
+    console.print(f"[bold]Total:[/bold] {result.get('total', 0)} chunks indexed\n")
+
+
+@app.command()
+def knowledge_search(
+    query: str = typer.Argument(..., help="Search query"),
+    limit: int = typer.Option(5, "-n", "--limit", help="Number of results to return")
+):
+    """
+    Search the knowledge index for relevant content.
+    
+    Example:
+        friday knowledge-search "running workouts" -n 3
+    """
+    from src.core.vector_store import get_vector_store
+    
+    console.print(f"[cyan]Searching for:[/cyan] {query}\n")
+    
+    vector_store = get_vector_store()
+    results = vector_store.search(query=query, top_k=limit)
+    
+    if not results:
+        console.print("[yellow]No results found[/yellow]")
+        return
+    
+    for i, result in enumerate(results, 1):
+        source = result.metadata.get("source", "Unknown")
+        content = result.content
+        similarity = result.similarity
+        
+        console.print(f"[bold]{i}. {source}[/bold] [dim](relevance: {similarity:.3f})[/dim]")
+        console.print(f"[dim]{content[:200]}...[/dim]\n" if len(content) > 200 else f"[dim]{content}[/dim]\n")
+
+
+@app.command()
+def knowledge_index_vault():
+    """
+    Index vault notes only (incremental).
+    """
+    from src.tools.knowledge_indexer import index_vault_notes
+    
+    console.print("[cyan]Indexing vault notes...[/cyan]\n")
+    
+    with console.status("[cyan]Indexing...[/cyan]", spinner="dots"):
+        result = index_vault_notes()
+    
+    if "error" in result:
+        console.print(f"[red]✗ Indexing failed: {result['error']}[/red]")
+        raise typer.Exit(1)
+    
+    console.print("[green]✓ Vault notes indexed successfully![/green]")
+    console.print(f"[dim]Indexed:[/dim] {result.get('indexed_count', 0)} chunks")
+    console.print(f"[dim]Skipped:[/dim] {result.get('skipped_count', 0)} files\n")
+
+
+@app.command()
+def knowledge_index_people():
+    """
+    Index person profile notes only (incremental).
+    """
+    from src.tools.knowledge_indexer import index_person_notes
+    
+    console.print("[cyan]Indexing person notes...[/cyan]\n")
+    
+    with console.status("[cyan]Indexing...[/cyan]", spinner="dots"):
+        result = index_person_notes()
+    
+    if "error" in result:
+        console.print(f"[red]✗ Indexing failed: {result['error']}[/red]")
+        raise typer.Exit(1)
+    
+    console.print("[green]✓ Person notes indexed successfully![/green]")
+    console.print(f"[dim]Persons:[/dim] {result.get('persons_count', 0)}")
+    console.print(f"[dim]Chunks:[/dim] {result.get('indexed_count', 0)}\n")
+
+
+@app.command()
+def knowledge_index_conversations(
+    days: int = typer.Option(90, "--days", "-d", help="Number of days to look back")
+):
+    """
+    Index conversation history only (incremental).
+    
+    Example:
+        friday knowledge-index-conversations --days 30
+    """
+    from src.tools.knowledge_indexer import index_conversation_history
+    
+    console.print(f"[cyan]Indexing conversation history (last {days} days)...[/cyan]\n")
+    
+    with console.status("[cyan]Indexing...[/cyan]", spinner="dots"):
+        result = index_conversation_history(days=days)
+    
+    if "error" in result:
+        console.print(f"[red]✗ Indexing failed: {result['error']}[/red]")
+        raise typer.Exit(1)
+    
+    console.print("[green]✓ Conversation history indexed successfully![/green]")
+    console.print(f"[dim]Messages:[/dim] {result.get('indexed_count', 0)}\n")
 
 
 # =============================================================================

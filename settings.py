@@ -122,9 +122,23 @@ GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
 # External Services - Weather
 # ==============================================================================
 
-OPENWEATHERMAP_API_KEY = os.getenv("OPENWEATHERMAP_API_KEY", "")
-WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "")
-WEATHER_CITY = os.getenv("WEATHER_CITY", "Curitiba")
+# Weather Configuration (OpenWeatherMap One Call API 3.0)
+# API Limit: 1000 calls/day free, but we limit to 30/day to be safe
+WEATHER = {
+    "api_key": os.getenv("OPENWEATHERMAP_API_KEY", "") or os.getenv("WEATHER_API_KEY", ""),
+    "city": os.getenv("WEATHER_CITY", "Curitiba"),
+    "lat": float(os.getenv("WEATHER_LAT", "-25.4284")),  # Curitiba default
+    "lon": float(os.getenv("WEATHER_LON", "-49.2733")),  # Curitiba default
+    "units": os.getenv("WEATHER_UNITS", "metric"),  # metric, imperial, or standard
+    "daily_api_limit": int(os.getenv("WEATHER_DAILY_LIMIT", "30")),  # Conservative limit
+    "base_url_v25": "https://api.openweathermap.org/data/2.5",  # Free tier
+    "base_url_v30": "https://api.openweathermap.org/data/3.0",  # One Call 3.0
+}
+
+# Legacy aliases for backward compatibility
+OPENWEATHERMAP_API_KEY = WEATHER["api_key"]
+WEATHER_API_KEY = WEATHER["api_key"]
+WEATHER_CITY = WEATHER["city"]
 
 
 # ==============================================================================
@@ -415,8 +429,16 @@ AWARENESS = {
             "tool": "src.tools.journal.generate_daily_note",
             "schedule": "50 23 * * *",  # Daily at 23:50
             "enabled": True,
-            "channels": [],  # No Telegram delivery, just generates note
+            "channels": ["telegram"],  # Send confirmation to Telegram
             "description": "Compile daily journal entries into Obsidian note",
+        },
+        {
+            "name": "rebuild_knowledge_index",
+            "tool": "src.tools.knowledge_indexer.rebuild_knowledge_index",
+            "schedule": "0 3 * * *",  # Daily at 3:00 AM
+            "enabled": True,
+            "channels": [],  # No Telegram delivery, silent background task
+            "description": "Rebuild knowledge index with latest vault, person notes, and conversations",
         },
     ],
 
@@ -479,6 +501,106 @@ AWARENESS = {
 
     # Storage settings
     "snapshot_retention_days": 90,
+}
+
+
+# ==============================================================================
+# Knowledge & RAG Configuration
+# ==============================================================================
+
+KNOWLEDGE = {
+    # Master switch
+    "enabled": True,
+    
+    # Vector store
+    "vector_store_path": PATHS["data"] / "chroma",
+    "embedding_model": "all-MiniLM-L6-v2",  # Reuse existing from embeddings.py
+    "collection_name": "friday_knowledge",
+    
+    # Background context (Tier 1 - always injected)
+    "background_context": {
+        "enabled": True,
+        "source_file": "1. Notes/Artur Gomes.md",
+        "include_frontmatter": True,
+        "include_content": True,  # Biography, Links, Notes sections
+        "skip_sections": ["Meetings"],  # Skip Dataview queries
+        "max_tokens": 300,  # CONFIGURABLE: Increase if sections grow
+        "cache_enabled": False,  # CONFIGURABLE: Enable for performance
+        "cache_ttl_seconds": 3600,  # Cache TTL when enabled
+    },
+    
+    # RAG context (Tier 2 - conditional)
+    "rag_context": {
+        "enabled": True,
+        "top_k": 3,  # CONFIGURABLE: More results = more context
+        "similarity_threshold": 0.40,  # CONFIGURABLE: Lower = more permissive (0-1)
+        "max_tokens": 400,  # CONFIGURABLE: Max tokens for all results combined
+        "show_sources": True,  # CONFIGURABLE: Toggle source attribution
+    },
+    
+    # Indexing sources
+    "sources": {
+        "vault": {
+            "enabled": True,
+            "path": PATHS["brain"],
+            "exclude_patterns": [
+                "Templates/",
+                ".obsidian/",
+                ".trash/",
+                ".DS_Store",
+            ],
+            "chunk_size": 800,  # CONFIGURABLE: Tokens per chunk
+            "chunk_overlap": 100,  # CONFIGURABLE: Overlap between chunks
+        },
+        "person_notes": {
+            "enabled": True,
+            "path": PATHS["brain"] / "1. Notes",
+            "pattern": "*.md",
+        },
+        "conversation_history": {
+            "enabled": True,
+            "index_user_only": True,  # Only index user messages
+            "max_age_days": 90,  # CONFIGURABLE: How far back to index
+        },
+    },
+    
+    # Intent detection (when to activate RAG)
+    "detection": {
+        "mode": "hybrid",  # CONFIGURABLE: "always", "hybrid", or "never"
+        
+        # Skip context for these patterns (regex)
+        "skip_patterns": [
+            r"^(hi|hello|hey|thanks|thank you|ok|okay|yes|no|yep|nope)$",
+            r"^(good morning|good night|good afternoon|goodbye|bye)$",
+        ],
+        
+        # Activate RAG for these keywords
+        "activate_keywords": [
+            # Question words
+            "what", "who", "when", "where", "how", "why", "which",
+            # Memory/recall
+            "remember", "wrote", "said", "mentioned", "talked about",
+            "did i", "have i", "do i", "last week", "last month", "yesterday",
+            # Knowledge queries
+            "tell me about", "what do you know", "do you know",
+        ],
+        
+        # Don't activate for these (prefer tools)
+        "tool_keywords": [
+            # Real-time data
+            "today", "now", "current", "latest", "recent", "this morning",
+            # Calculations
+            "how old", "how many", "how much", "days until", "time until",
+            # Actions
+            "create", "add", "delete", "update", "send", "schedule", "remind",
+            # Specific tool domains
+            "calendar", "weather", "sleep", "health", "portfolio", "steps",
+            "investments", "stock", "body battery", "stress", "hrv",
+        ],
+    },
+    
+    # Tool vs context priority
+    "tool_priority": "llm_decides",  # CONFIGURABLE: "llm_decides", "prefer_tools", or "prefer_context"
 }
 
 
