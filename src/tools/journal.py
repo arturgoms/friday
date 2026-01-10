@@ -13,7 +13,7 @@ if str(_parent_dir) not in sys.path:
     sys.path.insert(0, str(_parent_dir))
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 
 from settings import settings
@@ -267,14 +267,105 @@ def get_todays_journal_entries() -> Dict[str, Any]:
 # =============================================================================
 
 
-async def _categorize_entries_with_ai(entries: list) -> dict:
-    """Simple AI categorization of entries into Events/Thoughts/Reminders.
-    
+def _get_garmin_activities_for_date(date: str) -> list[dict[str, Any]]:
+    """Get Garmin activities for specific date.
+
+    Args:
+        date: Date in YYYY-MM-DD format
+
+    Returns:
+        List of activities with name, duration, distance
+    """
+    try:
+        # Query InfluxDB directly for activities on this date
+        from src.core.influxdb import query as _query
+
+        # Date range for the query
+        date_obj = datetime.strptime(date, "%Y-%m-%d")
+        start = date_obj.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+
+        # Query activities
+        activities_data = _query(f"""
+            SELECT activityName, activityType, movingDuration, distance
+            FROM ActivitySummary
+            WHERE time >= '{start.strftime('%Y-%m-%dT%H:%M:%SZ')}'
+              AND time < '{end.strftime('%Y-%m-%dT%H:%M:%SZ')}'
+        """)
+
+        formatted = []
+        for activity in activities_data:
+            name = activity.get('activityName', 'Activity')
+            duration_sec = activity.get('movingDuration', 0) or 0
+            distance_m = activity.get('distance', 0) or 0
+
+            formatted.append({
+                'name': name,
+                'type': activity.get('activityType', 'unknown'),
+                'duration_min': int(duration_sec / 60),
+                'distance_km': distance_m / 1000
+            })
+
+        return formatted
+    except Exception as e:
+        logger.warning(f"Could not fetch Garmin activities: {e}")
+        return []
+
+
+def _get_habit_relevant_calendar_events(date: str) -> list[str]:
+    """Get calendar events that might indicate habits.
+
+    Args:
+        date: Date in YYYY-MM-DD format
+
+    Returns:
+        List of event titles suggesting habits
+    """
+    try:
+        from src.tools.calendar import get_schedule
+
+        calendar = get_schedule(date=date)
+
+        # Extract events
+        if 'events' in calendar:
+            events = calendar.get('events', [])
+        else:
+            current = calendar.get('current_events', [])
+            upcoming = calendar.get('upcoming_events', [])
+            completed = calendar.get('completed_events', [])
+            events = current + upcoming + completed
+
+        # Filter for habit-related keywords
+        habit_keywords = [
+            'meditation', 'book', 'read', 'club', 'exercise',
+            'yoga', 'run', 'walk', 'pets', 'dog', 'date', 'wife',
+            'game', 'gaming', 'family time', 'workout', 'gym',
+            'pilates', 'cycling', 'swim', 'library', 'journal'
+        ]
+
+        relevant_events = []
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            title = event.get('title', '').lower()
+            if any(keyword in title for keyword in habit_keywords):
+                relevant_events.append(event.get('title', ''))
+
+        return relevant_events
+    except Exception as e:
+        logger.warning(f"Could not fetch calendar events: {e}")
+        return []
+
+
+async def _categorize_entries_with_ai(entries: list, date: str) -> dict:
+    """Enhanced categorization with multi-source habit detection.
+
     Args:
         entries: List of raw journal entries
-        
+        date: Date in YYYY-MM-DD format
+
     Returns:
-        Dict with events, thoughts, reminders, habits lists
+        Dict with events, thoughts, reminders, habits lists (with metadata)
     """
     # Format entries for AI
     formatted_entries = []
@@ -282,42 +373,117 @@ async def _categorize_entries_with_ai(entries: list) -> dict:
         time = datetime.fromisoformat(entry['timestamp']).strftime("%H:%M")
         prefix = "🎤 " if entry['entry_type'] == 'audio' else ""
         formatted_entries.append(f"**{time}** - {prefix}{entry['content']}")
-    
-    entries_text = "\n\n".join(formatted_entries)
-    
-    # Enhanced prompt - understand, improve, and categorize
-    prompt = f"""You are analyzing my personal journal entries (some in Portuguese). Read them carefully, understand what I'm expressing, and make them better while keeping my voice and intent.
 
-ENTRIES:
+    entries_text = "\n\n".join(formatted_entries) if formatted_entries else "No journal entries"
+
+    # Get Garmin activities
+    garmin_activities = _get_garmin_activities_for_date(date)
+    if garmin_activities:
+        garmin_lines = []
+        for activity in garmin_activities:
+            name = activity['name']
+            duration = activity['duration_min']
+            distance = activity.get('distance_km', 0)
+            if distance > 0:
+                garmin_lines.append(f"- {name}: {distance:.1f}km in {duration}min")
+            else:
+                garmin_lines.append(f"- {name}: {duration}min")
+        garmin_text = "\n".join(garmin_lines)
+    else:
+        garmin_text = "No activities recorded"
+
+    # Get calendar events
+    calendar_events = _get_habit_relevant_calendar_events(date)
+    calendar_text = "\n".join([f"- {event}" for event in calendar_events]) if calendar_events else "No relevant events"
+
+    # Enhanced prompt with multi-source detection
+    prompt = f"""You are analyzing my day from ALL sources (some in Portuguese). Detect habits and categorize journal entries.
+
+JOURNAL ENTRIES:
 {entries_text}
+
+GARMIN ACTIVITIES:
+{garmin_text}
+
+CALENDAR EVENTS:
+{calendar_text}
 
 TASK:
 1. Translate Portuguese to English naturally
-2. Understand the context and meaning behind each entry
-3. Enhance and clarify what I'm saying - make it more articulate and well-written
-4. Organize into categories:
-   - Events: Things that happened (actions, meetings, activities)
-   - Thoughts: Reflections, feelings, concerns, ideas, opinions
-   - Reminders: TODOs, action items, things to remember
-5. Detect habits that were mentioned/done:
-   - Read, Exercise, Quality time with wife, Quality time with pets, Play games, Meditation
+2. Enhance and clarify journal entries
+3. Organize journal into categories:
+   - Events: Things that happened (past tense, completed actions)
+   - Thoughts: Reflections, feelings, ideas, dreams, wishes
+   - Reminders: ONLY explicit future TODOs (NOT past events, NOT dreams, NOT thoughts)
+4. Detect ALL habits from ANY source:
+   - Be INCLUSIVE: detect any activities (exercise, reading, hobbies, social time)
+   - **CRITICAL**: Detect the SAME habit only ONCE even if it appears in multiple sources
+   - When the same activity appears in Garmin AND Calendar, create only ONE habit entry (prefer Garmin as source since it's confirmed)
+   - Extract the actual activity from calendar titles:
+     • "Exercise time: Pilates" → Extract "Pilates"
+     • "Morning Routine" → Extract relevant activity if clear
+     • "Book club meeting" → Extract "Reading"
+   - Normalize similar activities:
+     • Running, jogging, run → Running
+     • Cycling, bike ride → Cycling
+     • Reading, book club, library → Reading
+     • Wife time, date night, time with wife → Quality time - wife
+     • Dog walk, pet care, time with dog → Quality time - pets
+     • Gaming, played games, video games → Gaming
+     • Meditation, mindfulness → Meditation
+     • Pilates, pilates class → Pilates
+     • Yoga, yoga class → Yoga
+   - For each habit provide:
+     * name: Normalized habit name (extract from calendar titles)
+     * confidence: 1.0 (Garmin/explicit), 0.9 (calendar/strong), 0.7 (implied)
+     * source: "garmin", "calendar", or "journal" (prefer "garmin" if activity is in both Garmin and Calendar)
+     * evidence: Brief quote or reference
 
 Return as JSON:
 {{
-  "events": ["enhanced event description 1", "enhanced event 2", ...],
-  "thoughts": ["enhanced thought 1", "enhanced thought 2", ...],
-  "reminders": ["clear reminder 1", ...],
-  "habits": ["Play games", ...]
+  "events": ["event 1", ...],
+  "thoughts": ["thought 1", ...],
+  "reminders": ["reminder 1", ...],
+  "habits": [
+    {{"name": "Running", "confidence": 1.0, "source": "garmin", "evidence": "5.2km run"}},
+    {{"name": "Reading", "confidence": 0.9, "source": "journal", "evidence": "finished chapter 5"}},
+    ...
+  ]
 }}
 
+EXAMPLES:
+- Garmin shows "Pilates: 44min" + Calendar shows "Exercise time: Pilates"
+  → ONE habit: {{"name": "Pilates", "confidence": 1.0, "source": "garmin", "evidence": "Pilates: 44min"}}
+- Calendar shows "Book club meeting"
+  → {{"name": "Reading", "confidence": 0.9, "source": "calendar", "evidence": "Book club meeting"}}
+
+CONFIDENCE RULES:
+- Garmin activities: always 1.0 (confirmed data)
+- Calendar habit events: 0.9 (scheduled activity)
+- Journal explicit ("went running", "read a book"): 0.9
+- Journal implicit ("caught up on Dune"): 0.7
+- Empty arrays if nothing found
+
+REMINDER RULES (CRITICAL):
+Reminders are ONLY explicit future action items. Do NOT create reminders from:
+- Past events: "indo comprar pão" (going to buy bread) → Event, NOT reminder (already happening/done)
+- Dreams: "my phone exploded in dream" → Thought, NOT reminder (not real)
+- Implicit wishes: "I want to tell therapist" → Thought, NOT reminder (unless explicitly stated as TODO)
+- Ongoing actions: "preparing for meetings" → Event, NOT reminder (already doing it)
+- Past discussions: "discussed getting dog" → Event, NOT reminder (already happened)
+
+ONLY create reminders for:
+- Explicit TODOs: "I need to call the doctor tomorrow"
+- Clear action items: "Remember to buy milk"
+- Stated intentions: "I should schedule dentist appointment"
+
+If no explicit future TODOs exist, return empty reminders array: "reminders": []
+
 GUIDELINES:
-- Keep my voice and personality - don't make it formal or corporate
-- Fix grammar and clarity but maintain authenticity
-- Expand on brief/unclear entries to capture full meaning
-- Connect related thoughts if they flow together
+- Keep my voice and personality in events/thoughts
+- Fix grammar but maintain authenticity
 - Be concise but complete
-- If I mention concerns or excitement, preserve that emotion
-- Empty arrays if nothing found in that category"""
+- Preserve emotions"""
 
     try:
         # Use structured output
@@ -325,25 +491,31 @@ GUIDELINES:
         from typing import List
         from src.core.agent import create_model
         from pydantic_ai import Agent
-        
+
+        class HabitDetection(BaseModel):
+            name: str
+            confidence: float
+            source: str
+            evidence: str
+
         class JournalData(BaseModel):
             events: List[str]
             thoughts: List[str]
             reminders: List[str]
-            habits: List[str]
-        
+            habits: List[HabitDetection]
+
         model = create_model()
         simple_agent = Agent(model, model_settings={"temperature": 0.3})
-        
+
         # Use async run() instead of run_sync() to work within existing event loop
         result = await simple_agent.run(prompt, output_type=JournalData)
-        
+
         # result.output is the JournalData instance
         return {
             'events': result.output.events,
             'thoughts': result.output.thoughts,
             'reminders': result.output.reminders,
-            'habits': result.output.habits
+            'habits': [h.dict() for h in result.output.habits]  # Convert to dicts
         }
         
     except Exception as e:
@@ -393,9 +565,18 @@ async def _generate_ai_insight(note_data: dict) -> str:
     if note_data['thoughts']:
         context_parts.append(f"Thoughts/feelings: {'; '.join(note_data['thoughts'][:3])}")
     
-    # Habits
+    # Habits (with sources)
     if note_data['detected_habits']:
-        context_parts.append(f"Habits completed: {', '.join(note_data['detected_habits'])}")
+        habit_summary = []
+        for habit in note_data['detected_habits']:
+            if isinstance(habit, dict):
+                name = habit.get('name', '')
+                source = habit.get('source', 'unknown')
+                habit_summary.append(f"{name} ({source})")
+            else:
+                # Fallback for old format (just strings)
+                habit_summary.append(str(habit))
+        context_parts.append(f"Habits detected: {', '.join(habit_summary)}")
     
     context = "\n".join(context_parts)
     
@@ -431,6 +612,99 @@ Write the insight:"""
     except Exception as e:
         logger.error(f"AI insight generation failed: {e}")
         return ""
+
+
+def _render_habits_section(habits: list[dict[str, Any]]) -> str:
+    """Render habits with clean markdown formatting (no emojis).
+
+    Groups duplicate habits by name and merges their sources and evidence.
+
+    Args:
+        habits: List of habit dicts with name, confidence, source, evidence
+
+    Returns:
+        Formatted markdown section or empty string
+    """
+    if not habits:
+        return ""
+
+    # Filter by confidence
+    high_confidence = [h for h in habits if h['confidence'] >= 0.8]
+    medium_confidence = [h for h in habits if 0.6 <= h['confidence'] < 0.8]
+
+    if not high_confidence and not medium_confidence:
+        return ""
+
+    lines = ["## Habits\n"]
+
+    # High confidence habits - group by name (case-insensitive)
+    if high_confidence:
+        grouped = {}
+        for habit in high_confidence:
+            name = habit['name']
+            name_key = name.lower()
+
+            if name_key not in grouped:
+                grouped[name_key] = {
+                    'display_name': name,  # Use first occurrence for display
+                    'sources': [],
+                    'evidence': []
+                }
+
+            # Add source (avoid duplicates)
+            source_title = habit['source'].title()
+            if source_title not in grouped[name_key]['sources']:
+                grouped[name_key]['sources'].append(source_title)
+
+            # Add evidence if present
+            if habit.get('evidence'):
+                grouped[name_key]['evidence'].append(habit['evidence'])
+
+        # Render grouped habits
+        for habit_data in grouped.values():
+            name = habit_data['display_name']
+            sources = ", ".join(habit_data['sources'])
+
+            # Format: - **Name** (Source1, Source2)
+            lines.append(f"- **{name}** ({sources})")
+
+            # All evidence as italic sub-bullets
+            for evidence in habit_data['evidence']:
+                lines.append(f"  - _{evidence}_")
+
+        lines.append("")
+
+    # Medium confidence (collapsed) - also deduplicate
+    if medium_confidence:
+        lines.append("<details>")
+        lines.append("<summary>Possible habits (lower confidence)</summary>")
+        lines.append("")
+
+        # Group medium confidence habits too
+        grouped_medium = {}
+        for habit in medium_confidence:
+            name = habit['name']
+            name_key = name.lower()
+
+            if name_key not in grouped_medium:
+                grouped_medium[name_key] = {
+                    'display_name': name,
+                    'max_confidence': habit['confidence']
+                }
+            else:
+                # Keep highest confidence
+                if habit['confidence'] > grouped_medium[name_key]['max_confidence']:
+                    grouped_medium[name_key]['max_confidence'] = habit['confidence']
+
+        for habit_data in grouped_medium.values():
+            name = habit_data['display_name']
+            confidence_pct = int(habit_data['max_confidence'] * 100)
+            lines.append(f"- {name} ({confidence_pct}%)")
+
+        lines.append("</details>")
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 async def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
@@ -556,17 +830,19 @@ async def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
             logger.warning(f"Calendar fetch failed: {e}")
             events = []
         
-        # AI categorization (only if there are entries)
+        # AI categorization (with multi-source habit detection)
         if entries:
             logger.info("Categorizing entries with AI...")
-            categorized = await _categorize_entries_with_ai(entries)
+            categorized = await _categorize_entries_with_ai(entries, date)
             journal_events = categorized.get('events', [])
             thoughts = categorized.get('thoughts', [])
             reminders = categorized.get('reminders', [])
             detected_habits = categorized.get('habits', [])
         else:
             logger.info("No entries to categorize")
-            journal_events, thoughts, reminders, detected_habits = [], [], [], []
+            categorized = await _categorize_entries_with_ai([], date)  # Still detect Garmin/calendar habits
+            journal_events, thoughts, reminders = [], [], []
+            detected_habits = categorized.get('habits', [])
         
         # Format journal sections
         journal_sections = ""
@@ -625,13 +901,21 @@ async def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
                 raw_lines.append(f"**{time}** - {prefix}\"{content}\"")
             raw_text = "\n\n".join(raw_lines)
         
-        # Check which habits were detected
-        check_read = 'x' if 'Read' in detected_habits else ' '
-        check_exercise = 'x' if 'Exercise' in detected_habits else ' '
-        check_wife = 'x' if 'Quality time with wife' in detected_habits else ' '
-        check_pets = 'x' if 'Quality time with pets' in detected_habits else ' '
-        check_games = 'x' if 'Play games' in detected_habits else ' '
-        check_meditation = 'x' if 'Meditation' in detected_habits else ' '
+        # Render habits section (badge format, no emojis)
+        habits_section = _render_habits_section(detected_habits)
+
+        # Extract habit names for frontmatter (high confidence only)
+        # Deduplicate by converting to set, then back to list (case-insensitive deduplication)
+        habit_names_raw = [h['name'] for h in detected_habits if h['confidence'] >= 0.8]
+        # Use dict to preserve first occurrence while deduplicating case-insensitively
+        seen = {}
+        for name in habit_names_raw:
+            name_key = name.lower()
+            if name_key not in seen:
+                seen[name_key] = name
+        habit_names = list(seen.values())
+        # Always include habits key (even if empty) for Dataview queries
+        habits_frontmatter = habit_names if habit_names else []
         
         # Build raw entries section (only if entries exist)
         raw_entries_section = ""
@@ -684,7 +968,7 @@ async def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
         markdown = f"""---
 date: '{date}'
 day: {weekday}
-habits: {detected_habits}
+habits: {habits_frontmatter}
 sleep: {sleep_hours}h
 sleep_score: {sleep_score}
 tags:
@@ -710,13 +994,7 @@ weather: {weather_desc}, {weather_temp}°C
 ## Calendar
 {calendar_text}
 
-## Habits
-- [{check_read}] Read
-- [{check_exercise}] Exercise
-- [{check_wife}] Quality time with wife
-- [{check_pets}] Quality time with pets
-- [{check_games}] Play games
-- [{check_meditation}] Meditation
+{habits_section}
 
 ## Journal
 

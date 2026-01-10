@@ -605,6 +605,26 @@ KNOWLEDGE = {
 
 
 # ==============================================================================
+# Habits Configuration
+# ==============================================================================
+
+HABITS = {
+    "detection": {
+        "min_confidence_for_display": 0.8,
+        "min_confidence_for_frontmatter": 0.8,
+        "include_evidence": True,
+        "show_medium_confidence": True,
+    },
+    "calendar_keywords": [
+        "meditation", "book", "read", "club", "exercise",
+        "yoga", "run", "walk", "pets", "dog", "date", "wife",
+        "game", "gaming", "family time", "workout", "gym",
+        "pilates", "cycling", "swim", "library", "journal"
+    ],
+}
+
+
+# ==============================================================================
 # Legacy Schedules Configuration (DEPRECATED - use AWARENESS instead)
 # ==============================================================================
 
