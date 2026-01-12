@@ -872,6 +872,74 @@ def journal_entries(
         raise typer.Exit(1)
 
 
+@app.command()
+def journal_add(
+    content: str = typer.Argument(..., help="The journal entry content"),
+    date: Optional[str] = typer.Option(None, "--date", "-d", help="Date for entry (YYYY-MM-DD). Defaults to today."),
+    time: Optional[str] = typer.Option(None, "--time", "-t", help="Time for entry (HH:MM). Defaults to noon for past dates, now for today."),
+    entry_type: str = typer.Option("text", "--type", help="Entry type: text or audio")
+):
+    """
+    Add a journal entry for a specific date.
+    
+    Add entries to any date, useful for backfilling or adding notes
+    to past days before generating daily notes.
+    
+    Examples:
+        friday journal-add "Had a great meeting today"
+        friday journal-add "Went for a run in the morning" --date 2026-01-05
+        friday journal-add "Morning meditation" --date 2026-01-05 --time 07:30
+        friday journal-add "Called mom" -d 2026-01-03 -t 15:00
+    """
+    from src.tools.journal import save_journal_entry
+    
+    try:
+        # Validate date format if provided
+        if date:
+            try:
+                datetime.strptime(date, '%Y-%m-%d')
+            except ValueError:
+                console.print(f"[red]Invalid date format: {date}[/red]")
+                console.print("[dim]Use YYYY-MM-DD format (e.g., 2026-01-07)[/dim]")
+                raise typer.Exit(1)
+        
+        # Validate time format if provided
+        if time:
+            try:
+                datetime.strptime(time, '%H:%M')
+            except ValueError:
+                console.print(f"[red]Invalid time format: {time}[/red]")
+                console.print("[dim]Use HH:MM format (e.g., 14:30)[/dim]")
+                raise typer.Exit(1)
+        
+        # Validate entry type
+        if entry_type not in ("text", "audio"):
+            console.print(f"[red]Invalid entry type: {entry_type}[/red]")
+            console.print("[dim]Use 'text' or 'audio'[/dim]")
+            raise typer.Exit(1)
+        
+        # Save the entry
+        success = save_journal_entry(
+            content=content,
+            entry_type=entry_type,
+            date=date,
+            time=time
+        )
+        
+        if success:
+            target_date = date or datetime.now(settings.TIMEZONE).strftime('%Y-%m-%d')
+            time_str = time or "now"
+            console.print(f"[green]Journal entry added for {target_date} at {time_str}[/green]")
+            console.print(f"[dim]{content[:80]}{'...' if len(content) > 80 else ''}[/dim]")
+        else:
+            console.print("[red]Failed to save journal entry[/red]")
+            raise typer.Exit(1)
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
 # =============================================================================
 # Service Management
 # =============================================================================
