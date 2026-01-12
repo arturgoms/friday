@@ -165,7 +165,9 @@ def get_journal_thread_for_date(date: str) -> Optional[int]:
 def save_journal_entry(
     content: str,
     entry_type: str = "text",
-    thread_message_id: Optional[int] = None
+    thread_message_id: Optional[int] = None,
+    date: Optional[str] = None,
+    time: Optional[str] = None
 ) -> bool:
     """Save a journal entry to the database.
     
@@ -173,6 +175,8 @@ def save_journal_entry(
         content: The text content (or transcribed audio)
         entry_type: Either "text" or "audio"
         thread_message_id: The thread message ID this is replying to
+        date: Optional date in YYYY-MM-DD format (defaults to today)
+        time: Optional time in HH:MM format (defaults to current time)
         
     Returns:
         True if saved successfully
@@ -181,15 +185,33 @@ def save_journal_entry(
         db = Database()
         now = datetime.now(get_brt())
         
+        # Use provided date or today
+        entry_date = date or now.strftime("%Y-%m-%d")
+        
+        # Build timestamp
+        if date and time:
+            # User provided both date and time
+            timestamp_str = f"{date}T{time}:00"
+            timestamp = datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S")
+            timestamp = timestamp.replace(tzinfo=get_brt())
+        elif date:
+            # User provided date but no time - use noon as default
+            timestamp_str = f"{date}T12:00:00"
+            timestamp = datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S")
+            timestamp = timestamp.replace(tzinfo=get_brt())
+        else:
+            # Use current timestamp
+            timestamp = now
+        
         db.insert('journal_entries', {
-            'date': now.strftime("%Y-%m-%d"),
-            'timestamp': now.isoformat(),
+            'date': entry_date,
+            'timestamp': timestamp.isoformat(),
             'entry_type': entry_type,
             'content': content,
             'thread_message_id': thread_message_id
         })
         
-        logger.info(f"Saved journal entry ({entry_type}): {content[:50]}...")
+        logger.info(f"Saved journal entry ({entry_type}) for {entry_date}: {content[:50]}...")
         return True
         
     except Exception as e:

@@ -106,18 +106,18 @@ def _add_sync_warning(ctx: ReportContext, hours_ago: Optional[float],
         True if data is fresh, False otherwise
     """
     garmin_fresh, hours_ago, last_sync_time = _check_garmin_sync_freshness()
-    
+
     if not garmin_fresh:
         if hours_ago is not None:
-            ctx.add_line(f"⚠️ **GARMIN LAST SYNCED**: {hours_ago:.1f}h ago (at {last_sync_time})")
+            ctx.add_line(f"⚠️ <b>GARMIN LAST SYNCED</b>: {hours_ago:.1f}h ago (at {last_sync_time})")
             ctx.add_line("Some metrics may be outdated. Sync your watch for latest data.")
             ctx.add_line("")
             if hours_ago > 12:
                 ctx.add_warning("Garmin hasn't synced in over 12 hours.")
         else:
-            ctx.add_line("⚠️ **GARMIN SYNC UNAVAILABLE**: Could not verify data freshness.")
+            ctx.add_line("⚠️ <b>GARMIN SYNC UNAVAILABLE</b>: Could not verify data freshness.")
             ctx.add_line("")
-    
+
     return garmin_fresh
 
 
@@ -131,7 +131,7 @@ def _build_sleep_section(ctx: ReportContext, garmin_fresh: bool) -> int:
     Returns:
         Sleep score (0 if unavailable)
     """
-    ctx.add_section("*LAST NIGHT'S SLEEP*")
+    ctx.add_section("<b>LAST NIGHT'S SLEEP</b>")
 
     # Try to fetch data regardless of sync freshness
     sleep_data = _query("""
@@ -141,7 +141,7 @@ def _build_sleep_section(ctx: ReportContext, garmin_fresh: bool) -> int:
     """)
 
     if not sleep_data:
-        ctx.add_line("_No sleep data available_")
+        ctx.add_line("<i>No sleep data available</i>")
         return 0
 
     sleep = sleep_data[0]
@@ -149,7 +149,7 @@ def _build_sleep_section(ctx: ReportContext, garmin_fresh: bool) -> int:
     yesterday = (ctx.now - timedelta(days=1)).strftime("%Y-%m-%d")
 
     if sleep_date not in [ctx.today_str, yesterday]:
-        ctx.add_line(f"_Data outdated ({sleep_date})_")
+        ctx.add_line(f"<i>Data outdated ({sleep_date})</i>")
         return 0
 
     # Parse sleep data
@@ -175,16 +175,16 @@ def _build_sleep_section(ctx: ReportContext, garmin_fresh: bool) -> int:
         quality = "Poor"
         ctx.add_warning("Poor sleep - take it easy today.")
 
-    ctx.add_line(f"• *Score:* {sleep_score}/100 _{quality}_")
-    ctx.add_line(f"• *Duration:* {total_hours:.1f}h (Deep: {format_duration(deep)}, REM: {format_duration(rem)})")
-    ctx.add_line(f"• *HRV:* {hrv}ms | *RHR:* {rhr}bpm")
+    ctx.add_line(f"• <b>Score:</b> {sleep_score}/100 <i>{quality}</i>")
+    ctx.add_line(f"• <b>Duration:</b> {total_hours:.1f}h (Deep: {format_duration(deep)}, REM: {format_duration(rem)})")
+    ctx.add_line(f"• <b>HRV:</b> {hrv}ms | <b>RHR:</b> {rhr}bpm")
 
     return sleep_score
 
 
 def _build_energy_section(ctx: ReportContext, garmin_fresh: bool):
     """Build energy/recovery section for morning report."""
-    ctx.add_section("*ENERGY & RECOVERY*")
+    ctx.add_section("<b>ENERGY & RECOVERY</b>")
 
     # Try to fetch data regardless of sync freshness
     # Body battery
@@ -206,11 +206,11 @@ def _build_energy_section(ctx: ReportContext, garmin_fresh: bool):
                 bb_desc = "Low"
                 ctx.add_warning("Low energy - avoid overexertion.")
 
-            ctx.add_line(f"• *Body Battery:* {body_battery}/100 _{bb_desc}_")
+            ctx.add_line(f"• <b>Body Battery:</b> {body_battery}/100 <i>{bb_desc}</i>")
         else:
-            ctx.add_line(f"_Data from {bb_date} (not today)_")
+            ctx.add_line(f"<i>Data from {bb_date} (not today)</i>")
     else:
-        ctx.add_line("_Body Battery data not available_")
+        ctx.add_line("<i>Body Battery data not available</i>")
 
     # Training readiness
     tr_data = _query("SELECT score, level, time FROM TrainingReadiness ORDER BY time DESC LIMIT 1")
@@ -220,7 +220,7 @@ def _build_energy_section(ctx: ReportContext, garmin_fresh: bool):
         if tr_date == ctx.today_str:
             tr_score = int(tr_data[0].get("score", 0) or 0)
             tr_level = tr_data[0].get("level", "").title()
-            ctx.add_line(f"• *Training Readiness:* {tr_score}/100 _{tr_level}_")
+            ctx.add_line(f"• <b>Training Readiness:</b> {tr_score}/100 <i>{tr_level}</i>")
 
             if tr_score < 50:
                 ctx.add_warning("Low training readiness - rest or light activity only.")
@@ -228,7 +228,7 @@ def _build_energy_section(ctx: ReportContext, garmin_fresh: bool):
 
 def _build_calendar_section(ctx: ReportContext):
     """Build calendar section for morning report."""
-    ctx.add_section("*TODAY'S SCHEDULE*")
+    ctx.add_section("<b>TODAY'S SCHEDULE</b>")
 
     try:
         from src.tools.calendar import get_today_schedule
@@ -246,7 +246,7 @@ def _build_calendar_section(ctx: ReportContext):
                 meeting_count = 0
                 for event in all_events:
                     if event.get("all_day"):
-                        ctx.add_line(f"• _All day:_ {event['title']}")
+                        ctx.add_line(f"• <i>All day:</i> {event['title']}")
                     else:
                         cal_label = "Personal" if event.get("calendar") == "personal" else "Work"
                         # Parse ISO format datetime strings
@@ -254,25 +254,25 @@ def _build_calendar_section(ctx: ReportContext):
                         end_dt = datetime.fromisoformat(event.get("end", ""))
                         start_time = start_dt.strftime("%H:%M")
                         end_time = end_dt.strftime("%H:%M")
-                        ctx.add_line(f"• *{start_time}-{end_time}* ({cal_label}): {event['title']}")
+                        ctx.add_line(f"• <b>{start_time}-{end_time}</b> ({cal_label}): {event['title']}")
                         meeting_count += 1
 
                 if meeting_count > 5:
                     ctx.add_warning(f"Heavy meeting day ({meeting_count}). Block time for breaks.")
             else:
-                ctx.add_line("_No events - open day!_")
+                ctx.add_line("<i>No events - open day!</i>")
                 ctx.add_insight("Clear calendar - good for deep work.")
         else:
-            ctx.add_line("_Calendar unavailable_")
+            ctx.add_line("<i>Calendar unavailable</i>")
 
     except Exception as e:
         logger.debug(f"Calendar unavailable: {e}")
-        ctx.add_line("_Calendar unavailable_")
+        ctx.add_line("<i>Calendar unavailable</i>")
 
 
 def _build_weather_section(ctx: ReportContext):
     """Build weather section for morning report."""
-    ctx.add_section("*WEATHER*")
+    ctx.add_section("<b>WEATHER</b>")
 
     try:
         from src.tools.weather import get_current_weather
@@ -284,19 +284,19 @@ def _build_weather_section(ctx: ReportContext):
             condition = weather.get("condition", "").lower()
             humidity = weather.get("humidity")
 
-            ctx.add_line(f"• *Temperature:* {temp}°C (feels {feels}°C)")
-            ctx.add_line(f"• *Condition:* {condition.title()}")
-            ctx.add_line(f"• *Humidity:* {humidity}%")
+            ctx.add_line(f"• <b>Temperature:</b> {temp}°C (feels {feels}°C)")
+            ctx.add_line(f"• <b>Condition:</b> {condition.title()}")
+            ctx.add_line(f"• <b>Humidity:</b> {humidity}%")
 
             # Check for rain in condition
             if "rain" in condition or "drizzle" in condition or "shower" in condition:
                 ctx.add_warning("Rain expected today - bring an umbrella.")
         else:
-            ctx.add_line("_Weather data unavailable_")
+            ctx.add_line("<i>Weather data unavailable</i>")
 
     except Exception as e:
         logger.debug(f"Weather unavailable: {e}")
-        ctx.add_line("_Weather unavailable_")
+        ctx.add_line("<i>Weather unavailable</i>")
 
 
 def _build_insights_section(ctx: ReportContext):
@@ -304,9 +304,9 @@ def _build_insights_section(ctx: ReportContext):
     if not ctx.warnings and not ctx.insights:
         return
 
-    ctx.add_section("*NOTES FOR TODAY*")
+    ctx.add_section("<b>NOTES FOR TODAY</b>")
     for w in ctx.warnings:
-        ctx.add_line(f"• _Warning:_ {w}")
+        ctx.add_line(f"• <i>Warning:</i> {w}")
     for i in ctx.insights:
         ctx.add_line(f"• {i}")
 
@@ -329,7 +329,7 @@ class SleepFactors:
 
 def _build_activity_section(ctx: ReportContext, factors: SleepFactors):
     """Build activity section for evening report."""
-    ctx.add_section("*ACTIVITY*")
+    ctx.add_section("<b>ACTIVITY</b>")
 
     today_start = ctx.now.replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -355,7 +355,7 @@ def _build_activity_section(ctx: ReportContext, factors: SleepFactors):
         else:
             steps_note = "Low"
 
-        ctx.add_line(f"• *Steps:* {steps:,} _{steps_note}_ | *Distance:* {distance:.1f}km")
+        ctx.add_line(f"• <b>Steps:</b> {steps:,} <i>{steps_note}</i> | <b>Distance:</b> {distance:.1f}km")
 
     # Activities
     activities = _query(f"""
@@ -373,12 +373,12 @@ def _build_activity_section(ctx: ReportContext, factors: SleepFactors):
             dur = format_duration(a.get("movingDuration", 0) or 0)
             cal = int(a.get("calories", 0) or 0)
             if dur != "0m":
-                ctx.add_line(f"• *{name}:* {dur}, {cal} cal")
+                ctx.add_line(f"• <b>{name}:</b> {dur}, {cal} cal")
 
 
 def _build_stress_section(ctx: ReportContext, factors: SleepFactors):
     """Build stress section for evening report."""
-    ctx.add_section("*STRESS*")
+    ctx.add_section("<b>STRESS</b>")
 
     today_start = ctx.now.replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -404,20 +404,20 @@ def _build_stress_section(ctx: ReportContext, factors: SleepFactors):
         else:
             stress_note = "High"
 
-        ctx.add_line(f"• *Average:* {stress_avg}/100 _{stress_note}_")
-        ctx.add_line(f"• *High stress:* {format_duration(high_sec)} | *Rest:* {format_duration(rest_sec)}")
+        ctx.add_line(f"• <b>Average:</b> {stress_avg}/100 <i>{stress_note}</i>")
+        ctx.add_line(f"• <b>High stress:</b> {format_duration(high_sec)} | <b>Rest:</b> {format_duration(rest_sec)}")
 
     # Current stress
     current = _query("SELECT stressLevel FROM StressIntraday ORDER BY time DESC LIMIT 1")
     if current:
         curr_stress = int(current[0].get("stressLevel", 0) or 0)
         factors.current_stress = curr_stress
-        ctx.add_line(f"• *Current:* {curr_stress}/100")
+        ctx.add_line(f"• <b>Current:</b> {curr_stress}/100")
 
 
 def _build_evening_energy_section(ctx: ReportContext, factors: SleepFactors):
     """Build energy section for evening report."""
-    ctx.add_section("*ENERGY*")
+    ctx.add_section("<b>ENERGY</b>")
 
     today_start = ctx.now.replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -439,31 +439,31 @@ def _build_evening_energy_section(ctx: ReportContext, factors: SleepFactors):
         if bb_wake:
             wake_bb = int(bb_wake[0].get("bodyBatteryAtWakeTime", 0) or 0)
             drain = wake_bb - current_bb
-            ctx.add_line(f"• *Body Battery:* {current_bb}/100 (started at {wake_bb}, used {drain})")
+            ctx.add_line(f"• <b>Body Battery:</b> {current_bb}/100 (started at {wake_bb}, used {drain})")
         else:
-            ctx.add_line(f"• *Body Battery:* {current_bb}/100")
+            ctx.add_line(f"• <b>Body Battery:</b> {current_bb}/100")
 
 
 def _build_evening_meetings_section(ctx: ReportContext, factors: SleepFactors):
     """Build meetings section for evening report."""
-    ctx.add_section("*MEETINGS*")
-    
+    ctx.add_section("<b>MEETINGS</b>")
+
     try:
         from src.tools.calendar import get_today_schedule
-        
+
         schedule = get_today_schedule()
-        
+
         if isinstance(schedule, dict) and not schedule.get("error"):
             # Combine all event types
             current_events = schedule.get("current_events", [])
             upcoming_events = schedule.get("upcoming_events", [])
             completed_events = schedule.get("completed_events", [])
             all_events = current_events + upcoming_events + completed_events
-            
+
             meetings = [e for e in all_events if not e.get("all_day")]
             meeting_count = len(meetings)
             factors.meetings = meeting_count
-            
+
             # Calculate total duration
             total_min = 0
             for e in meetings:
@@ -472,19 +472,19 @@ def _build_evening_meetings_section(ctx: ReportContext, factors: SleepFactors):
                 end_dt = datetime.fromisoformat(e.get("end", ""))
                 duration_min = (end_dt - start_dt).total_seconds() / 60
                 total_min += duration_min
-            
-            ctx.add_line(f"• *Total:* {meeting_count} meetings, {format_duration(int(total_min * 60))} duration")
+
+            ctx.add_line(f"• <b>Total:</b> {meeting_count} meetings, {format_duration(int(total_min * 60))} duration")
         else:
-            ctx.add_line("_Calendar unavailable_")
+            ctx.add_line("<i>Calendar unavailable</i>")
 
     except Exception as e:
         logger.debug(f"Calendar unavailable: {e}")
-        ctx.add_line("_Calendar unavailable_")
+        ctx.add_line("<i>Calendar unavailable</i>")
 
 
 def _build_sleep_recommendation(ctx: ReportContext, factors: SleepFactors):
     """Build sleep recommendation section for evening report."""
-    ctx.add_section("*SLEEP RECOMMENDATION*")
+    ctx.add_section("<b>SLEEP RECOMMENDATION</b>")
 
     tips = []
     bedtime_adj = 0
@@ -520,7 +520,7 @@ def _build_sleep_recommendation(ctx: ReportContext, factors: SleepFactors):
     if suggested < ctx.now:
         suggested = ctx.now + timedelta(minutes=30)
 
-    ctx.add_line(f"• *Suggested bedtime:* {suggested.strftime('%H:%M')}")
+    ctx.add_line(f"• <b>Suggested bedtime:</b> {suggested.strftime('%H:%M')}")
 
     for tip in tips:
         ctx.add_line(f"• {tip}")
@@ -535,9 +535,9 @@ def _build_sleep_recommendation(ctx: ReportContext, factors: SleepFactors):
         good_factors.append("physical activity")
 
     if len(good_factors) >= 2:
-        ctx.add_line(f"• *Outlook:* Good ({', '.join(good_factors)})")
+        ctx.add_line(f"• <b>Outlook:</b> Good ({', '.join(good_factors)})")
     else:
-        ctx.add_line("• *Outlook:* May need extra wind-down time")
+        ctx.add_line("• <b>Outlook:</b> May need extra wind-down time")
 
 
 # =============================================================================
@@ -598,11 +598,11 @@ def report_evening_briefing() -> str:
     garmin_fresh, hours_ago, last_sync_time = _check_garmin_sync_freshness()
     if not garmin_fresh:
         if hours_ago is not None:
-            ctx.add_line(f"*WARNING:* Garmin data stale (last sync: {hours_ago:.1f}h ago at {last_sync_time})")
-            ctx.add_line("_Activity metrics below may be incomplete. Sync your watch!_")
+            ctx.add_line(f"<b>WARNING:</b> Garmin data stale (last sync: {hours_ago:.1f}h ago at {last_sync_time})")
+            ctx.add_line("<i>Activity metrics below may be incomplete. Sync your watch!</i>")
             ctx.add_line("")
         else:
-            ctx.add_line("*WARNING:* Garmin sync unavailable")
+            ctx.add_line("<b>WARNING:</b> Garmin sync unavailable")
             ctx.add_line("")
     
     # Build sections

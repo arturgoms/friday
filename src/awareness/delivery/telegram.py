@@ -159,8 +159,6 @@ class TelegramChannel(DeliveryChannel):
 
         # Format the message
         message = self._format_insight(insight)
-        # Convert markdown to HTML
-        html_message = markdown_to_html(message)
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -170,7 +168,7 @@ class TelegramChannel(DeliveryChannel):
                         f"{self.api_base}/sendMessage",
                         json={
                             "chat_id": chat_id,
-                            "text": html_message,
+                            "text": message,
                             "parse_mode": "HTML"
                         }
                     )
@@ -253,19 +251,16 @@ class TelegramChannel(DeliveryChannel):
             return False
         
         import httpx
-        
+
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                # Convert markdown to HTML
-                html_report = markdown_to_html(report_text)
-
                 all_success = True
                 for chat_id in self.chat_ids:
                     response = await client.post(
                         f"{self.api_base}/sendMessage",
                         json={
                             "chat_id": chat_id,
-                            "text": html_report,
+                            "text": report_text,
                             "parse_mode": "HTML"
                         }
                     )
@@ -303,8 +298,6 @@ class TelegramChannel(DeliveryChannel):
         import httpx
 
         message = self._format_insight(insight)
-        # Convert markdown to HTML
-        html_message = markdown_to_html(message)
 
         try:
             with httpx.Client(timeout=10.0) as client:
@@ -314,7 +307,7 @@ class TelegramChannel(DeliveryChannel):
                         f"{self.api_base}/sendMessage",
                         json={
                             "chat_id": chat_id,
-                            "text": html_message,
+                            "text": message,
                             "parse_mode": "HTML"
                         }
                     )
@@ -380,19 +373,16 @@ class TelegramChannel(DeliveryChannel):
             return False
         
         import httpx
-        
+
         try:
             with httpx.Client(timeout=10.0) as client:
-                # Convert markdown to HTML
-                html_report = markdown_to_html(report_text)
-
                 all_success = True
                 for chat_id in self.chat_ids:
                     response = client.post(
                         f"{self.api_base}/sendMessage",
                         json={
                             "chat_id": chat_id,
-                            "text": html_report,
+                            "text": report_text,
                             "parse_mode": "HTML"
                         }
                     )

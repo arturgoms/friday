@@ -20,6 +20,35 @@ from settings import settings
 logger = logging.getLogger(__name__)
 
 
+def markdown_to_html(text: str) -> str:
+    """
+    Convert simple Markdown to HTML for Telegram.
+
+    Converts:
+    - *TEXT* -> <b>TEXT</b> (bold)
+    - _TEXT_ -> <i>TEXT</i> (italic)
+    - **TEXT** -> <b>TEXT</b> (bold alternative)
+
+    Args:
+        text: Text with markdown formatting
+
+    Returns:
+        Text with HTML formatting
+    """
+    import re
+
+    # Replace **bold** first (before single *)
+    text = re.sub(r'\*\*([^\*]+)\*\*', r'<b>\1</b>', text)
+
+    # Replace *bold* (but avoid matching ** patterns)
+    text = re.sub(r'(?<!\*)\*([^\*\n]+?)\*(?!\*)', r'<b>\1</b>', text)
+
+    # Replace _italic_
+    text = re.sub(r'(?<!_)_([^_\n]+?)_(?!_)', r'<i>\1</i>', text)
+
+    return text
+
+
 class TelegramChannel(Channel):
     """
     Telegram bot channel implementation.
@@ -106,25 +135,32 @@ class TelegramChannel(Channel):
             sent_message = None
             
             if message.type == MessageType.TEXT:
+                # Convert markdown to HTML for better formatting
+                html_content = markdown_to_html(message.content)
                 sent_message = await self.bot.send_message(
                     chat_id=chat_id,
-                    text=message.content,
+                    text=html_content,
+                    parse_mode='HTML',
                     reply_to_message_id=message.reply_to if message.reply_to else None
                 )
             
             elif message.type == MessageType.IMAGE and message.attachments:
+                caption = markdown_to_html(message.content) if message.content else None
                 sent_message = await self.bot.send_photo(
                     chat_id=chat_id,
                     photo=message.attachments[0],
-                    caption=message.content if message.content else None,
+                    caption=caption,
+                    parse_mode='HTML' if caption else None,
                     reply_to_message_id=message.reply_to if message.reply_to else None
                 )
             
             elif message.type == MessageType.DOCUMENT and message.attachments:
+                caption = markdown_to_html(message.content) if message.content else None
                 sent_message = await self.bot.send_document(
                     chat_id=chat_id,
                     document=message.attachments[0],
-                    caption=message.content if message.content else None,
+                    caption=caption,
+                    parse_mode='HTML' if caption else None,
                     reply_to_message_id=message.reply_to if message.reply_to else None
                 )
             
@@ -214,14 +250,15 @@ class TelegramChannel(Channel):
     async def _handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command."""
         user_id = update.effective_user.id
-        
+
         if user_id not in self.allowed_user_ids:
             await update.message.reply_text("Sorry, you are not authorized to use this bot.")
             return
-        
+
+        welcome_msg = "👋 Hello! I'm Friday, your personal AI assistant.\n\nSend me a message and I'll help you out!"
         await update.message.reply_text(
-            "👋 Hello! I'm Friday, your personal AI assistant.\n\n"
-            "Send me a message and I'll help you out!"
+            markdown_to_html(welcome_msg),
+            parse_mode='HTML'
         )
     
     async def _handle_text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
