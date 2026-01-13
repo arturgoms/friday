@@ -487,11 +487,12 @@ class AwarenessEngine:
             channels = report.get("channels", ["telegram"])
             if "telegram" in channels:
                 # Create a simple insight to wrap the report
+                # Use URGENT priority so scheduled reports bypass quiet hours
                 from src.awareness.models import Insight, Priority, InsightType, Category
                 insight = Insight(
                     type=InsightType.DIGEST,
                     category=Category.SYSTEM,
-                    priority=Priority.HIGH,
+                    priority=Priority.URGENT,  # Scheduled reports should always be delivered
                     title=name,
                     message=report_text,
                     confidence=1.0
