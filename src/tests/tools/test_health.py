@@ -77,6 +77,7 @@ def test_get_sleep_summary_structure():
     assert "period_days" in result
     assert "average_hours" in result
     assert "average_score" in result
+    assert "nap_info" in result, "Missing 'nap_info' key"
     assert "timestamp" in result
     
     # Validate types
@@ -85,6 +86,20 @@ def test_get_sleep_summary_structure():
     assert isinstance(result["average_hours"], (int, float))
     assert isinstance(result["average_score"], (int, float))
     assert result["period_days"] == 7
+    
+    # Validate nap_info structure
+    nap_info = result["nap_info"]
+    assert isinstance(nap_info, dict)
+    assert "nap_detected" in nap_info
+    assert "nap_duration_minutes" in nap_info
+    assert isinstance(nap_info["nap_detected"], bool)
+    assert isinstance(nap_info["nap_duration_minutes"], int)
+    
+    # If nap detected, validate additional fields
+    if nap_info["nap_detected"]:
+        assert "nap_start" in nap_info
+        assert "nap_end" in nap_info
+        assert "battery_gain" in nap_info
     
     # If there are nights, validate structure
     if result["sleep_nights"]:
@@ -104,6 +119,22 @@ def test_get_sleep_summary_never_none():
     
     result = get_sleep_summary()
     assert result is not None, "CRITICAL: Tool returned None!"
+
+
+def test_get_sleep_summary_with_date_parameter():
+    """Test get_sleep_summary accepts date parameter for nap detection."""
+    from src.tools.health import get_sleep_summary
+    from datetime import datetime, timedelta
+    
+    # Use yesterday's date
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    result = get_sleep_summary(days=7, date=yesterday)
+    
+    assert isinstance(result, dict)
+    assert "nap_info" in result
+    # nap_info should be for the specified date
+    assert isinstance(result["nap_info"], dict)
+    assert "nap_detected" in result["nap_info"]
 
 
 # =============================================================================
@@ -382,9 +413,14 @@ def test_get_body_battery_structure():
         assert "max" in result
         assert "readings_count" in result
         
+        assert isinstance(result["start"], int)
         assert isinstance(result["current"], int)
         assert isinstance(result["min"], int)
         assert isinstance(result["max"], int)
+        
+        # start is the first reading (midnight), max is peak after sleep
+        assert result["start"] <= result["max"], \
+            "Body battery 'start' should be <= 'max'"
 
 
 def test_get_body_battery_never_none():
@@ -400,7 +436,7 @@ def test_get_body_battery_never_none():
 # =============================================================================
 
 def test_get_stress_structure():
-    """Test get_stress returns correct structure."""
+    """Test get_stress returns correct structure with rest/stress hours."""
     from src.tools.health import get_stress
     
     result = get_stress()
@@ -410,14 +446,28 @@ def test_get_stress_structure():
     
     # Check required keys (based on actual API)
     if "error" not in result:
+        # Basic stats
         assert "average" in result
         assert "min" in result
         assert "max" in result
         assert "current" in result
         assert "readings_count" in result
         
+        # New rest/stress breakdown
+        assert "rest_hours" in result, "Missing rest_hours key"
+        assert "stress_hours" in result, "Missing stress_hours key"
+        assert "rest_pct" in result, "Missing rest_pct key"
+        assert "stress_pct" in result, "Missing stress_pct key"
+        
         assert isinstance(result["average"], int)
         assert isinstance(result["current"], int)
+        assert isinstance(result["rest_hours"], (int, float))
+        assert isinstance(result["stress_hours"], (int, float))
+        assert isinstance(result["rest_pct"], int)
+        assert isinstance(result["stress_pct"], int)
+        
+        # Percentages should add up to 100
+        assert result["rest_pct"] + result["stress_pct"] == 100, "rest_pct + stress_pct should equal 100"
 
 
 def test_get_stress_never_none():

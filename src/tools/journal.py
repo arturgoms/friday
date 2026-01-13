@@ -28,6 +28,22 @@ def get_brt():
     return settings.TIMEZONE
 
 
+def _format_sleep_duration(hours: float) -> str:
+    """Convert decimal hours to hours:minutes format.
+    
+    Args:
+        hours: Sleep duration in decimal hours (e.g., 7.5)
+        
+    Returns:
+        Formatted string like "7:30" (hours:minutes)
+    """
+    if hours <= 0:
+        return "0:00"
+    h = int(hours)
+    m = int((hours - h) * 60)
+    return f"{h}:{m:02d}"
+
+
 def _infer_weather_description(cloud_cover: float, precipitation: float) -> str:
     """Infer weather description from historical metrics.
 
@@ -567,9 +583,13 @@ async def _generate_ai_insight(note_data: dict) -> str:
     context_parts.append(f"Date: {note_data['date']} ({note_data['weekday']})")
     
     # Health metrics
-    context_parts.append(f"Sleep: {note_data['sleep_hours']:.1f}h (score: {note_data['sleep_score']})")
-    context_parts.append(f"Body Battery: started at {note_data['bb_start']}%, ended at {note_data['bb_end']}%")
-    context_parts.append(f"Stress average: {note_data['stress_avg']}")
+    context_parts.append(f"Sleep: {note_data['sleep_duration']} (score: {note_data['sleep_score']})")
+    if note_data.get('nap_detected') and note_data.get('nap_duration_minutes', 0) > 0:
+        nap_mins = note_data['nap_duration_minutes']
+        nap_h, nap_m = nap_mins // 60, nap_mins % 60
+        context_parts.append(f"Nap: {nap_h}h {nap_m}m" if nap_h > 0 else f"Nap: {nap_m}m")
+    context_parts.append(f"Body Battery: sleep recharged +{note_data['bb_sleep_recharge']}% (to {note_data['bb_start']}%), day activities drained -{note_data['bb_day_drain']}% (to {note_data['bb_end']}%)")
+    context_parts.append(f"Stress: {note_data['stress_rest_hours']:.1f}h rest, {note_data['stress_stress_hours']:.1f}h stress ({note_data['stress_rest_pct']}% rest)")
     context_parts.append(f"Training Readiness: {note_data['tr_score']} ({note_data['tr_level']})")
     context_parts.append(f"HRV: {note_data['hrv']}ms")
     context_parts.append(f"Steps: {note_data['steps_today']} (30-day avg: {note_data['steps_avg']})")
@@ -788,7 +808,7 @@ async def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
         try:
             # Sleep should be from last night (yesterday's date)
             yesterday = (date_obj - timedelta(days=1)).strftime("%Y-%m-%d")
-            sleep = get_sleep_summary(days=7)  # Get last 7 days
+            sleep = get_sleep_summary(days=7, date=date)  # Get last 7 days + nap info for this date
             sleep_nights = sleep.get('sleep_nights', [])
             # Find yesterday's sleep (last night)
             sleep_hours = 0
@@ -802,20 +822,44 @@ async def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
                 # Fallback to most recent
                 sleep_hours = sleep_nights[0].get('total_hours', 0)
                 sleep_score = sleep_nights[0].get('score', 0)
+            # Format sleep duration as h:mm
+            sleep_duration = _format_sleep_duration(sleep_hours)
+            
+            # Get nap info for this date
+            nap_info = sleep.get('nap_info', {})
+            nap_detected = nap_info.get('nap_detected', False)
+            nap_duration_minutes = nap_info.get('nap_duration_minutes', 0)
+            nap_start = nap_info.get('nap_start', '')
+            nap_end = nap_info.get('nap_end', '')
+            nap_battery_gain = nap_info.get('battery_gain', 0)
         except Exception as e:
             logger.warning(f"Sleep fetch failed: {e}")
             sleep_hours = 0
             sleep_score = 0
+            sleep_duration = "0:00"
+            nap_detected = False
+            nap_duration_minutes = 0
+            nap_start = ''
+            nap_end = ''
+            nap_battery_gain = 0
         
         try:
             # Get body battery from InfluxDB for the specific date
             bb_data = get_body_battery(date=date)
             bb_start = bb_data.get('start', 0)
-            bb_end = bb_data.get('current', 0)
+            bb_end = bb_data.get('end', bb_data.get('current', 0))
+            bb_max = bb_data.get('max', 0)  # Peak after sleep recovery
+            
+            # Calculate sleep recharge (start -> max) and day drain (max -> end)
+            bb_sleep_recharge = bb_max - bb_start
+            bb_day_drain = bb_max - bb_end
             
             # Get stress from InfluxDB for the specific date
             stress_data = get_stress(date=date)
             stress_avg = stress_data.get('average', 0)
+            stress_rest_hours = stress_data.get('rest_hours', 0)
+            stress_stress_hours = stress_data.get('stress_hours', 0)
+            stress_rest_pct = stress_data.get('rest_pct', 0)
             
             # Get training readiness
             recovery = get_recovery_status()
@@ -825,7 +869,7 @@ async def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
             hrv = recovery.get('overnight_hrv_ms', 0)
         except Exception as e:
             logger.warning(f"Recovery fetch failed: {e}")
-            bb_start, bb_end, stress_avg, tr_score, tr_level, hrv = 0, 0, 0, 0, 'N/A', 0
+            bb_start, bb_end, bb_max, bb_sleep_recharge, bb_day_drain, stress_avg, stress_rest_hours, stress_stress_hours, stress_rest_pct, tr_score, tr_level, hrv = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'N/A', 0
         
         try:
             steps_data = get_steps(date=date)
@@ -958,11 +1002,18 @@ async def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
         note_data = {
             'date': date,
             'weekday': weekday,
-            'sleep_hours': sleep_hours,
+            'sleep_duration': sleep_duration,
             'sleep_score': sleep_score,
+            'nap_detected': nap_detected,
+            'nap_duration_minutes': nap_duration_minutes,
             'bb_start': bb_start,
             'bb_end': bb_end,
+            'bb_sleep_recharge': bb_sleep_recharge,
+            'bb_day_drain': bb_day_drain,
             'stress_avg': stress_avg,
+            'stress_rest_hours': stress_rest_hours,
+            'stress_stress_hours': stress_stress_hours,
+            'stress_rest_pct': stress_rest_pct,
             'tr_score': tr_score,
             'tr_level': tr_level,
             'hrv': hrv,
@@ -986,17 +1037,29 @@ async def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
 > {ai_insight}
 """
         
+        # Format nap duration for frontmatter (float hours)
+        nap_hours = nap_duration_minutes // 60
+        nap_mins = nap_duration_minutes % 60
+        nap_duration_hours = nap_duration_minutes / 60  # Float for frontmatter
+        
+        # Format nap line for Health section (only if nap detected)
+        nap_line = ""
+        if nap_detected and nap_duration_minutes > 0:
+            nap_display = f"{nap_hours}h {nap_mins}m" if nap_hours > 0 else f"{nap_mins}m"
+            nap_line = f"\n- **Nap:** {nap_display} ({nap_start}-{nap_end}, recharged {nap_battery_gain}%)"
+        
         # Build markdown
         markdown = f"""---
 date: '{date}'
 day: {weekday}
 habits: {habits_frontmatter}
-sleep: {sleep_hours}h
+sleep_duration: {sleep_hours:.2f}
 sleep_score: {sleep_score}
+nap_duration: {nap_duration_hours:.2f}
 tags:
   - time/daily
   - area/friday
-weather: {weather_desc}, {weather_temp}°C
+temperature: {weather_temp}
 ---
 << [[{yesterday}|Yesterday]] | [[{tomorrow}|Tomorrow]] >>
 
@@ -1006,9 +1069,9 @@ weather: {weather_desc}, {weather_temp}°C
 {weather_desc}, {weather_temp}°C
 
 ## Health
-- **Sleep:** {sleep_hours:.1f}h (score: {sleep_score})
-- **Body Battery:** {bb_start}%→{bb_end}%
-- **Stress:** {stress_avg:.0f}
+- **Sleep:** {sleep_duration} (score: {sleep_score}, +{bb_sleep_recharge}% battery){nap_line}
+- **Body Battery:** {bb_max}%→{bb_end}% (-{bb_day_drain}% today)
+- **Stress:** {stress_rest_hours:.1f}h rest / {stress_stress_hours:.1f}h stress ({stress_rest_pct}% rest)
 - **Training Readiness:** {tr_score} ({tr_level})
 - **HRV:** {hrv}ms
 - **Steps:** {steps_today}{steps_insight}

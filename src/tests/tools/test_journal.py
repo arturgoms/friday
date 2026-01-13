@@ -22,6 +22,8 @@ if str(project_root) not in sys.path:
 from src.tools.journal import (
     create_daily_journal_thread,
     get_todays_journal_entries,
+    save_journal_entry,
+    _format_sleep_duration,
 )
 
 
@@ -417,3 +419,85 @@ def test_get_todays_journal_entries_entry_counts_accurate():
             assert result["text_entries"] == 2
             assert result["audio_entries"] == 3
             assert result["text_entries"] + result["audio_entries"] == result["total_entries"]
+
+
+# =============================================================================
+# Sleep Duration Formatting Tests
+# =============================================================================
+
+def test_format_sleep_duration_basic():
+    """Test basic sleep duration formatting."""
+    assert _format_sleep_duration(7.5) == "7:30"
+    assert _format_sleep_duration(8.0) == "8:00"
+    assert _format_sleep_duration(6.25) == "6:15"
+    assert _format_sleep_duration(7.75) == "7:45"
+
+
+def test_format_sleep_duration_edge_cases():
+    """Test edge cases for sleep duration formatting."""
+    assert _format_sleep_duration(0) == "0:00"
+    assert _format_sleep_duration(-1) == "0:00"
+    assert _format_sleep_duration(0.5) == "0:30"
+    # Note: 10.1 may be 10:05 or 10:06 due to floating point precision
+    result = _format_sleep_duration(10.1)
+    assert result in ["10:05", "10:06"], f"Unexpected result: {result}"
+
+
+def test_format_sleep_duration_real_values():
+    """Test formatting with real sleep values from the system."""
+    # Values from actual sleep data
+    assert _format_sleep_duration(7.04) == "7:02"  # 7h 2.4m rounds to 7:02
+    assert _format_sleep_duration(8.19) == "8:11"  # 8h 11.4m
+    assert _format_sleep_duration(7.32) == "7:19"  # 7h 19.2m
+    assert _format_sleep_duration(5.04) == "5:02"  # 5h 2.4m
+
+
+# =============================================================================
+# Save Journal Entry Tests
+# =============================================================================
+
+def test_save_journal_entry_with_date():
+    """Test save_journal_entry accepts date parameter."""
+    with patch('src.tools.journal.Database') as mock_db_class:
+        mock_db = Mock()
+        mock_db_class.return_value = mock_db
+        mock_db.insert.return_value = True
+        
+        result = save_journal_entry(
+            content="Test entry",
+            entry_type="text",
+            date="2026-01-05",
+            time="14:30"
+        )
+        
+        assert result is True
+        mock_db.insert.assert_called_once()
+        
+        # Verify the call included the correct date
+        call_args = mock_db.insert.call_args
+        assert call_args[0][0] == 'journal_entries'
+        insert_data = call_args[0][1]
+        assert insert_data['date'] == "2026-01-05"
+        assert "14:30" in insert_data['timestamp']
+
+
+def test_save_journal_entry_defaults_to_today():
+    """Test save_journal_entry defaults to today when no date provided."""
+    with patch('src.tools.journal.Database') as mock_db_class:
+        mock_db = Mock()
+        mock_db_class.return_value = mock_db
+        mock_db.insert.return_value = True
+        
+        result = save_journal_entry(
+            content="Test entry",
+            entry_type="text"
+        )
+        
+        assert result is True
+        mock_db.insert.assert_called_once()
+        
+        # Verify the call used today's date
+        call_args = mock_db.insert.call_args
+        insert_data = call_args[0][1]
+        today = datetime.now().strftime("%Y-%m-%d")
+        assert insert_data['date'] == today

@@ -186,17 +186,154 @@ def get_vo2max() -> Dict[str, Any]:
 # Sleep & Recovery Tools
 # =============================================================================
 
+
+def _detect_nap(date: str) -> Dict[str, Any]:
+    """Detect afternoon nap from body battery data.
+    
+    Looks for periods during daytime (10:00-20:00) where body battery
+    increases continuously for at least 20 minutes.
+    
+    Args:
+        date: Date in YYYY-MM-DD format
+        
+    Returns:
+        Dict with nap info:
+        - nap_detected: True if nap found
+        - nap_start: Start time (HH:MM)
+        - nap_end: End time (HH:MM)
+        - nap_duration_minutes: Duration in minutes
+        - battery_gain: How much body battery increased
+        
+        Returns empty dict with nap_detected=False if no nap found.
+    """
+    from datetime import datetime, timedelta
+    
+    # Query body battery for daytime window (09:00-21:00 local time)
+    # BRT is UTC-3, so we need to convert: 09:00 BRT = 12:00 UTC, 21:00 BRT = 00:00 UTC next day
+    start_time = f"{date}T12:00:00Z"  # 09:00 BRT
+    end_time = f"{date}T23:59:00Z"    # 20:59 BRT
+    
+    query = f"""
+    SELECT time, BodyBatteryLevel
+    FROM BodyBatteryIntraday
+    WHERE time >= '{start_time}'
+    AND time < '{end_time}'
+    ORDER BY time ASC
+    """
+    
+    points = _query(query)
+    
+    if not points or len(points) < 7:  # Need at least ~20 minutes of data
+        return {"nap_detected": False, "nap_duration_minutes": 0}
+    
+    # Convert to list of (time, level) for easier processing
+    levels = [(p.get("time", ""), int(p.get("BodyBatteryLevel", 0) or 0)) for p in points]
+    
+    # Find naps by looking for V-pattern:
+    # 1. First find peaks and valleys
+    # 2. A nap is a valley followed by significant increase to a peak
+    # 
+    # Algorithm:
+    # - Find local minimum points (valleys) where level was decreasing then starts increasing
+    # - Track how much it increases from that valley
+    # - If increase is sustained for ≥20 min, it's a nap
+    
+    nap_candidates = []
+    
+    i = 1  # Start at 1 to compare with previous
+    while i < len(levels) - 1:
+        prev_level = levels[i - 1][1]
+        curr_level = levels[i][1]
+        next_level = levels[i + 1][1]
+        
+        # Check if this is a valley (local minimum): was decreasing, now increasing
+        if prev_level >= curr_level and next_level > curr_level:
+            # Found a valley - potential nap start
+            valley_idx = i
+            valley_level = curr_level
+            valley_time = levels[i][0]
+            
+            # Track the increase
+            j = i + 1
+            peak_level = next_level
+            peak_idx = j
+            
+            while j < len(levels):
+                level = levels[j][1]
+                
+                if level >= peak_level:
+                    peak_level = level
+                    peak_idx = j
+                elif level < peak_level - 3:
+                    # Significant decrease (>3 points) - nap ended
+                    break
+                j += 1
+            
+            # Calculate nap stats
+            peak_time = levels[peak_idx][0]
+            duration_readings = peak_idx - valley_idx
+            duration_minutes = duration_readings * 3  # 3 minutes per reading
+            battery_gain = peak_level - valley_level
+            
+            # Check if qualifies as nap:
+            # - Duration ≥ 20 minutes
+            # - Must have gained at least some battery (not just noise)
+            if duration_minutes >= 20 and battery_gain >= 3:
+                nap_candidates.append({
+                    "start_time": valley_time,
+                    "end_time": peak_time,
+                    "duration_minutes": duration_minutes,
+                    "battery_gain": battery_gain,
+                    "start_level": valley_level,
+                    "peak_level": peak_level
+                })
+            
+            i = j  # Continue from after this period
+        else:
+            i += 1
+    
+    if not nap_candidates:
+        return {"nap_detected": False, "nap_duration_minutes": 0}
+    
+    # Return the longest nap
+    longest_nap = max(nap_candidates, key=lambda x: x["duration_minutes"])
+    
+    # Parse times for display (convert from UTC to BRT local time)
+    def parse_time(iso_time: str) -> str:
+        try:
+            # Handle both 'Z' and timezone formats
+            if iso_time.endswith('Z'):
+                dt = datetime.strptime(iso_time, "%Y-%m-%dT%H:%M:%SZ")
+            else:
+                dt = datetime.fromisoformat(iso_time)
+            # Convert UTC to BRT (UTC-3, so subtract 3 hours from UTC)
+            local_dt = dt - timedelta(hours=3)
+            return local_dt.strftime("%H:%M")
+        except:
+            return iso_time.split("T")[1][:5] if "T" in iso_time else "00:00"
+    
+    return {
+        "nap_detected": True,
+        "nap_start": parse_time(longest_nap["start_time"]),
+        "nap_end": parse_time(longest_nap["end_time"]),
+        "nap_duration_minutes": longest_nap["duration_minutes"],
+        "battery_gain": longest_nap["battery_gain"]
+    }
+
+
 @agent.tool_plain
-def get_sleep_summary(days: int = 7) -> Dict[str, Any]:
-    """Get sleep analysis including quality, duration, and stages.
+def get_sleep_summary(days: int = 7, date: str = None) -> Dict[str, Any]:
+    """Get sleep analysis including quality, duration, stages, and nap info.
     
     Atomic data tool that returns structured sleep data.
     
     Args:
         days: Number of days to analyze (default: 7)
+        date: Specific date to get nap info for (YYYY-MM-DD). 
+              Defaults to most recent date in sleep data.
     
     Returns:
-        Dict with sleep data including daily breakdown and averages
+        Dict with sleep data including daily breakdown, averages, and nap info
     """
     query = f"SELECT * FROM SleepSummary ORDER BY time DESC LIMIT {days}"
     points = _query(query)
@@ -233,11 +370,16 @@ def get_sleep_summary(days: int = 7) -> Dict[str, Any]:
     avg_hours = sum(total_hours) / len(total_hours) if total_hours else 0
     avg_score = sum(scores) / len(scores) if scores else 0
     
+    # Detect nap for the specified date or most recent date
+    nap_date = date if date else (sleep_data[0]["date"] if sleep_data else None)
+    nap_info = _detect_nap(nap_date) if nap_date else {"nap_detected": False, "nap_duration_minutes": 0}
+    
     return {
         "sleep_nights": sleep_data,
         "period_days": days,
         "average_hours": round(avg_hours, 2),
         "average_score": round(avg_score, 0),
+        "nap_info": nap_info,
         "timestamp": datetime.now(settings.TIMEZONE).isoformat()
     }
 
@@ -728,11 +870,23 @@ def get_body_battery(date: str = None) -> Dict[str, Any]:
 def get_stress(date: str = None) -> Dict[str, Any]:
     """Get stress levels for a specific date.
     
+    Analyzes stress data from Garmin. Readings are every 3 minutes.
+    - Rest: stressLevel <= 25
+    - Stress: stressLevel > 25
+    - Invalid readings (-1) are excluded (typically during sleep)
+    
     Args:
         date: Date in YYYY-MM-DD format. Defaults to today.
     
     Returns:
-        Dict with stress statistics
+        Dict with stress statistics including:
+            - average: Average stress level (valid readings only)
+            - rest_hours: Hours spent in rest state (<=25)
+            - stress_hours: Hours spent in stress state (>25)
+            - rest_pct: Percentage of time in rest
+            - stress_pct: Percentage of time in stress
+            - min, max, current: Stress level values
+            - readings_count: Number of valid readings
     """
     from datetime import datetime, timedelta
     
@@ -758,17 +912,43 @@ def get_stress(date: str = None) -> Dict[str, Any]:
     if not points:
         return {"error": "No stress data available"}
     
-    levels = [int(p.get("stressLevel", 0) or 0) for p in points if p.get("stressLevel")]
+    # Filter valid readings (exclude -1 which indicates no reading/sleep)
+    valid_levels = [
+        int(p.get("stressLevel", 0)) 
+        for p in points 
+        if p.get("stressLevel") is not None and int(p.get("stressLevel", -1)) >= 0
+    ]
     
-    if not levels:
+    if not valid_levels:
         return {"error": "No valid stress data"}
     
+    # Categorize: rest (<=25) vs stress (>25)
+    rest_readings = [v for v in valid_levels if v <= 25]
+    stress_readings = [v for v in valid_levels if v > 25]
+    
+    # Each reading represents 3 minutes
+    minutes_per_reading = 3
+    rest_minutes = len(rest_readings) * minutes_per_reading
+    stress_minutes = len(stress_readings) * minutes_per_reading
+    total_minutes = len(valid_levels) * minutes_per_reading
+    
+    rest_hours = rest_minutes / 60
+    stress_hours = stress_minutes / 60
+    
+    # Calculate percentages
+    rest_pct = round(len(rest_readings) / len(valid_levels) * 100) if valid_levels else 0
+    stress_pct = round(len(stress_readings) / len(valid_levels) * 100) if valid_levels else 0
+    
     return {
-        "average": round(sum(levels) / len(levels)),
-        "min": min(levels),
-        "max": max(levels),
-        "current": levels[-1],
-        "readings_count": len(levels)
+        "average": round(sum(valid_levels) / len(valid_levels)),
+        "rest_hours": round(rest_hours, 1),
+        "stress_hours": round(stress_hours, 1),
+        "rest_pct": rest_pct,
+        "stress_pct": stress_pct,
+        "min": min(valid_levels),
+        "max": max(valid_levels),
+        "current": valid_levels[-1],
+        "readings_count": len(valid_levels)
     }
 
 
