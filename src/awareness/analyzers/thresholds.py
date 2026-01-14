@@ -267,12 +267,47 @@ class ThresholdAnalyzer(RealTimeAnalyzer):
         return insights
     
     def _check_external_services_thresholds(self, external_services: Dict[str, Any]) -> List[Insight]:
-        """Check external services thresholds (services down)."""
+        """Check external services thresholds (services down) and recovery."""
         insights = []
         
-        # Get services list
+        # Get current services list
         services = external_services.get("services", [])
         down_services = [s for s in services if s.get("status") in ["down", "timeout", "error"]]
+        down_names = set(s.get("name", "unknown") for s in down_services)
+        
+        # Get previous state to detect recovery
+        prev_snapshot = self.store.get_latest_snapshot("external_services")
+        prev_down_names = set()
+        if prev_snapshot and prev_snapshot.data:
+            prev_services = prev_snapshot.data.get("services", [])
+            prev_down_names = set(
+                s.get("name", "unknown") 
+                for s in prev_services 
+                if s.get("status") in ["down", "timeout", "error"]
+            )
+        
+        # Check for recovered services
+        recovered_names = prev_down_names - down_names
+        if recovered_names:
+            recovered_list = sorted(recovered_names)
+            count = len(recovered_list)
+            names_str = ", ".join(recovered_list[:10])
+            
+            dedupe_key = f"services_recovered_{'-'.join(sorted(recovered_names)[:5])}"
+            if not self.was_insight_delivered_recently(dedupe_key, hours=1):
+                insights.append(Insight(
+                    type=InsightType.THRESHOLD,
+                    category=Category.HOMELAB,
+                    priority=Priority.LOW,
+                    title=f"Recovered",
+                    message=f"{names_str}",
+                    dedupe_key=dedupe_key,
+                    data={"count": count, "services": recovered_list},
+                    expires_at=datetime.now(get_brt()) + timedelta(hours=1),
+                ))
+        
+        # Check for newly down services
+        newly_down_names = down_names - prev_down_names
         
         if down_services:
             svc_threshold = self.config.get("thresholds", {}).get("services_down", {})
@@ -280,24 +315,26 @@ class ThresholdAnalyzer(RealTimeAnalyzer):
             critical = svc_threshold.get("critical", 3)
             
             count = len(down_services)
-            names = ", ".join([s.get("name", "unknown") for s in down_services[:5]])
+            down_list = sorted([s.get("name", "unknown") for s in down_services])
+            names_str = ", ".join(down_list[:10])
             
             if count >= critical:
-                level, priority = "critical", Priority.HIGH
+                priority = Priority.HIGH
             elif count >= warning:
-                level, priority = "elevated", Priority.MEDIUM
+                priority = Priority.MEDIUM
             else:
-                level, priority = None, None
+                priority = None
             
-            if level:
-                dedupe_key = f"services_down_{count}"
+            # Only alert if there are newly down services or this is first detection
+            if priority and (newly_down_names or not prev_down_names):
+                dedupe_key = f"services_down_{'-'.join(sorted(down_names)[:5])}"
                 if not self.was_insight_delivered_recently(dedupe_key):
                     insights.append(Insight(
                         type=InsightType.THRESHOLD,
                         category=Category.HOMELAB,
                         priority=priority,
-                        title=f"{count} service(s) down",
-                        message=f"Down: {names}",
+                        title=f"Down",
+                        message=f"{names_str}",
                         dedupe_key=dedupe_key,
                         data={"count": count, "services": down_services},
                         expires_at=datetime.now(get_brt()) + timedelta(hours=1),
