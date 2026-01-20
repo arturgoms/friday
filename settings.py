@@ -401,6 +401,14 @@ AWARENESS = {
     # Scheduled reports - composite tools that return formatted strings
     "scheduled_reports": [
         {
+            "name": "create_starter_note",
+            "tool": "src.tools.journal.create_starter_note",
+            "schedule": "55 7 * * *",  # Daily at 7:55 AM (before journal thread)
+            "enabled": True,
+            "channels": [],  # No Telegram delivery, silent background task
+            "description": "Create starter daily note with weather and empty journal sections",
+        },
+        {
             "name": "journal_thread",
             "tool": "src.tools.journal.create_daily_journal_thread",
             "schedule": "0 8 * * *",  # Daily at 8:00 AM

@@ -121,10 +121,27 @@ class FridayTelegramBot:
             
             # Create dependencies with session_id for tools
             deps = AgentDeps(session_id=session_id)
-            
+
             # Run the AI agent with the user's message, history, dependencies, and auto-context
-            result = await run_with_context(message.content, message_history=history, deps=deps)
-            
+            try:
+                result = await run_with_context(message.content, message_history=history, deps=deps)
+            except Exception as e:
+                # vLLM connection error - gracefully handle offline mode
+                logger.error(f"vLLM connection error: {e}")
+
+                # Send friendly offline message
+                offline_response = Message(
+                    content="I'm currently offline (vLLM unavailable). I can still:\n"
+                            "- Save journal entries (reply to journal thread)\n"
+                            "- Send scheduled reports and insights\n"
+                            "- Collect your health/calendar data\n\n"
+                            "Try again when my brain is back online.",
+                    type=MessageType.TEXT,
+                    reply_to=message.metadata.get('telegram_message_id')
+                )
+                await self.telegram.send(offline_response)
+                return  # Exit gracefully
+
             # Update conversation history with the complete message list
             # result.all_messages() contains: old history + user message + assistant response
             self.conversation_manager.update_history(session_id, result.all_messages())

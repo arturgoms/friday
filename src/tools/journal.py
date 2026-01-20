@@ -82,6 +82,85 @@ def _infer_weather_description(cloud_cover: float, precipitation: float) -> str:
 # =============================================================================
 
 
+def create_starter_note(date: str = None) -> str:
+    """Create a starter note for the day with weather and empty journal sections.
+
+    NOTE: This is NOT an agent tool - it's for scheduler/automation only.
+
+    Args:
+        date: Date in YYYY-MM-DD format. Defaults to today.
+
+    Returns:
+        Status message
+    """
+    try:
+        from src.tools.weather import get_weather
+        from src.tools.vault import vault_write_note
+
+        # Default to today
+        if not date:
+            date = datetime.now(get_brt()).strftime("%Y-%m-%d")
+
+        date_obj = datetime.strptime(date, "%Y-%m-%d")
+        weekday = date_obj.strftime("%A")
+
+        logger.info(f"Creating starter note for {date}")
+
+        # Get weather for today
+        weather = get_weather(date=date)
+        if weather.get('error'):
+            weather_desc = 'unavailable'
+            weather_temp = 0
+        else:
+            weather_desc = weather.get('description', 'unavailable')
+            weather_temp = weather.get('temp', 0)
+
+        # Build starter note
+        markdown = f"""---
+date: '{date}'
+day: {weekday}
+---
+
+# [[{date}]]
+
+## Weather
+{weather_desc}, {weather_temp}°C
+
+## Journal
+
+### Notes
+-
+
+### Reminder
+"""
+
+        # Write to vault (check if exists first)
+        note_path = f"2. Time/2.2 Daily/{date}.md"
+
+        # Check if note already exists
+        from pathlib import Path
+        vault_path = settings.VAULT_PATH / note_path
+        if vault_path.exists():
+            logger.info(f"Starter note already exists for {date}")
+            return f"ℹ️ Starter note already exists for {date}"
+
+        result = vault_write_note(note_path, markdown, mode="overwrite")
+
+        if "Success" in result:
+            logger.info(f"✓ Starter note created for {date}")
+            return f"✅ Starter note created for {date}"
+        elif "already exists" in result:
+            logger.info(f"Starter note already exists for {date}")
+            return f"ℹ️ Starter note already exists for {date}"
+        else:
+            logger.error(f"Failed to create starter note: {result}")
+            return f"❌ Failed to create starter note: {result}"
+
+    except Exception as e:
+        logger.error(f"Error creating starter note: {e}")
+        return f"❌ Error creating starter note: {e}"
+
+
 @agent.tool_plain
 def create_daily_journal_thread() -> str:
     """Create the daily journal thread in Telegram.
@@ -301,6 +380,86 @@ def get_todays_journal_entries() -> Dict[str, Any]:
         return {'error': str(e)}
 
 # =============================================================================
+# Manual Content Extraction
+# =============================================================================
+
+
+def _extract_manual_content(date: str) -> dict[str, list[str]]:
+    """Extract manual notes and reminders from existing daily note.
+
+    Args:
+        date: Date in YYYY-MM-DD format
+
+    Returns:
+        Dict with:
+        - notes: List of note items (strings)
+        - reminders: List of reminder items with checkboxes (strings)
+    """
+    try:
+        from src.tools.vault import vault_read_note
+
+        # Read existing note
+        note_path = f"2. Time/2.2 Daily/{date}.md"
+        content = vault_read_note(note_path)
+
+        if not content or "error" in content.lower():
+            logger.info(f"No existing note found for {date}")
+            return {"notes": [], "reminders": []}
+
+        # Parse the note to extract manual content
+        lines = content.split('\n')
+        notes = []
+        reminders = []
+
+        current_section = None
+        in_journal = False
+
+        for line in lines:
+            # Check for Journal section
+            if line.strip() == "## Journal":
+                in_journal = True
+                current_section = None
+                continue
+
+            # Check for end of Journal section (next ## heading)
+            if in_journal and line.strip().startswith("## ") and line.strip() != "## Journal":
+                break
+
+            # Check for Notes subsection
+            if in_journal and line.strip() == "### Notes":
+                current_section = "notes"
+                continue
+
+            # Check for Reminder subsection
+            if in_journal and line.strip() == "### Reminder":
+                current_section = "reminders"
+                continue
+
+            # Check for other subsections (Events, Thoughts) - stop collecting
+            if in_journal and line.strip().startswith("### ") and line.strip() not in ["### Notes", "### Reminder"]:
+                current_section = None
+                continue
+
+            # Collect content based on current section
+            if current_section == "notes" and line.strip():
+                # Skip placeholder lines
+                if line.strip() not in ["-", "(Add notes here throughout the day)"]:
+                    notes.append(line.strip())
+
+            elif current_section == "reminders" and line.strip():
+                # Skip placeholder lines
+                if line.strip() not in ["- [ ]", "(Add todos here)"]:
+                    reminders.append(line.strip())
+
+        logger.info(f"Extracted {len(notes)} notes and {len(reminders)} reminders from existing note")
+        return {"notes": notes, "reminders": reminders}
+
+    except Exception as e:
+        logger.warning(f"Could not extract manual content: {e}")
+        return {"notes": [], "reminders": []}
+
+
+# =============================================================================
 # Phase 2: Daily Note Generation (Simplified)
 # =============================================================================
 
@@ -395,22 +554,31 @@ def _get_habit_relevant_calendar_events(date: str) -> list[str]:
         return []
 
 
-async def _categorize_entries_with_ai(entries: list, date: str) -> dict:
+async def _categorize_entries_with_ai(entries: list, date: str, manual_notes: list[str] = None) -> dict:
     """Enhanced categorization with multi-source habit detection.
 
     Args:
-        entries: List of raw journal entries
+        entries: List of raw journal entries from Telegram
         date: Date in YYYY-MM-DD format
+        manual_notes: List of manual notes from the daily note file
 
     Returns:
         Dict with events, thoughts, reminders, habits lists (with metadata)
     """
-    # Format entries for AI
+    # Format Telegram entries for AI
     formatted_entries = []
     for entry in entries:
         time = datetime.fromisoformat(entry['timestamp']).strftime("%H:%M")
         prefix = "🎤 " if entry['entry_type'] == 'audio' else ""
         formatted_entries.append(f"**{time}** - {prefix}{entry['content']}")
+
+    # Add manual notes to formatted entries
+    if manual_notes:
+        for note in manual_notes:
+            # Clean up markdown list formatting
+            note_clean = note.lstrip('- ').strip()
+            if note_clean:
+                formatted_entries.append(f"**Manual** - {note_clean}")
 
     entries_text = "\n\n".join(formatted_entries) if formatted_entries else "No journal entries"
 
@@ -775,11 +943,17 @@ async def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
             date = datetime.now(get_brt()).strftime("%Y-%m-%d")
         
         logger.info(f"Generating daily note for {date}")
-        
+
+        # Extract manual content from existing note (if exists)
+        manual_content = _extract_manual_content(date)
+        manual_notes = manual_content["notes"]
+        manual_reminders = manual_content["reminders"]
+        logger.info(f"Found {len(manual_notes)} manual notes and {len(manual_reminders)} manual reminders")
+
         # Get journal entries (may be empty - that's OK)
         entries = get_journal_entries_for_date(date)
-        logger.info(f"Found {len(entries)} entries for {date}")
-        
+        logger.info(f"Found {len(entries)} Telegram entries for {date}")
+
         # Parse date
         date_obj = datetime.strptime(date, "%Y-%m-%d")
         weekday = date_obj.strftime("%A")
@@ -896,40 +1070,77 @@ async def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
             logger.warning(f"Calendar fetch failed: {e}")
             events = []
         
-        # AI categorization (with multi-source habit detection)
-        if entries:
-            logger.info("Categorizing entries with AI...")
-            categorized = await _categorize_entries_with_ai(entries, date)
-            journal_events = categorized.get('events', [])
-            thoughts = categorized.get('thoughts', [])
-            reminders = categorized.get('reminders', [])
-            detected_habits = categorized.get('habits', [])
+        # AI categorization (with multi-source habit detection + manual notes)
+        if entries or manual_notes:
+            try:
+                logger.info("Categorizing entries with AI (including manual notes)...")
+                categorized = await _categorize_entries_with_ai(entries, date, manual_notes)
+                journal_events = categorized.get('events', [])
+                thoughts = categorized.get('thoughts', [])
+                ai_reminders = categorized.get('reminders', [])  # AI-generated reminders
+                detected_habits = categorized.get('habits', [])
+            except Exception as e:
+                logger.warning(f"AI categorization unavailable (vLLM offline): {e}")
+                # Fallback: no categorization, just raw entries in events
+                journal_events = [f"{entry['content']}" for entry in entries] if entries else []
+                journal_events.extend(manual_notes)  # Add manual notes too
+                thoughts = []
+                ai_reminders = []
+                detected_habits = []
         else:
-            logger.info("No entries to categorize")
-            categorized = await _categorize_entries_with_ai([], date)  # Still detect Garmin/calendar habits
-            journal_events, thoughts, reminders = [], [], []
-            detected_habits = categorized.get('habits', [])
+            try:
+                logger.info("No entries or manual notes to categorize")
+                categorized = await _categorize_entries_with_ai([], date, [])  # Still detect Garmin/calendar habits
+                journal_events, thoughts, ai_reminders = [], [], []
+                detected_habits = categorized.get('habits', [])
+            except Exception as e:
+                logger.warning(f"AI habit detection unavailable (vLLM offline): {e}")
+                journal_events, thoughts, ai_reminders = [], [], []
+                detected_habits = []
         
         # Format journal sections
         journal_sections = ""
-        
+
+        # Notes section (preserved from manual edits)
+        if manual_notes:
+            journal_sections += "### Notes\n\n"
+            journal_sections += "\n".join(manual_notes)
+            journal_sections += "\n\n"
+        else:
+            journal_sections += "### Notes\n\n-\n\n"
+
+        # Reminders section (merged: manual + AI-generated)
+        all_reminders = []
+        # Add manual reminders first (preserve exactly as written)
+        if manual_reminders:
+            all_reminders.extend(manual_reminders)
+        # Add AI-generated reminders
+        if ai_reminders:
+            for r in ai_reminders:
+                # Format as checkbox if not already
+                if not r.strip().startswith('- [ ]'):
+                    all_reminders.append(f"- [ ] {r}")
+                else:
+                    all_reminders.append(r)
+
+        if all_reminders:
+            journal_sections += "### Reminder\n\n"
+            journal_sections += "\n".join(all_reminders)
+            journal_sections += "\n\n"
+        else:
+            journal_sections += "### Reminder\n\n- [ ]\n\n"
+
+        # Events (AI categorized)
         if journal_events:
-            journal_sections += "### Events\n"
+            journal_sections += "### Events\n\n"
             journal_sections += "\n".join([f"- {e}" for e in journal_events])
             journal_sections += "\n\n"
-        
+
+        # Thoughts (AI categorized)
         if thoughts:
-            journal_sections += "### Thoughts\n"
+            journal_sections += "### Thoughts\n\n"
             journal_sections += "\n".join([f"- {t}" for t in thoughts])
             journal_sections += "\n\n"
-        
-        if reminders:
-            journal_sections += "### Reminders\n"
-            journal_sections += "\n".join([f"- [ ] {r}" for r in reminders])
-            journal_sections += "\n\n"
-        
-        if not journal_sections:
-            journal_sections = "(No journal entries for this day)"
         
         # Format calendar
         calendar_lines = []
@@ -1026,7 +1237,11 @@ async def generate_daily_note(date: str = None, dry_run: bool = False) -> str:
             'thoughts': thoughts,
             'detected_habits': detected_habits,
         }
-        ai_insight = await _generate_ai_insight(note_data)
+        try:
+            ai_insight = await _generate_ai_insight(note_data)
+        except Exception as e:
+            logger.warning(f"AI insight generation unavailable (vLLM offline): {e}")
+            ai_insight = ""  # Skip AI insight if offline
         
         # Format AI insight section
         ai_insight_section = ""
