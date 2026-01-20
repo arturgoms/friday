@@ -23,8 +23,11 @@ from settings import settings
 
 logger = logging.getLogger(__name__)
 
-# Friday service names
-FRIDAY_SERVICES = ["friday-vllm", "friday-core", "friday-awareness", "friday-telegram"]
+# Friday Docker container names
+FRIDAY_CONTAINERS = ["friday-telegram", "friday-awareness"]
+
+# vLLM remote endpoint (from settings)
+VLLM_ENDPOINT = settings.LLM.get("base_url", "http://192.168.1.18:8000/v1")
 
 
 @agent.tool_plain
@@ -152,40 +155,43 @@ def get_friday_memory_usage() -> dict:
 
 @agent.tool_plain
 def get_friday_logs(service: str = "all", lines: int = 50) -> str:
-    """Get Friday service logs from journalctl.
-    
+    """Get Friday service logs from Docker containers.
+
     Args:
-        service: Service name (friday-core, friday-vllm, friday-awareness, friday-telegram, or 'all')
+        service: Container name (friday-telegram, friday-awareness, or 'all')
         lines: Number of log lines to return (default: 50, max: 200)
-    
+
     Returns:
-        Recent log entries from the specified service(s)
+        Recent log entries from the specified container(s)
     """
     try:
-        # Cap lines at 200 to avoid huge outputs
-        lines = min(lines, 200)
-        
-        # Build journalctl command
-        cmd = ["journalctl", "--user", "-n", str(lines), "--no-pager"]
-        
+        import docker
+        client = docker.from_env()
+    except Exception as e:
+        return f"Error: Cannot connect to Docker: {e}"
+
+    # Cap lines at 200 to avoid huge outputs
+    lines = min(lines, 200)
+
+    try:
         if service == "all":
-            # Add all Friday services
-            for svc in FRIDAY_SERVICES:
-                cmd.extend(["-u", svc])
-        elif service in FRIDAY_SERVICES:
-            cmd.extend(["-u", service])
+            containers_to_check = FRIDAY_CONTAINERS
+        elif service in FRIDAY_CONTAINERS:
+            containers_to_check = [service]
         else:
-            return f"Unknown service: {service}. Valid options: {', '.join(FRIDAY_SERVICES)} or 'all'"
-        
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        
-        if result.returncode != 0:
-            return f"Error getting logs: {result.stderr}"
-        
-        return result.stdout if result.stdout else "No logs found."
-        
-    except subprocess.TimeoutExpired:
-        return "Error: Log retrieval timed out"
+            return f"Unknown service: {service}. Valid options: {', '.join(FRIDAY_CONTAINERS)} or 'all'"
+
+        all_logs = []
+        for container_name in containers_to_check:
+            try:
+                container = client.containers.get(container_name)
+                logs = container.logs(tail=lines, timestamps=True).decode("utf-8")
+                all_logs.append(f"=== {container_name} ===\n{logs}")
+            except docker.errors.NotFound:
+                all_logs.append(f"=== {container_name} ===\nContainer not found")
+
+        return "\n\n".join(all_logs) if all_logs else "No logs found."
+
     except Exception as e:
         return f"Error getting logs: {e}"
 
@@ -207,57 +213,88 @@ def get_homelab_status() -> str:
 @agent.tool_plain
 def get_friday_status() -> dict:
     """Get status of all Friday services.
-    
-    Atomic data tool that returns structured Friday service status data.
-    
+
+    Checks Docker containers for telegram/awareness and vLLM remote endpoint.
+
     Returns:
         Dict with status information for all Friday services
     """
+    import httpx
+
+    services_status = []
+
+    # Check Docker containers via socket
     try:
-        services_status = []
-        
-        for service in FRIDAY_SERVICES:
-            result = subprocess.run(
-                ["systemctl", "--user", "show", service, 
-                 "--property=ActiveState,SubState,MainPID,MemoryCurrent"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            
-            status = {}
-            for line in result.stdout.strip().split("\n"):
-                if "=" in line:
-                    key, value = line.split("=", 1)
-                    status[key] = value
-            
-            state = status.get("ActiveState", "unknown")
-            substate = status.get("SubState", "unknown")
-            
-            # Handle MainPID
-            pid_str = status.get("MainPID", "0")
-            pid = int(pid_str) if pid_str.isdigit() else 0
-            
-            # Handle MemoryCurrent (can be "[not set]")
-            mem_str = status.get("MemoryCurrent", "0")
-            memory_bytes = int(mem_str) if mem_str.isdigit() else 0
-            
-            services_status.append({
-                "service": service,
-                "state": state,
-                "substate": substate,
-                "pid": pid if pid != 0 else None,
-                "memory_bytes": memory_bytes,
-                "memory_mb": round(memory_bytes / (1024**2), 1) if memory_bytes > 0 else 0
-            })
-        
-        return {
-            "services": services_status,
-            "total_services": len(FRIDAY_SERVICES),
-            "timestamp": datetime.now(settings.TIMEZONE).isoformat()
-        }
-        
+        import docker
+        client = docker.from_env()
+
+        for container_name in FRIDAY_CONTAINERS:
+            try:
+                container = client.containers.get(container_name)
+                services_status.append({
+                    "service": container_name,
+                    "type": "docker",
+                    "state": container.status,
+                    "health": container.attrs.get("State", {}).get("Health", {}).get("Status", "n/a"),
+                    "running": container.status == "running"
+                })
+            except docker.errors.NotFound:
+                services_status.append({
+                    "service": container_name,
+                    "type": "docker",
+                    "state": "not_found",
+                    "running": False
+                })
     except Exception as e:
-        return {"error": str(e)}
+        # Docker not available - likely running inside container without socket
+        for container_name in FRIDAY_CONTAINERS:
+            services_status.append({
+                "service": container_name,
+                "type": "docker",
+                "state": "unknown",
+                "error": f"Cannot check Docker: {str(e)}"
+            })
+
+    # Check vLLM remote endpoint
+    try:
+        # Hit the models endpoint to check if vLLM is responding
+        vllm_url = VLLM_ENDPOINT.rstrip("/")
+        response = httpx.get(f"{vllm_url}/models", timeout=5.0)
+
+        if response.status_code == 200:
+            models_data = response.json()
+            model_names = [m.get("id", "unknown") for m in models_data.get("data", [])]
+            services_status.append({
+                "service": "friday-vllm",
+                "type": "remote",
+                "endpoint": vllm_url,
+                "state": "running",
+                "running": True,
+                "models": model_names
+            })
+        else:
+            services_status.append({
+                "service": "friday-vllm",
+                "type": "remote",
+                "endpoint": vllm_url,
+                "state": "error",
+                "running": False,
+                "error": f"HTTP {response.status_code}"
+            })
+    except Exception as e:
+        services_status.append({
+            "service": "friday-vllm",
+            "type": "remote",
+            "endpoint": VLLM_ENDPOINT,
+            "state": "unreachable",
+            "running": False,
+            "error": str(e)
+        })
+
+    return {
+        "services": services_status,
+        "total_services": len(services_status),
+        "timestamp": datetime.now(settings.TIMEZONE).isoformat()
+    }
 
 

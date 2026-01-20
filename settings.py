@@ -45,9 +45,12 @@ PORT = int(os.getenv("PORT", "8080"))
 # Paths Configuration
 # ==============================================================================
 
+# Vault/Brain path (Obsidian notes)
+VAULT_PATH = Path(os.getenv("VAULT_PATH", BASE_DIR / "brain"))
+
 PATHS = {
     "root": Path(os.getenv("PATHS_ROOT", BASE_DIR)),
-    "brain": Path(os.getenv("PATHS_BRAIN", BASE_DIR / "brain")),
+    "brain": VAULT_PATH,
     "data": Path(os.getenv("PATHS_DATA", BASE_DIR / "data")),
     "logs": Path(os.getenv("PATHS_LOGS", BASE_DIR / "logs")),
     "config": Path(os.getenv("PATHS_CONFIG", BASE_DIR / "src" / "config")),
@@ -165,10 +168,8 @@ INFLUXDB = {
 
 
 # ==============================================================================
-# Vault Configuration
+# Vault Configuration (VAULT_PATH defined above in Paths Configuration)
 # ==============================================================================
-
-VAULT_PATH = Path(os.getenv("VAULT_PATH", BASE_DIR / "brain"))
 
 
 # ==============================================================================

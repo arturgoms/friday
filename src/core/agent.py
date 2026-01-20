@@ -14,7 +14,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
-import logfire
+import os
+
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -28,9 +29,15 @@ if str(_parent_dir) not in sys.path:
 
 from settings import settings
 
-# Configure logfire
-logfire.configure()
-logfire.instrument_pydantic_ai()
+# Configure logfire (disabled by default, set LOGFIRE_ENABLED=true to enable)
+if os.getenv("LOGFIRE_ENABLED", "false").lower() == "true":
+    try:
+        import logfire
+        logfire.configure()
+        logfire.instrument_pydantic_ai()
+        logger.info("Logfire instrumentation enabled")
+    except Exception as e:
+        logger.warning(f"Logfire configuration failed: {e}")
 
 
 # ==========================================

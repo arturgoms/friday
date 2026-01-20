@@ -5,5 +5,15 @@
 FRIDAY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$FRIDAY_ROOT"
 
-# Run via pipenv to ensure dependencies are available
-exec pipenv run python -m src.interfaces.cli.run "$@"
+# Check if Friday Docker container is running
+if docker ps -q -f name=friday-telegram 2>/dev/null | grep -q .; then
+    # Run via Docker exec (use -it only if TTY available)
+    if [ -t 0 ]; then
+        exec docker exec -it friday-telegram python -m src.interfaces.cli.run "$@"
+    else
+        exec docker exec friday-telegram python -m src.interfaces.cli.run "$@"
+    fi
+else
+    # Fall back to pipenv for local development
+    exec pipenv run python -m src.interfaces.cli.run "$@"
+fi

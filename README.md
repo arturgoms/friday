@@ -51,91 +51,83 @@ Friday is an intelligent AI assistant built on **Hermes-4-14B** via vLLM, featur
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Friday AI System                          │
-├─────────────────────────────────────────────────────────────┤
-│                                                               │
-│  ┌─────────────┐                                             │
-│  │   vLLM      │  ← Hermes-4-14B (localhost:8000)           │
-│  │   Server    │                                             │
-│  └──────┬──────┘                                             │
-│         │                                                     │
-│    ┌────┴────────────────────────────────┐                  │
-│    │                                      │                  │
-│  ┌─▼──────────┐    ┌──────────┐   ┌─────▼─────────┐       │
-│  │  Telegram  │    │   CLI    │   │   Awareness    │       │
-│  │ Interface  │    │Interface │   │   Engine       │       │
-│  │            │    │          │   │                │       │
-│  │  • Recv    │    │• Tools   │   │ ┌────────────┐ │       │
-│  │  • Agent   │    │• DB Ops  │   │ │ Collectors │ │       │
-│  │  • Send    │    │• Schedule│   │ │ - Health   │ │       │
-│  │  • History │    │• Status  │   │ │ - Calendar │ │       │
-│  │  • Journal │    │• Logs    │   │ │ - Homelab  │ │       │
-│  └────────────┘    └──────────┘   │ │ - Weather  │ │       │
-│       ▲                            │ │ - Portfolio│ │       │
-│       │                            │ └────────────┘ │       │
-│       │                            │                │       │
-│       │                            │ ┌────────────┐ │       │
-│       │                            │ │ Analyzers  │ │       │
-│       │                            │ │ - Threshold│ │       │
-│       │                            │ │ - Calendar │ │       │
-│       │                            │ └────────────┘ │       │
-│       │                            │                │       │
-│       │                            │ ┌────────────┐ │       │
-│       │                            │ │ Decision   │ │       │
-│       │                            │ │ Engine     │ │       │
-│       │                            │ │ - Budget   │ │       │
-│       │                            │ │ - Priority │ │       │
-│       │                            │ │ - Quiet hrs│ │       │
-│       │                            │ └────────────┘ │       │
-│       │                            │                │       │
-│       └────────────────────────────┤ Scheduled    │       │
-│                                    │ Reports      │       │
-│                                    │ - Journal    │       │
-│                                    │ - Briefings  │       │
-│                                    └──────────────┘       │
-│                                                            │
-│  ┌──────────────────────────────────────────────────┐    │
-│  │ Centralized Database (SQLite)                    │    │
-│  │ - conversation_history: Full message history     │    │
-│  │ - facts: User knowledge/preferences              │    │
-│  │ - insights: Generated observations               │    │
-│  │ - snapshots: Point-in-time data captures         │    │
-│  │ - deliveries: Notification tracking              │    │
-│  │ - journal_threads: Journal message tracking      │    │
-│  │ - journal_entries: Daily journal entries         │    │
-│  └──────────────────────────────────────────────────┘    │
-│                                                            │
-│  ┌──────────────────────────────────────────────────┐    │
-│  │ Agent Tools (79 tools across 13 modules)         │    │
-│  │ ✓ Calendar     ✓ Weather      ✓ Health           │    │
-│  │ ✓ System       ✓ Memory       ✓ People           │    │
-│  │ ✓ Vault        ✓ Web          ✓ Media            │    │
-│  │ ✓ Daily Brief  ✓ Investments  ✓ Journal          │    │
-│  │ ✓ Utils        ✓ Sensors                         │    │
-│  └──────────────────────────────────────────────────┘    │
-└────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Friday AI System                             │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│  ┌─────────────────────┐                                             │
+│  │   vLLM Server       │  ← Hermes-4-14B (192.168.1.18:8000)        │
+│  │   (Remote Machine)  │     OpenAI-compatible API                   │
+│  └──────────┬──────────┘                                             │
+│             │ HTTP/REST                                               │
+│    ┌────────┴────────────────────────────────┐                       │
+│    │              Docker Host                 │                       │
+│    │  ┌──────────────────────────────────┐  │                       │
+│    │  │      Docker Compose Stack         │  │                       │
+│    │  │                                    │  │                       │
+│    │  │  ┌────────────┐  ┌─────────────┐ │  │                       │
+│    │  │  │ friday-    │  │ friday-     │ │  │                       │
+│    │  │  │ telegram   │  │ awareness   │ │  │                       │
+│    │  │  │            │  │             │ │  │                       │
+│    │  │  │ • Bot      │  │ • Collectors│ │  │                       │
+│    │  │  │ • Agent    │  │ • Analyzers │ │  │                       │
+│    │  │  │ • History  │  │ • Scheduler │ │  │                       │
+│    │  │  │ • Journal  │  │ • Delivery  │ │  │                       │
+│    │  │  └─────┬──────┘  └──────┬──────┘ │  │                       │
+│    │  │        │                 │        │  │                       │
+│    │  │        └────────┬────────┘        │  │                       │
+│    │  │                 │                 │  │                       │
+│    │  │        ┌────────▼────────┐        │  │                       │
+│    │  │        │  Shared Volumes │        │  │                       │
+│    │  │        │  • data/        │        │  │                       │
+│    │  │        │  • logs/        │        │  │                       │
+│    │  │        │  • vault/       │        │  │                       │
+│    │  │        └─────────────────┘        │  │                       │
+│    │  └──────────────────────────────────┘  │                       │
+│    │                                         │                       │
+│    │  ┌──────────┐                          │                       │
+│    │  │   CLI    │  ← ./friday wrapper      │                       │
+│    │  │ (docker  │     auto-detects Docker  │                       │
+│    │  │  exec)   │                          │                       │
+│    │  └──────────┘                          │                       │
+│    └─────────────────────────────────────────┘                       │
+│                                                                       │
+│  ┌──────────────────────────────────────────────────┐               │
+│  │ Centralized Database (SQLite)                    │               │
+│  │ - conversation_history, facts, insights          │               │
+│  │ - snapshots, deliveries, journal_threads         │               │
+│  └──────────────────────────────────────────────────┘               │
+│                                                                       │
+│  ┌──────────────────────────────────────────────────┐               │
+│  │ Agent Tools (85 tools across 13 modules)         │               │
+│  │ ✓ Calendar     ✓ Weather      ✓ Health           │               │
+│  │ ✓ System       ✓ Memory       ✓ People           │               │
+│  │ ✓ Vault        ✓ Web          ✓ Media            │               │
+│  │ ✓ Daily Brief  ✓ Investments  ✓ Journal          │               │
+│  │ ✓ Utils        ✓ Sensors      ✓ Knowledge        │               │
+│  └──────────────────────────────────────────────────┘               │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Component Overview
 
-**1. vLLM Server**
-- Serves Hermes-4-14B model on `localhost:8000`
+**1. vLLM Server (Remote)**
+- Serves Hermes-4-14B model on remote machine (`192.168.1.18:8000`)
 - OpenAI-compatible API
-- ~14B parameters, optimized for local inference
+- Keeps GPU workload separate from main server
 
-**2. Communication Interfaces**
-- **Telegram Interface** (`src/interfaces/telegram/`): Bot interface with conversation history
-- **CLI Interface** (`src/interfaces/cli/`): Comprehensive command-line tools
+**2. Docker Containers**
+- **friday-telegram**: Telegram bot interface with conversation history
+- **friday-awareness**: Proactive insights engine with scheduled reports
 
-**3. Core Agent** (`src/core/agent.py`)
-- Pydantic-AI agent with 79 registered tools
+**3. CLI Interface**
+- `./friday` wrapper auto-detects Docker and routes commands
+- Runs inside container via `docker exec`
+
+**4. Core Agent** (`src/core/agent.py`)
+- Pydantic-AI agent with 85 registered tools
 - Manages conversation context
 - Auto-snapshot system for data tools
-
-**4. Conversation Manager** (`src/core/conversation.py`)
-- Channel-agnostic session tracking
-- Persists full conversation history to database
 
 **5. Tools** (`src/tools/`)
 - Modular tool system using `@agent.tool` decorators
@@ -148,14 +140,8 @@ Friday is an intelligent AI assistant built on **Hermes-4-14B** via vLLM, featur
 - Decision engine with quiet hours and notification budgets
 - Scheduled reports system (journal threads, briefings)
 
-**7. Journal System** (`src/tools/journal.py`)
-- Daily thread creation at 8:00 AM
-- Voice message transcription via Whisper
-- Automatic note generation at 11:50 PM
-- Obsidian vault integration
-
-**8. Database** (`src/core/database.py`)
-- Centralized SQLite database
+**7. Database** (`src/core/database.py`)
+- Centralized SQLite database in shared volume
 - Schema migration support
 - Unified storage for all Friday components
 
@@ -165,38 +151,17 @@ Friday is an intelligent AI assistant built on **Hermes-4-14B** via vLLM, featur
 
 ### System Requirements
 - **OS**: Linux (tested on Ubuntu/Debian)
-- **RAM**: 16GB minimum (32GB recommended for vLLM)
-- **GPU**: NVIDIA GPU with CUDA recommended for faster inference
-- **Storage**: 50GB+ free space for models
+- **RAM**: 8GB minimum for Docker host
+- **Storage**: 10GB+ free space
 
 ### Software Dependencies
-- **Python**: 3.12+
-- **systemd**: For service management
-- **SQLite**: 3.x (usually pre-installed)
+- **Docker**: 24.0+ with Docker Compose
+- **Git**: For cloning repository
 
-### Required Python Packages
-```bash
-# Core dependencies
-pydantic-ai>=0.0.14
-vllm>=0.6.0
-python-telegram-bot>=21.0
-logfire
-sqlalchemy>=2.0
-typer
-rich
-
-# Tools
-caldav
-icalendar
-pytz
-httpx
-influxdb-client
-openai-whisper
-
-# Optional
-sentence-transformers
-numpy
-```
+### Remote vLLM Server (separate machine)
+- **GPU**: NVIDIA GPU with CUDA
+- **RAM**: 32GB+ recommended
+- **vLLM**: Running Hermes-4-14B model
 
 ### External Services (Optional)
 - **Telegram Bot**: Token from [@BotFather](https://t.me/BotFather)
@@ -215,52 +180,60 @@ git clone <repository-url>
 cd friday
 ```
 
-### 2. Install Dependencies
-```bash
-pipenv install
-```
-
-### 3. Configure Environment
+### 2. Configure Environment
 Create `.env` file in project root:
 ```bash
 cp .env.example .env
 # Edit .env with your configuration
 ```
 
-### 4. Download Model
-The model will be auto-downloaded by vLLM on first start.
-
-### 5. Initialize Database
+Key variables to configure:
 ```bash
-pipenv run python -c "from src.core.database import Database; Database()"
+# LLM Configuration (point to your vLLM server)
+LLM_BASE_URL=http://192.168.1.18:8000/v1
+LLM_MODEL_NAME=NousResearch/Hermes-4-14B
+
+# Telegram Bot
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_USER_ID=your_user_id
+
+# Vault (Obsidian notes path on host)
+VAULT_PATH=/path/to/your/obsidian/vault
 ```
 
-### 6. Install Services
+### 3. Create Docker Network
 ```bash
-# Copy service files
-cp services/*.service ~/.config/systemd/user/
+# Create the external network (if not exists)
+docker network create exposed
+```
 
-# Reload systemd
-systemctl --user daemon-reload
-
-# Enable services
-systemctl --user enable friday-vllm.service
-systemctl --user enable friday-telegram.service
-systemctl --user enable friday-awareness.service
+### 4. Build and Start Services
+```bash
+# Build images
+docker compose build
 
 # Start services
-systemctl --user start friday-vllm.service
-systemctl --user start friday-telegram.service
-systemctl --user start friday-awareness.service
+docker compose up -d
 ```
 
-### 7. Verify Installation
+### 5. Verify Installation
 ```bash
-# Using CLI
+# Check service status
 ./friday status
 
 # Check logs
-./friday logs
+docker compose logs -f
+```
+
+### Quick Start Summary
+```bash
+git clone <repository-url>
+cd friday
+cp .env.example .env
+# Edit .env with your settings
+docker network create exposed
+docker compose up -d
+./friday status
 ```
 
 ---
@@ -435,17 +408,17 @@ The Friday CLI provides comprehensive system management:
 
 ### System Management
 ```bash
-# Show system status (services, GPU, tools)
+# Show system status (containers, vLLM, tools)
 ./friday status
 
-# View logs
-./friday logs                    # All services
-./friday logs friday-telegram    # Specific service
-./friday logs --no-follow        # Don't follow
+# View logs via Docker
+docker compose logs -f                    # All services
+docker compose logs -f telegram-bot       # Specific service
+docker compose logs --tail=100            # Last 100 lines
 
-# Restart services
-./friday restart all
-./friday restart friday-telegram
+# Restart containers
+docker compose restart
+docker compose restart telegram-bot
 ```
 
 ### Testing
@@ -652,25 +625,58 @@ Friday automatically sends reports via Telegram:
 
 ## 🎛️ Services
 
-### friday-vllm.service
-Serves the LLM model via vLLM on `localhost:8000`
+### Docker Compose Services
 
-**Commands**:
+| Service | Container | Description |
+|---------|-----------|-------------|
+| `telegram-bot` | `friday-telegram` | Telegram bot interface |
+| `awareness-engine` | `friday-awareness` | Proactive insights, scheduled reports |
+
+### Remote Service
+
+| Service | Location | Description |
+|---------|----------|-------------|
+| vLLM | `192.168.1.18:8000` | LLM inference server (Hermes-4-14B) |
+
+### Common Commands
+
 ```bash
-systemctl --user start friday-vllm.service
-systemctl --user status friday-vllm.service
-./friday restart friday-vllm
+# Start all services
+docker compose up -d
+
+# Stop all services
+docker compose down
+
+# Restart a specific service
+docker compose restart telegram-bot
+docker compose restart awareness-engine
+
+# View logs
+docker compose logs -f                    # All services
+docker compose logs -f telegram-bot       # Specific service
+docker compose logs --tail=50 awareness-engine
+
+# Rebuild after code changes
+docker compose build && docker compose up -d
+
+# Check status
+./friday status
 ```
 
-### friday-telegram.service
-Telegram bot interface
+### Container Details
 
-**Logs**: `logs/friday-telegram.log` or `./friday logs friday-telegram`
+**friday-telegram**
+- Telegram bot with conversation history
+- Journal system with voice transcription
+- Agent with 85 tools
+- Mounts: `data/`, `logs/`, `vault/`, Docker socket
 
-### friday-awareness.service
-Proactive insights, scheduled reports, portfolio monitoring
-
-**Logs**: `logs/friday-awareness.log` or `./friday logs friday-awareness`
+**friday-awareness**
+- Data collectors (health, calendar, portfolio, weather, homelab)
+- Insight analyzers (thresholds, calendar, sleep, stress)
+- Scheduled reports (morning briefing, evening report, journal)
+- Decision engine (quiet hours, notification budgets)
+- Mounts: `data/`, `logs/`, `vault/`, Docker socket
 
 ---
 
@@ -724,8 +730,11 @@ Friday includes a comprehensive test suite with **284 tests** covering all **79 
 friday/
 ├── .env                      # Environment variables
 ├── settings.py               # Main configuration
-├── friday                    # CLI wrapper script
-├── Pipfile                   # Pipenv dependencies
+├── friday                    # CLI wrapper script (auto-detects Docker)
+├── Dockerfile                # Container image definition
+├── docker-compose.yml        # Service orchestration
+├── requirements-docker.txt   # Python dependencies for containers
+├── Pipfile                   # Pipenv dependencies (local dev)
 ├── Pipfile.lock
 │
 ├── src/
@@ -811,20 +820,12 @@ friday/
 │           ├── test_memory.py          # 4 tests
 │           └── test_web_tools.py       # 3 tests
 │
-├── services/                # Systemd service files
-│   ├── friday-vllm.service
-│   ├── friday-telegram.service
-│   └── friday-awareness.service
-│
-├── data/                    # Data directory
+├── data/                    # Data directory (Docker volume)
 │   └── friday.db           # SQLite database
 │
-├── logs/                    # Log files
-│   ├── friday-telegram.log
-│   ├── friday-awareness.log
-│   └── friday-vllm.log
+├── logs/                    # Log files (Docker volume)
 │
-└── brain/                   # Obsidian vault
+└── vault/                   # Obsidian vault (mounted from host)
     └── 2. Time/
         └── 2.2 Daily/       # Daily journal notes (YYYY-MM-DD.md)
 ```
@@ -854,9 +855,9 @@ def my_function(param: str) -> str:
 from src.tools import my_module
 ```
 
-3. **Restart services**:
+3. **Rebuild and restart containers**:
 ```bash
-./friday restart all
+docker compose build && docker compose up -d
 ```
 
 4. **Test**:
@@ -879,9 +880,9 @@ from src.tools import my_module
 }
 ```
 
-2. **Restart awareness**:
+2. **Restart awareness container**:
 ```bash
-./friday restart friday-awareness
+docker compose restart awareness-engine
 ```
 
 3. **Test manually**:
@@ -898,29 +899,51 @@ from src.tools import my_module
 ./friday status
 ```
 
-### Services Not Starting
+### Container Issues
 
-**Check vLLM first**:
+**Check container status**:
 ```bash
-systemctl --user status friday-vllm.service
+docker compose ps
+docker compose logs --tail=50 telegram-bot
+docker compose logs --tail=50 awareness-engine
 ```
 
-**Common issues**:
-- Out of memory: Reduce `--max-model-len` or `--gpu-memory-utilization`
-- CUDA errors: Check GPU drivers
-- Port in use: Change port in service file
+**Restart containers**:
+```bash
+docker compose restart
+# Or rebuild if code changed
+docker compose build && docker compose up -d
+```
+
+**Shell into container**:
+```bash
+docker exec -it friday-telegram /bin/bash
+docker exec -it friday-awareness /bin/bash
+```
+
+### vLLM Not Responding
+
+```bash
+# Check endpoint from Docker host
+curl http://192.168.1.18:8000/v1/models
+
+# Check from inside container
+docker exec friday-telegram curl http://192.168.1.18:8000/v1/models
+```
+
+Verify `LLM_BASE_URL` in `.env` points to your vLLM server.
 
 ### Telegram Bot Not Responding
 
 ```bash
-# Check service
-./friday logs friday-telegram
+# Check logs
+docker compose logs -f telegram-bot
 
-# Verify vLLM
-curl http://localhost:8000/v1/models
+# Verify environment
+docker exec friday-telegram env | grep TELEGRAM
 
 # Check authorization
-# Verify TELEGRAM_USER_ID in .env
+# Verify TELEGRAM_USER_ID in .env matches your Telegram user ID
 ```
 
 ### Tool Not Found
@@ -937,10 +960,23 @@ grep "from src.tools import" src/core/agent.py
 
 ```bash
 # Check tables
-./friday db-query ".schema"
+./friday db-tables
 
 # View recent entries
 ./friday db-list conversation_history --limit 10
+
+# Database is at data/friday.db
+```
+
+### Permission Issues
+
+If containers can't write to volumes:
+```bash
+# Check ownership (should be 1000:1000)
+ls -la data/ logs/
+
+# Fix if needed
+sudo chown -R 1000:1000 data/ logs/
 ```
 
 ### CLI Commands
@@ -953,6 +989,8 @@ grep "from src.tools import" src/core/agent.py
 
 # Check tool parameters
 ./friday tool-info <tool-name>
+
+# The CLI auto-detects Docker and runs via docker exec
 ```
 
 ---

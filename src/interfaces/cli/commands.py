@@ -37,7 +37,8 @@ console = Console()
 cli_channel = CLIChannel()
 
 # Service definitions
-SERVICES = ["friday-vllm", "friday-telegram", "friday-awareness"]
+DOCKER_CONTAINERS = ["friday-telegram", "friday-awareness"]
+VLLM_ENDPOINT = settings.LLM.get("base_url", "http://192.168.1.18:8000/v1")
 
 
 # =============================================================================
@@ -944,24 +945,42 @@ def journal_add(
 # Service Management
 # =============================================================================
 
-def get_systemd_status(service: str) -> dict:
-    """Get systemd service status."""
+def get_docker_container_status(container_name: str) -> dict:
+    """Get Docker container status using Python docker SDK."""
     try:
-        result = subprocess.run(
-            ["systemctl", "--user", "show", service, 
-             "--property=ActiveState,SubState,MainPID,MemoryCurrent"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        status = {}
-        for line in result.stdout.strip().split("\n"):
-            if "=" in line:
-                key, value = line.split("=", 1)
-                status[key] = value
-        return status
-    except Exception:
-        return {"ActiveState": "unknown", "SubState": "unknown"}
+        import docker
+        client = docker.from_env()
+        container = client.containers.get(container_name)
+        state = container.status
+        pid = container.attrs.get("State", {}).get("Pid", 0)
+        health = container.attrs.get("State", {}).get("Health", {}).get("Status", "none")
+        return {
+            "state": state,
+            "pid": str(pid),
+            "health": health,
+            "running": state == "running"
+        }
+    except Exception as e:
+        return {"state": "unknown", "pid": "0", "running": False, "error": str(e)}
+
+
+def get_vllm_status() -> dict:
+    """Check vLLM endpoint status."""
+    import httpx
+    try:
+        vllm_url = VLLM_ENDPOINT.rstrip("/")
+        response = httpx.get(f"{vllm_url}/models", timeout=5.0)
+        if response.status_code == 200:
+            models = response.json().get("data", [])
+            model_names = [m.get("id", "?") for m in models]
+            return {
+                "state": "running",
+                "running": True,
+                "models": model_names
+            }
+        return {"state": f"error ({response.status_code})", "running": False}
+    except Exception as e:
+        return {"state": "unreachable", "running": False, "error": str(e)}
 
 
 def get_gpu_memory():
@@ -989,41 +1008,41 @@ def status():
     # Services table
     table = Table(title="Friday System Status", style="bold white")
     table.add_column("Service", style="cyan", width=25)
+    table.add_column("Type", style="dim", width=8)
     table.add_column("State", style="magenta", width=12)
-    table.add_column("PID", justify="right", width=8)
-    table.add_column("Memory", justify="right", width=12)
-    
-    for service in SERVICES:
-        status_info = get_systemd_status(service)
-        
-        state = status_info.get("ActiveState", "unknown")
-        pid = status_info.get("MainPID", "0")
-        memory = status_info.get("MemoryCurrent", "0")
-        
+    table.add_column("Info", width=30)
+
+    # Check Docker containers
+    for container in DOCKER_CONTAINERS:
+        status_info = get_docker_container_status(container)
+        state = status_info.get("state", "unknown")
+        pid = status_info.get("pid", "0")
+
         # Format state with color
-        if state == "active":
+        if state == "running":
             state_display = f"[green]{state}[/green]"
-        elif state == "inactive":
-            state_display = f"[yellow]{state}[/yellow]"
-        else:
+        elif state in ("exited", "dead"):
             state_display = f"[red]{state}[/red]"
-        
-        # Format memory
-        try:
-            mem_bytes = int(memory)
-            if mem_bytes > 1024 * 1024 * 1024:
-                mem_display = f"{mem_bytes / (1024**3):.1f} GB"
-            elif mem_bytes > 1024 * 1024:
-                mem_display = f"{mem_bytes / (1024**2):.1f} MB"
-            else:
-                mem_display = f"{mem_bytes / 1024:.1f} KB"
-        except (ValueError, TypeError):
-            mem_display = "-"
-        
-        pid_display = pid if pid != "0" else "-"
-        
-        table.add_row(service, state_display, pid_display, mem_display)
-    
+        else:
+            state_display = f"[yellow]{state}[/yellow]"
+
+        info = f"PID: {pid}" if pid != "0" else "-"
+        table.add_row(container, "docker", state_display, info)
+
+    # Check vLLM endpoint
+    vllm_status = get_vllm_status()
+    vllm_state = vllm_status.get("state", "unknown")
+
+    if vllm_status.get("running"):
+        state_display = f"[green]{vllm_state}[/green]"
+        models = vllm_status.get("models", [])
+        info = f"Models: {', '.join(models)}" if models else "-"
+    else:
+        state_display = f"[red]{vllm_state}[/red]"
+        info = vllm_status.get("error", "-")[:30] if vllm_status.get("error") else "-"
+
+    table.add_row("friday-vllm", "remote", state_display, info)
+
     console.print(table)
     
     # System info table
