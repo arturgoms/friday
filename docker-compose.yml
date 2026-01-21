@@ -13,6 +13,8 @@ services:
       - PATHS_ROOT=/app
       - PATHS_DATA=/app/data
       - PATHS_LOGS=/app/logs
+      - HF_HOME=/app/data/.cache/huggingface
+      - TRANSFORMERS_CACHE=/app/data/.cache/huggingface
     user: "1000:1000"
     group_add:
       - "996"  # docker group for socket access
@@ -39,6 +41,8 @@ services:
       - PATHS_ROOT=/app
       - PATHS_DATA=/app/data
       - PATHS_LOGS=/app/logs
+      - HF_HOME=/app/data/.cache/huggingface
+      - TRANSFORMERS_CACHE=/app/data/.cache/huggingface
     user: "1000:1000"
     group_add:
       - "996"  # docker group for socket access

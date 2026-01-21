@@ -29,6 +29,7 @@ data/google_credentials.json
 # Data files (contain personal information)
 data/chroma/
 data/*.db
+data/.cache/*
 data/*.json
 data/media/
 !data/.gitkeep
