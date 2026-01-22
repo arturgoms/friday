@@ -37,8 +37,9 @@ console = Console()
 cli_channel = CLIChannel()
 
 # Service definitions
-DOCKER_CONTAINERS = ["friday-telegram", "friday-awareness"]
+PM2_SERVICES = ["friday-telegram", "friday-awareness"]
 VLLM_ENDPOINT = settings.LLM.get("base_url", "http://192.168.1.18:8000/v1")
+FRIDAY_ROOT = Path(__file__).parent.parent.parent.parent
 
 
 # =============================================================================
@@ -945,23 +946,44 @@ def journal_add(
 # Service Management
 # =============================================================================
 
-def get_docker_container_status(container_name: str) -> dict:
-    """Get Docker container status using Python docker SDK."""
+def get_pm2_status() -> list:
+    """Get PM2 process status."""
     try:
-        import docker
-        client = docker.from_env()
-        container = client.containers.get(container_name)
-        state = container.status
-        pid = container.attrs.get("State", {}).get("Pid", 0)
-        health = container.attrs.get("State", {}).get("Health", {}).get("Status", "none")
-        return {
-            "state": state,
-            "pid": str(pid),
-            "health": health,
-            "running": state == "running"
-        }
-    except Exception as e:
-        return {"state": "unknown", "pid": "0", "running": False, "error": str(e)}
+        result = subprocess.run(
+            ["pm2", "jlist"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode == 0:
+            processes = json.loads(result.stdout)
+            return processes
+    except Exception:
+        pass
+    return []
+
+
+def get_pm2_service_status(service_name: str, pm2_list: list = None) -> dict:
+    """Get status for a specific PM2 service."""
+    if pm2_list is None:
+        pm2_list = get_pm2_status()
+
+    for proc in pm2_list:
+        if proc.get("name") == service_name:
+            status = proc.get("pm2_env", {}).get("status", "unknown")
+            pid = proc.get("pid", 0)
+            memory = proc.get("monit", {}).get("memory", 0)
+            cpu = proc.get("monit", {}).get("cpu", 0)
+            restarts = proc.get("pm2_env", {}).get("restart_time", 0)
+            return {
+                "state": status,
+                "pid": str(pid),
+                "memory_mb": round(memory / 1024 / 1024, 1) if memory else 0,
+                "cpu": cpu,
+                "restarts": restarts,
+                "running": status == "online"
+            }
+    return {"state": "stopped", "pid": "0", "running": False}
 
 
 def get_vllm_status() -> dict:
@@ -1007,27 +1029,33 @@ def status():
     """Show status of all Friday services, GPU, and tools."""
     # Services table
     table = Table(title="Friday System Status", style="bold white")
-    table.add_column("Service", style="cyan", width=25)
-    table.add_column("Type", style="dim", width=8)
-    table.add_column("State", style="magenta", width=12)
-    table.add_column("Info", width=30)
+    table.add_column("Service", style="cyan", width=20)
+    table.add_column("State", style="magenta", width=10)
+    table.add_column("PID", width=8)
+    table.add_column("Memory", width=10)
+    table.add_column("Restarts", width=8)
 
-    # Check Docker containers
-    for container in DOCKER_CONTAINERS:
-        status_info = get_docker_container_status(container)
+    # Get all PM2 processes at once
+    pm2_list = get_pm2_status()
+
+    # Check PM2 services
+    for service in PM2_SERVICES:
+        status_info = get_pm2_service_status(service, pm2_list)
         state = status_info.get("state", "unknown")
         pid = status_info.get("pid", "0")
+        memory = status_info.get("memory_mb", 0)
+        restarts = status_info.get("restarts", 0)
 
         # Format state with color
-        if state == "running":
+        if state == "online":
             state_display = f"[green]{state}[/green]"
-        elif state in ("exited", "dead"):
+        elif state in ("stopped", "errored"):
             state_display = f"[red]{state}[/red]"
         else:
             state_display = f"[yellow]{state}[/yellow]"
 
-        info = f"PID: {pid}" if pid != "0" else "-"
-        table.add_row(container, "docker", state_display, info)
+        memory_display = f"{memory} MB" if memory else "-"
+        table.add_row(service, state_display, pid, memory_display, str(restarts))
 
     # Check vLLM endpoint
     vllm_status = get_vllm_status()
@@ -1035,13 +1063,10 @@ def status():
 
     if vllm_status.get("running"):
         state_display = f"[green]{vllm_state}[/green]"
-        models = vllm_status.get("models", [])
-        info = f"Models: {', '.join(models)}" if models else "-"
     else:
         state_display = f"[red]{vllm_state}[/red]"
-        info = vllm_status.get("error", "-")[:30] if vllm_status.get("error") else "-"
 
-    table.add_row("friday-vllm", "remote", state_display, info)
+    table.add_row("vllm (remote)", state_display, "-", "-", "-")
 
     console.print(table)
     
@@ -1076,67 +1101,150 @@ def logs(
 ):
     """
     Tail logs for Friday services.
-    
+
     Examples:
         friday logs
-        friday logs friday-telegram -n 100
+        friday logs telegram -n 100
         friday logs all --no-follow
     """
-    logs_dir = Path(__file__).parent.parent.parent.parent / "logs"
-    
+    console.print("[cyan]Tailing logs...[/cyan]")
+    console.print("[dim]Press Ctrl+C to exit[/dim]\n")
+
     if service == "all":
-        console.print("[cyan]Tailing logs for all Friday services...[/cyan]")
-        console.print("[dim]Press Ctrl+C to exit[/dim]\n")
-        
-        log_files = []
-        for svc in SERVICES:
-            log_file = logs_dir / f"{svc}.log"
-            if log_file.exists():
-                log_files.append(str(log_file))
-        
-        if not log_files:
+        # Show logs for all Friday services only (not other PM2 processes)
+        # PM2 doesn't support multiple process names in one command, so we use log files
+        log_files = [
+            str(FRIDAY_ROOT / "logs" / "friday-telegram.log"),
+            str(FRIDAY_ROOT / "logs" / "friday-telegram-error.log"),
+            str(FRIDAY_ROOT / "logs" / "friday-awareness.log"),
+            str(FRIDAY_ROOT / "logs" / "friday-awareness-error.log"),
+        ]
+        existing_files = [f for f in log_files if Path(f).exists()]
+        if not existing_files:
             console.print("[yellow]No log files found[/yellow]")
             return
-        
-        cmd = ["tail", f"-n", str(lines)]
+
+        cmd = ["tail", f"-n{lines}"]
         if follow:
             cmd.append("-f")
-        cmd.extend(log_files)
-        
-        try:
-            subprocess.run(cmd)
-        except KeyboardInterrupt:
-            pass
+        cmd.extend(existing_files)
     else:
-        console.print(f"[cyan]Tailing logs for {service}...[/cyan]")
-        console.print("[dim]Press Ctrl+C to exit[/dim]\n")
-        
-        log_file = logs_dir / f"{service}.log"
-        if not log_file.exists():
-            console.print(f"[yellow]Log file not found: {log_file}[/yellow]")
+        # Single service - use pm2 logs
+        svc_name = service if service.startswith("friday-") else f"friday-{service}"
+        if svc_name not in PM2_SERVICES:
+            console.print(f"[yellow]Unknown service: {service}[/yellow]")
+            console.print(f"[dim]Available: {', '.join(PM2_SERVICES)}[/dim]")
             return
-        
-        cmd = ["tail", f"-n", str(lines)]
-        if follow:
-            cmd.append("-f")
-        cmd.append(str(log_file))
-        
+        cmd = ["pm2", "logs", svc_name, "--lines", str(lines)]
+        if not follow:
+            cmd.append("--nostream")
+
+    try:
+        subprocess.run(cmd)
+    except KeyboardInterrupt:
+        pass
+
+
+@app.command()
+def start(service: str = typer.Argument("all", help="Service to start (or 'all')")):
+    """Start Friday service(s)."""
+    if service == "all":
+        console.print("Starting all Friday services...", end=" ")
         try:
-            subprocess.run(cmd)
-        except KeyboardInterrupt:
-            pass
+            subprocess.run(
+                ["pm2", "start", "ecosystem.config.js"],
+                check=True,
+                capture_output=True,
+                cwd=FRIDAY_ROOT
+            )
+            console.print("[green]OK[/green]")
+        except subprocess.CalledProcessError as e:
+            console.print(f"[red]FAILED[/red]")
+            console.print(f"  Error: {e.stderr.decode()}")
+    else:
+        svc_name = service if service.startswith("friday-") else f"friday-{service}"
+        if svc_name not in PM2_SERVICES:
+            console.print(f"[yellow]Unknown service: {service}[/yellow]")
+            console.print(f"[dim]Available: {', '.join(PM2_SERVICES)}[/dim]")
+            return
+
+        console.print(f"Starting {svc_name}...", end=" ")
+        try:
+            subprocess.run(
+                ["pm2", "start", "ecosystem.config.js", "--only", svc_name],
+                check=True,
+                capture_output=True,
+                cwd=FRIDAY_ROOT
+            )
+            console.print("[green]OK[/green]")
+        except subprocess.CalledProcessError as e:
+            console.print(f"[red]FAILED[/red]")
+            console.print(f"  Error: {e.stderr.decode()}")
+
+
+@app.command()
+def stop(service: str = typer.Argument("all", help="Service to stop (or 'all')")):
+    """Stop Friday service(s)."""
+    if service == "all":
+        console.print("Stopping all Friday services...", end=" ")
+        try:
+            subprocess.run(
+                ["pm2", "stop", "ecosystem.config.js"],
+                check=True,
+                capture_output=True,
+                cwd=FRIDAY_ROOT
+            )
+            console.print("[green]OK[/green]")
+        except subprocess.CalledProcessError as e:
+            console.print(f"[red]FAILED[/red]")
+            console.print(f"  Error: {e.stderr.decode()}")
+    else:
+        svc_name = service if service.startswith("friday-") else f"friday-{service}"
+        if svc_name not in PM2_SERVICES:
+            console.print(f"[yellow]Unknown service: {service}[/yellow]")
+            console.print(f"[dim]Available: {', '.join(PM2_SERVICES)}[/dim]")
+            return
+
+        console.print(f"Stopping {svc_name}...", end=" ")
+        try:
+            subprocess.run(
+                ["pm2", "stop", svc_name],
+                check=True,
+                capture_output=True
+            )
+            console.print("[green]OK[/green]")
+        except subprocess.CalledProcessError as e:
+            console.print(f"[red]FAILED[/red]")
+            console.print(f"  Error: {e.stderr.decode()}")
 
 
 @app.command()
 def restart(service: str = typer.Argument("all", help="Service to restart (or 'all')")):
     """Restart Friday service(s)."""
-    services_to_restart = SERVICES if service == "all" else [service]
-    
-    for svc in services_to_restart:
-        console.print(f"Restarting {svc}...", end=" ")
+    if service == "all":
+        console.print("Restarting all Friday services...", end=" ")
         try:
             subprocess.run(
-                ["systemctl", "--user", "restart", svc],
+                ["pm2", "restart", "ecosystem.config.js"],
+                check=True,
+                capture_output=True,
+                cwd=FRIDAY_ROOT
+            )
+            console.print("[green]OK[/green]")
+        except subprocess.CalledProcessError as e:
+            console.print(f"[red]FAILED[/red]")
+            console.print(f"  Error: {e.stderr.decode()}")
+    else:
+        svc_name = service if service.startswith("friday-") else f"friday-{service}"
+        if svc_name not in PM2_SERVICES:
+            console.print(f"[yellow]Unknown service: {service}[/yellow]")
+            console.print(f"[dim]Available: {', '.join(PM2_SERVICES)}[/dim]")
+            return
+
+        console.print(f"Restarting {svc_name}...", end=" ")
+        try:
+            subprocess.run(
+                ["pm2", "restart", svc_name],
                 check=True,
                 capture_output=True
             )

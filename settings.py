@@ -390,6 +390,14 @@ AWARENESS = {
             "description": "External services health checks (Portainer, Home Assistant, Dashy, etc.)",
         },
         {
+            "name": "ups_monitoring",
+            "tool": "src.tools.power.get_ups_status",
+            "schedule": "*/2 * * * *",  # Every 2 minutes (power is critical)
+            "enabled": True,
+            "analyzers": ["threshold"],
+            "description": "UPS power status monitoring (battery, runtime, power source)",
+        },
+        {
             "name": "portfolio_tracking",
             "tool": "src.tools.investments.get_portfolio_summary",
             "schedule": "0 9,21 * * *",  # Daily at 9 AM and 9 PM
@@ -506,6 +514,10 @@ AWARENESS = {
         "services_down": {"warning": 1, "critical": 2},  # Alert on ANY service down, critical if 2+
         "portfolio_daily_loss_percent": {"warning": -3.0, "critical": -5.0},  # Alert on daily losses > 3%
         "portfolio_total_loss_percent": {"warning": -10.0, "critical": -15.0},  # Alert on total losses > 10%
+        # UPS thresholds
+        "ups_battery_percent": {"warning": 50, "critical": 25},  # Alert when battery drops below these levels
+        "ups_runtime_minutes": {"warning": 30, "critical": 10},  # Alert when runtime drops below these levels
+        "ups_load_percent": {"warning": 80, "critical": 95},  # Alert when UPS load exceeds these levels
     },
 
     # Storage settings

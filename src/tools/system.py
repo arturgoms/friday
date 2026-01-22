@@ -23,8 +23,8 @@ from settings import settings
 
 logger = logging.getLogger(__name__)
 
-# Friday Docker container names
-FRIDAY_CONTAINERS = ["friday-telegram", "friday-awareness"]
+# Friday PM2 service names
+PM2_SERVICES = ["friday-telegram", "friday-awareness"]
 
 # vLLM remote endpoint (from settings)
 VLLM_ENDPOINT = settings.LLM.get("base_url", "http://192.168.1.18:8000/v1")
@@ -155,40 +155,43 @@ def get_friday_memory_usage() -> dict:
 
 @agent.tool_plain
 def get_friday_logs(service: str = "all", lines: int = 50) -> str:
-    """Get Friday service logs from Docker containers.
+    """Get Friday service logs from PM2.
 
     Args:
-        service: Container name (friday-telegram, friday-awareness, or 'all')
+        service: Service name (friday-telegram, friday-awareness, or 'all')
         lines: Number of log lines to return (default: 50, max: 200)
 
     Returns:
-        Recent log entries from the specified container(s)
+        Recent log entries from the specified service(s)
     """
-    try:
-        import docker
-        client = docker.from_env()
-    except Exception as e:
-        return f"Error: Cannot connect to Docker: {e}"
+    import json
 
     # Cap lines at 200 to avoid huge outputs
     lines = min(lines, 200)
 
     try:
         if service == "all":
-            containers_to_check = FRIDAY_CONTAINERS
-        elif service in FRIDAY_CONTAINERS:
-            containers_to_check = [service]
+            services_to_check = PM2_SERVICES
+        elif service in PM2_SERVICES:
+            services_to_check = [service]
         else:
-            return f"Unknown service: {service}. Valid options: {', '.join(FRIDAY_CONTAINERS)} or 'all'"
+            return f"Unknown service: {service}. Valid options: {', '.join(PM2_SERVICES)} or 'all'"
 
         all_logs = []
-        for container_name in containers_to_check:
+        for svc_name in services_to_check:
             try:
-                container = client.containers.get(container_name)
-                logs = container.logs(tail=lines, timestamps=True).decode("utf-8")
-                all_logs.append(f"=== {container_name} ===\n{logs}")
-            except docker.errors.NotFound:
-                all_logs.append(f"=== {container_name} ===\nContainer not found")
+                result = subprocess.run(
+                    ["pm2", "logs", svc_name, "--lines", str(lines), "--nostream"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                logs = result.stdout + result.stderr
+                all_logs.append(f"=== {svc_name} ===\n{logs.strip()}")
+            except subprocess.TimeoutExpired:
+                all_logs.append(f"=== {svc_name} ===\nTimeout getting logs")
+            except Exception as e:
+                all_logs.append(f"=== {svc_name} ===\nError: {e}")
 
         return "\n\n".join(all_logs) if all_logs else "No logs found."
 
@@ -214,50 +217,60 @@ def get_homelab_status() -> str:
 def get_friday_status() -> dict:
     """Get status of all Friday services.
 
-    Checks Docker containers for telegram/awareness and vLLM remote endpoint.
+    Checks PM2 processes for telegram/awareness and vLLM remote endpoint.
 
     Returns:
         Dict with status information for all Friday services
     """
     import httpx
+    import json
 
     services_status = []
 
-    # Check Docker containers via socket
+    # Check PM2 processes
     try:
-        import docker
-        client = docker.from_env()
+        result = subprocess.run(
+            ["pm2", "jlist"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode == 0:
+            pm2_list = json.loads(result.stdout)
+        else:
+            pm2_list = []
+    except Exception:
+        pm2_list = []
 
-        for container_name in FRIDAY_CONTAINERS:
-            try:
-                container = client.containers.get(container_name)
+    for svc_name in PM2_SERVICES:
+        found = False
+        for proc in pm2_list:
+            if proc.get("name") == svc_name:
+                found = True
+                status = proc.get("pm2_env", {}).get("status", "unknown")
+                pid = proc.get("pid", 0)
+                memory = proc.get("monit", {}).get("memory", 0)
+                restarts = proc.get("pm2_env", {}).get("restart_time", 0)
                 services_status.append({
-                    "service": container_name,
-                    "type": "docker",
-                    "state": container.status,
-                    "health": container.attrs.get("State", {}).get("Health", {}).get("Status", "n/a"),
-                    "running": container.status == "running"
+                    "service": svc_name,
+                    "type": "pm2",
+                    "state": status,
+                    "pid": pid,
+                    "memory_mb": round(memory / 1024 / 1024, 1) if memory else 0,
+                    "restarts": restarts,
+                    "running": status == "online"
                 })
-            except docker.errors.NotFound:
-                services_status.append({
-                    "service": container_name,
-                    "type": "docker",
-                    "state": "not_found",
-                    "running": False
-                })
-    except Exception as e:
-        # Docker not available - likely running inside container without socket
-        for container_name in FRIDAY_CONTAINERS:
+                break
+        if not found:
             services_status.append({
-                "service": container_name,
-                "type": "docker",
-                "state": "unknown",
-                "error": f"Cannot check Docker: {str(e)}"
+                "service": svc_name,
+                "type": "pm2",
+                "state": "stopped",
+                "running": False
             })
 
     # Check vLLM remote endpoint
     try:
-        # Hit the models endpoint to check if vLLM is responding
         vllm_url = VLLM_ENDPOINT.rstrip("/")
         response = httpx.get(f"{vllm_url}/models", timeout=5.0)
 

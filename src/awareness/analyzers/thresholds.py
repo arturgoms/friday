@@ -65,6 +65,10 @@ class ThresholdAnalyzer(RealTimeAnalyzer):
         if "weather" in data:
             insights.extend(self._check_weather_thresholds(data["weather"]))
 
+        # UPS thresholds (power monitoring)
+        if "ups_monitoring" in data:
+            insights.extend(self._check_ups_thresholds(data["ups_monitoring"]))
+
         return insights
 
     def _check_health_thresholds(self, health: Dict[str, Any]) -> List[Insight]:
@@ -515,5 +519,158 @@ class ThresholdAnalyzer(RealTimeAnalyzer):
                         data={"total_profit": total_profit},
                         expires_at=datetime.now(get_brt()) + timedelta(hours=24),
                     ))
-        
+
+        return insights
+
+    def _check_ups_thresholds(self, ups_data: Dict[str, Any]) -> List[Insight]:
+        """Check UPS thresholds and detect power status changes."""
+        insights = []
+
+        # Skip if there's an error (UPS unreachable)
+        if "error" in ups_data:
+            dedupe_key = "ups_unreachable"
+            if not self.was_insight_delivered_recently(dedupe_key, hours=1):
+                insights.append(Insight(
+                    type=InsightType.STATUS,
+                    category=Category.HOMELAB,
+                    priority=Priority.HIGH,
+                    title="UPS unreachable",
+                    message=f"Cannot connect to UPS: {ups_data.get('error', 'Unknown error')}",
+                    dedupe_key=dedupe_key,
+                    data=ups_data,
+                    expires_at=datetime.now(get_brt()) + timedelta(hours=1),
+                ))
+            return insights
+
+        # Get previous state to detect changes
+        prev_snapshot = self.store.get_latest_snapshot("ups_monitoring")
+        prev_on_battery = False
+        if prev_snapshot and prev_snapshot.data and "error" not in prev_snapshot.data:
+            prev_on_battery = prev_snapshot.data.get("on_battery", False)
+
+        current_on_battery = ups_data.get("on_battery", False)
+        low_battery = ups_data.get("low_battery", False)
+        forced_shutdown = ups_data.get("forced_shutdown", False)
+        battery_charge = ups_data.get("battery_charge")
+        runtime_minutes = ups_data.get("runtime_minutes")
+        load_percent = ups_data.get("load_percent")
+
+        # CRITICAL: Forced shutdown imminent
+        if forced_shutdown:
+            dedupe_key = "ups_forced_shutdown"
+            if not self.was_insight_delivered_recently(dedupe_key, hours=0.5):
+                insights.append(Insight(
+                    type=InsightType.THRESHOLD,
+                    category=Category.HOMELAB,
+                    priority=Priority.URGENT,
+                    title="UPS FORCED SHUTDOWN",
+                    message="UPS initiating forced shutdown! Save work immediately!",
+                    dedupe_key=dedupe_key,
+                    data=ups_data,
+                    expires_at=datetime.now(get_brt()) + timedelta(minutes=30),
+                ))
+            return insights  # Don't send other alerts during forced shutdown
+
+        # CRITICAL: Low battery while on battery power
+        if low_battery and current_on_battery:
+            dedupe_key = "ups_low_battery"
+            runtime_str = f" ({runtime_minutes:.0f} min remaining)" if runtime_minutes else ""
+            if not self.was_insight_delivered_recently(dedupe_key, hours=0.5):
+                insights.append(Insight(
+                    type=InsightType.THRESHOLD,
+                    category=Category.HOMELAB,
+                    priority=Priority.URGENT,
+                    title="UPS LOW BATTERY",
+                    message=f"Battery critically low{runtime_str}. Prepare for shutdown!",
+                    dedupe_key=dedupe_key,
+                    data=ups_data,
+                    expires_at=datetime.now(get_brt()) + timedelta(minutes=30),
+                ))
+
+        # Power outage detected (transition to battery)
+        if current_on_battery and not prev_on_battery:
+            dedupe_key = "ups_on_battery"
+            charge_str = f" Battery: {battery_charge:.0f}%." if battery_charge else ""
+            runtime_str = f" Est. runtime: {runtime_minutes:.0f} min." if runtime_minutes else ""
+            if not self.was_insight_delivered_recently(dedupe_key, hours=0.5):
+                insights.append(Insight(
+                    type=InsightType.STATUS,
+                    category=Category.HOMELAB,
+                    priority=Priority.HIGH,
+                    title="Power outage - On battery",
+                    message=f"UPS running on battery power.{charge_str}{runtime_str}",
+                    dedupe_key=dedupe_key,
+                    data=ups_data,
+                    expires_at=datetime.now(get_brt()) + timedelta(hours=2),
+                ))
+
+        # Power restored (transition from battery to line)
+        if not current_on_battery and prev_on_battery:
+            dedupe_key = "ups_power_restored"
+            if not self.was_insight_delivered_recently(dedupe_key, hours=1):
+                insights.append(Insight(
+                    type=InsightType.STATUS,
+                    category=Category.HOMELAB,
+                    priority=Priority.LOW,
+                    title="Power restored",
+                    message="UPS back on line power. Battery charging.",
+                    dedupe_key=dedupe_key,
+                    data=ups_data,
+                    expires_at=datetime.now(get_brt()) + timedelta(hours=1),
+                ))
+
+        # Battery level threshold (only when on battery)
+        if current_on_battery and battery_charge is not None:
+            insight = self._check_threshold(
+                value=battery_charge,
+                threshold_name="ups_battery_percent",
+                category=Category.HOMELAB,
+                title_template="UPS battery {level}",
+                message_template="Battery at {value:.0f}% (threshold: {threshold}%)",
+                higher_is_worse=False,
+            )
+            if insight:
+                insights.append(insight)
+
+        # Runtime threshold (only when on battery)
+        if current_on_battery and runtime_minutes is not None:
+            insight = self._check_threshold(
+                value=runtime_minutes,
+                threshold_name="ups_runtime_minutes",
+                category=Category.HOMELAB,
+                title_template="UPS runtime {level}",
+                message_template="Est. runtime: {value:.0f} min (threshold: {threshold} min)",
+                higher_is_worse=False,
+            )
+            if insight:
+                insights.append(insight)
+
+        # Load threshold (always check)
+        if load_percent is not None:
+            insight = self._check_threshold(
+                value=load_percent,
+                threshold_name="ups_load_percent",
+                category=Category.HOMELAB,
+                title_template="UPS load {level}",
+                message_template="UPS load at {value:.0f}% (threshold: {threshold}%)",
+                higher_is_worse=True,
+            )
+            if insight:
+                insights.append(insight)
+
+        # Replace battery warning
+        if ups_data.get("replace_battery"):
+            dedupe_key = "ups_replace_battery"
+            if not self.was_insight_delivered_recently(dedupe_key, hours=24):
+                insights.append(Insight(
+                    type=InsightType.STATUS,
+                    category=Category.HOMELAB,
+                    priority=Priority.MEDIUM,
+                    title="UPS battery replacement needed",
+                    message="UPS indicates battery needs replacement.",
+                    dedupe_key=dedupe_key,
+                    data=ups_data,
+                    expires_at=datetime.now(get_brt()) + timedelta(days=7),
+                ))
+
         return insights

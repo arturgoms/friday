@@ -15,10 +15,14 @@ import asyncio
 import json
 import logging
 import signal
+import sys
 import time as time_module
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from croniter import croniter
 

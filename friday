@@ -1,19 +1,7 @@
 #!/usr/bin/env bash
 # Friday CLI Entry Point
-# This script wraps the Python CLI to ensure proper environment
 
 FRIDAY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$FRIDAY_ROOT"
 
-# Check if Friday Docker container is running
-if docker ps -q -f name=friday-telegram 2>/dev/null | grep -q .; then
-    # Run via Docker exec (use -it only if TTY available)
-    if [ -t 0 ]; then
-        exec docker exec -it friday-telegram python -m src.interfaces.cli.run "$@"
-    else
-        exec docker exec friday-telegram python -m src.interfaces.cli.run "$@"
-    fi
-else
-    # Fall back to pipenv for local development
-    exec pipenv run python -m src.interfaces.cli.run "$@"
-fi
+exec .venv/bin/python -m src.interfaces.cli.run "$@"

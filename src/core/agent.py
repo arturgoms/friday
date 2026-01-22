@@ -291,6 +291,7 @@ try:
     from src.tools import media
     from src.tools import memory
     from src.tools import people
+    from src.tools import power
     from src.tools import sensors
     from src.tools import system
     from src.tools import utils
